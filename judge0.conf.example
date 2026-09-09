@@ -1,0 +1,10 @@
+# Copy this file to judge0.conf before starting Judge0.
+# Replace both passwords with unique values.
+REDIS_HOST=redis
+REDIS_PASSWORD=change-this-redis-password
+POSTGRES_HOST=db
+POSTGRES_DB=judge0
+POSTGRES_USER=judge0
+POSTGRES_PASSWORD=change-this-postgres-password
+COUNT=8
+MAX_QUEUE_SIZE=100
