@@ -32,6 +32,8 @@ services:
     env_file: judge0.conf
     volumes:
       - data:/var/lib/postgresql/data/
+    ports:
+      - "5432:5432"
     <<: *default-logging
     restart: always
 
@@ -42,6 +44,8 @@ services:
       'docker-entrypoint.sh --appendonly no --requirepass "$$REDIS_PASSWORD"'
     ]
     env_file: judge0.conf
+    ports:
+      - "6379:6379"
     <<: *default-logging
     restart: always
 

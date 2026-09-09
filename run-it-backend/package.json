@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "dev": "node index.js",
     "judge0": "node judge0-client.js"
   },
   "keywords": [],
@@ -11,6 +12,10 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "fastify": "^5.12.3"
+    "@fastify/cors": "^11.0.1",
+    "bullmq": "^5.58.5",
+    "fastify": "^5.12.3",
+    "pg": "^8.16.3",
+    "socket.io": "^4.8.1"
   }
 }
