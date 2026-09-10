@@ -47,6 +47,10 @@ export interface RoundClosedEvent {
   }>;
 }
 
+export interface RoundPausedEvent {
+  paused: boolean;
+}
+
 export interface TournamentWinnerEvent {
   participant_id: string;
 }
@@ -56,6 +60,7 @@ export interface RunItEvents {
   "participant:progress": ParticipantProgressEvent;
   "round:closing_soon": RoundClosingSoonEvent;
   "round:closed": RoundClosedEvent;
+  "round:paused": RoundPausedEvent;
   "tournament:winner": TournamentWinnerEvent;
 }
 
@@ -140,7 +145,10 @@ export function createSocketFeed(): RunItFeed | null {
     socket = io(socketUrl);
     socket.on("connect", () => {
       const roundId = import.meta.env.VITE_ROUND_ID;
-      if (roundId) socket?.emit("round:snapshot", roundId);
+      if (roundId) {
+        socket?.emit("round:join", roundId);
+        socket?.emit("round:snapshot", roundId);
+      }
     });
     socket.onAny((event, payload) => {
       handlers.get(event)?.forEach((handler) => handler(payload));

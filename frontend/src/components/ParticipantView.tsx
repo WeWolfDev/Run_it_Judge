@@ -4,10 +4,6 @@ import { useRoundTimer } from "@/hooks/use-round-timer";
 import { getActiveRound, joinRound, submitRound } from "@/lib/api";
 import { getSession } from "@/lib/session";
 
-type TestState = "pass" | "fail" | "pending";
-
-const TESTS: TestState[] = ["pass", "pass", "pass", "fail", "pass", "pending", "pending", "pending", "pending", "pending"];
-
 const STARTER = `def max_sliding_window(nums, k):
     # tu solución aquí
     return []
@@ -15,6 +11,8 @@ const STARTER = `def max_sliding_window(nums, k):
 
 export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_ROUND }) {
   const [activeRound, setActiveRound] = useState(round);
+  const [statement, setStatement] = useState("Dado un problema, resuelve la solución y envíala para evaluación.");
+  const [testCases, setTestCases] = useState<Array<{ stdin?: string; expected?: string }>>([]);
   const [participantId, setParticipantId] = useState("");
   const displayedRound = activeRound;
   const remaining = useRoundTimer(displayedRound.ends_at);
@@ -22,8 +20,9 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
   const [language, setLanguage] = useState("python");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
-  const passed = TESTS.filter((t) => t === "pass").length;
-  const pct = Math.round((passed / TESTS.length) * 100);
+  const passed = 0;
+  const totalTests = testCases.length;
+  const pct = totalTests ? Math.round((passed / totalTests) * 100) : 0;
 
   const send = async () => {
     setSending(true);
@@ -46,6 +45,8 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
   useEffect(() => {
     void getActiveRound().then((remote) => {
       if (!remote) return;
+      setStatement(remote.statement);
+      setTestCases(remote.test_cases);
       setActiveRound({
         round_id: remote.id,
         ends_at: new Date(remote.ends_at).getTime(),
@@ -53,7 +54,7 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
         capacity: remote.capacity,
       });
     }).catch(() => undefined);
-  });
+  }, []);
 
   return (
     <div className="space-y-5">
@@ -93,7 +94,7 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
           </div>
         </div>
         <p className="mt-2 text-right font-mono text-xs tabular-nums text-muted-foreground">
-          {passed}/{TESTS.length} test cases · {pct}%
+          {passed}/{totalTests} test cases · {pct}%
         </p>
       </section>
 
@@ -101,40 +102,29 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
         <div className="space-y-5">
           <section className="rounded-xl border border-border bg-card p-5">
             <h2 className="text-sm font-semibold text-foreground">Enunciado</h2>
-            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-              Dado un arreglo de enteros <code className="font-mono">nums</code> y una ventana de tamaño{" "}
-              <code className="font-mono">k</code>, devuelve el valor máximo de cada ventana deslizante
-              conforme avanza de izquierda a derecha.
-            </p>
-            <div className="mt-4 space-y-3">
-              <div>
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Entrada</p>
-                <pre className="mt-1 rounded-lg bg-muted p-3 font-mono text-xs text-foreground">
-nums = [1,3,-1,-3,5,3,6,7], k = 3</pre>
+            <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">{statement}</p>
+            {testCases.length > 0 && (
+              <div className="mt-4 space-y-3">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Casos de prueba</p>
+                {testCases.map((testCase, index) => (
+                  <div key={index} className="rounded-lg bg-muted p-3 font-mono text-xs text-foreground">
+                    <p>Entrada: {testCase.stdin || "(sin entrada)"}</p>
+                    <p className="mt-1">Salida esperada: {testCase.expected || "(sin salida)"}</p>
+                  </div>
+                ))}
               </div>
-              <div>
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Salida</p>
-                <pre className="mt-1 rounded-lg bg-muted p-3 font-mono text-xs text-foreground">
-[3,3,5,5,6,7]</pre>
-              </div>
-            </div>
+            )}
           </section>
 
           <section className="rounded-xl border border-border bg-card p-5">
             <h2 className="text-sm font-semibold text-foreground">Resultados de tus tests</h2>
             <div className="mt-4 flex flex-wrap gap-2">
-              {TESTS.map((t, i) => (
+              {testCases.map((_, i) => (
                 <span
                   key={i}
-                  className={`inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 font-mono text-xs ${
-                    t === "pass"
-                      ? "bg-success-soft text-success"
-                      : t === "fail"
-                        ? "bg-danger-soft text-danger"
-                        : "bg-muted text-muted-foreground"
-                  }`}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted px-2.5 py-1 font-mono text-xs text-muted-foreground"
                 >
-                  {t === "pass" ? "✓" : t === "fail" ? "✕" : "•"} test {i + 1}
+                  • test {i + 1}
                 </span>
               ))}
             </div>

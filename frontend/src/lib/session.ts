@@ -26,3 +26,7 @@ export function setSession(session: Session) {
 export function clearSession() {
   window.localStorage.removeItem(SESSION_KEY);
 }
+
+export function getSessionToken() {
+  return getSession()?.token;
+}

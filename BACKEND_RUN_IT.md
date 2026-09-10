@@ -10,7 +10,9 @@ Run It es un torneo de programación por rondas, con una pista pública en tiemp
 
 - Fastify en `run-it-backend/index.js`.
 - `GET /health`.
+- `GET /ready` comprueba PostgreSQL y Redis para el despliegue.
 - Login por rol mediante `POST /auth/login`.
+- Registro de participantes mediante `POST /auth/register` usando un código de acceso de un solo uso.
 - Sesiones en memoria para desarrollo local.
 - PostgreSQL con tablas para usuarios, códigos, torneos, problemas, rondas, participantes, submissions y ranking.
 - Seed de desarrollo:
@@ -145,6 +147,7 @@ VITE_ROUND_ID=00000000-0000-0000-0000-000000000002
 ```text
 GET  /health
 POST /auth/login
+POST /auth/register                    participante, consume un código de acceso
 GET  /problems
 POST /problems                         admin
 POST /tournaments                      admin
@@ -159,6 +162,7 @@ POST /rounds/:id/close                 admin
 POST /rounds/:id/participants/join     participant
 GET  /rounds/:id/state
 GET  /rounds/:id/leaderboard
+GET  /tournaments/:id/leaderboard admin
 POST /rounds/:id/submissions           participant
 GET  /public/rounds/active             público
 ```
@@ -200,21 +204,23 @@ socket.emit("round:snapshot", roundId);
 - Scoring corregido: el worker compara la salida con el `expected` del
   problema (antes aceptaba cualquier salida no vacía).
 
-### Gap de producto (bloqueante para un torneo)
+### Flujo de alta de participantes
 
-- **No existe flujo de alta de participantes.** `/auth/login` solo valida
-  usuarios ya existentes en la tabla `users`, y los endpoints admin
-  (`/access-codes/generate`, `/access-codes/:code/claim`) generan y
-  reclaman códigos pero nunca crean un `user`. Hace falta un endpoint
-  tipo `POST /auth/register` que consuma un access code y cree el
-  participante (o un endpoint admin que cree usuarios). Sin esto, el
-  torneo solo puede arrancar insertando usuarios a mano en la base de
-  datos.
+- El admin genera códigos con `/access-codes/generate` desde el panel.
+- El participante usa `POST /auth/register` desde la pantalla de acceso.
+- El registro consume el código de forma transaccional, crea el usuario y
+  devuelve una sesión de participante.
+- `/access-codes/:code/claim` se conserva para códigos emitidos a usuarios
+  que ya existen por otros medios.
 
 ### Limitaciones conocidas (aceptadas en MVP)
 
 - Sesiones en memoria: se pierden al reiniciar el backend (logout global),
   no tienen expiración y no hay invalidación de token.
+- Sesiones persistentes opcionales mediante Redis: definir
+  `SESSION_STORE=redis` y `SESSION_TTL_SECONDS` en producción. Si Redis no
+  está disponible, el backend usa el fallback en memoria y registra el estado
+  mediante el readiness check.
 - Rate limit de submissions en memoria (1/s por usuario): se resetea al
   reiniciar y no escalaría a varias instancias; migrar a Redis.
 - Códigos de acceso y `access_code` de usuarios guardados en texto plano.

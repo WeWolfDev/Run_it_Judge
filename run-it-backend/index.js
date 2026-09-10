@@ -5,8 +5,8 @@ const cors = require('@fastify/cors');
 const { Server } = require('socket.io');
 const { initDb, query, withTransaction } = require('./db');
 const { submissionQueue, startSubmissionWorker } = require('./queue');
+const { setSession, getSession, deleteSession, memorySessions } = require('./session-store');
 
-const sessions = new Map();
 const submissionRate = new Map();
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:8080,http://127.0.0.1:8080')
@@ -17,6 +17,17 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:8080,ht
 fastify.register(cors, { origin: allowedOrigins });
 
 fastify.get('/health', async () => ({ status: 'ok' }));
+
+fastify.get('/ready', async (request, reply) => {
+	try {
+		await query('SELECT 1');
+		await submissionQueue.getJobCounts();
+		return { status: 'ready', database: 'ok', redis: 'ok' };
+	} catch (error) {
+		request.log.error(error, 'Readiness check failed');
+		return reply.code(503).send({ status: 'not_ready' });
+	}
+});
 
 fastify.post('/auth/login', async (request, reply) => {
 	const { username, accessCode } = request.body || {};
@@ -31,13 +42,68 @@ fastify.post('/auth/login', async (request, reply) => {
 
 	const user = result.rows[0];
 	const token = crypto.randomUUID();
-	sessions.set(token, user);
+	await setSession(token, user);
 	return { token, user };
+});
+
+fastify.post('/auth/register', async (request, reply) => {
+	const username = String(request.body?.username || '').trim();
+	const accessCode = String(request.body?.accessCode || '').trim();
+
+	if (username.length < 3 || accessCode.length < 8) {
+		return reply.code(400).send({ error: 'Usuario y código de acceso no válidos' });
+	}
+
+	try {
+		const user = await withTransaction(async (client) => {
+			const codeResult = await client.query(
+				"SELECT id FROM access_codes WHERE code = $1 AND status = 'unused' FOR UPDATE",
+				[accessCode],
+			);
+			if (!codeResult.rowCount) {
+				const error = new Error('Código de acceso no disponible');
+				error.code = 'ACCESS_CODE_UNAVAILABLE';
+				throw error;
+			}
+
+			const userResult = await client.query(
+				`INSERT INTO users (username, access_code, role)
+				 VALUES ($1, $2, 'participant')
+				 RETURNING id, username, role`,
+				[username, accessCode],
+			);
+			await client.query(
+				`UPDATE access_codes
+				 SET status = 'claimed', claimed_by_user_id = $1, display_name = $2, claimed_at = now()
+				 WHERE id = $3`,
+				[userResult.rows[0].id, username, codeResult.rows[0].id],
+			);
+			return userResult.rows[0];
+		});
+
+		const token = crypto.randomUUID();
+		await setSession(token, user);
+		return { token, user };
+	} catch (error) {
+		if (error.code === '23505') {
+			return reply.code(409).send({ error: 'El nombre de usuario ya está en uso' });
+		}
+		if (error.code === 'ACCESS_CODE_UNAVAILABLE') {
+			return reply.code(409).send({ error: error.message });
+		}
+		throw error;
+	}
+});
+
+fastify.post('/auth/logout', async (request) => {
+	const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
+	if (token) await deleteSession(token);
+	return { loggedOut: true };
 });
 
 async function requireRole(request, reply, role) {
 	const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
-	const user = token ? sessions.get(token) : null;
+	const user = token ? await getSession(token) : null;
 
 	if (!user) {
 		return reply.code(401).send({ error: 'Sesión requerida' });
@@ -57,6 +123,26 @@ fastify.post('/tournaments', async (request, reply) => {
 	return reply.code(201).send(result.rows[0]);
 });
 
+fastify.get('/tournaments', async (request, reply) => {
+	if (await requireRole(request, reply, 'admin')) return;
+	const result = await query('SELECT * FROM tournaments ORDER BY created_at DESC');
+	return result.rows;
+});
+
+fastify.put('/tournaments/:id', async (request, reply) => {
+	if (await requireRole(request, reply, 'admin')) return;
+	const name = String(request.body?.name || '').trim();
+	if (!name) return reply.code(400).send({ error: 'El nombre es obligatorio' });
+	const result = await query('UPDATE tournaments SET name = $1 WHERE id = $2 RETURNING *', [name, request.params.id]);
+	return result.rowCount ? result.rows[0] : reply.code(404).send({ error: 'Torneo no encontrado' });
+});
+
+fastify.delete('/tournaments/:id', async (request, reply) => {
+	if (await requireRole(request, reply, 'admin')) return;
+	const result = await query('DELETE FROM tournaments WHERE id = $1 RETURNING id', [request.params.id]);
+	return result.rowCount ? { deleted: true } : reply.code(404).send({ error: 'Torneo no encontrado' });
+});
+
 fastify.get('/problems', async () => {
 	const result = await query('SELECT * FROM problems ORDER BY created_at DESC');
 	return result.rows;
@@ -74,6 +160,36 @@ fastify.post('/problems', async (request, reply) => {
 		[name, statement, difficulty, JSON.stringify(testCases)],
 	);
 	return reply.code(201).send(result.rows[0]);
+});
+
+fastify.get('/problems/:id', async (request, reply) => {
+	const result = await query('SELECT * FROM problems WHERE id = $1', [request.params.id]);
+	return result.rowCount ? result.rows[0] : reply.code(404).send({ error: 'Problema no encontrado' });
+});
+
+fastify.put('/problems/:id', async (request, reply) => {
+	if (await requireRole(request, reply, 'admin')) return;
+	const { name, statement, difficulty = 'easy', testCases = [] } = request.body || {};
+	if (!name || !statement || !Array.isArray(testCases)) {
+		return reply.code(400).send({ error: 'name, statement y testCases son obligatorios' });
+	}
+	const result = await query(
+		`UPDATE problems SET name = $1, statement = $2, difficulty = $3, test_cases = $4::jsonb
+		 WHERE id = $5 RETURNING *`,
+		[name, statement, difficulty, JSON.stringify(testCases), request.params.id],
+	);
+	return result.rowCount ? result.rows[0] : reply.code(404).send({ error: 'Problema no encontrado' });
+});
+
+fastify.delete('/problems/:id', async (request, reply) => {
+	if (await requireRole(request, reply, 'admin')) return;
+	try {
+		const result = await query('DELETE FROM problems WHERE id = $1 RETURNING id', [request.params.id]);
+		return result.rowCount ? { deleted: true } : reply.code(404).send({ error: 'Problema no encontrado' });
+	} catch (error) {
+		if (error.code === '23503') return reply.code(409).send({ error: 'El problema está siendo usado por una ronda' });
+		throw error;
+	}
 });
 
 fastify.post('/tournaments/:id/participants', async (request, reply) => {
@@ -151,6 +267,35 @@ fastify.post('/rounds', async (request, reply) => {
 	return reply.code(201).send(result.rows[0]);
 });
 
+fastify.get('/tournaments/:id/rounds', async (request, reply) => {
+	if (await requireRole(request, reply, 'admin')) return;
+	const result = await query(
+		`SELECT r.*, p.name AS problem_name
+		 FROM rounds r JOIN problems p ON p.id = r.problem_id
+		 WHERE r.tournament_id = $1 ORDER BY r.round_number`,
+		[request.params.id],
+	);
+	return result.rows;
+});
+
+fastify.put('/rounds/:id', async (request, reply) => {
+	if (await requireRole(request, reply, 'admin')) return;
+	const { problemId, capacity, timeLimitSeconds } = request.body || {};
+	const result = await query(
+		`UPDATE rounds SET problem_id = COALESCE($1, problem_id), capacity = COALESCE($2, capacity),
+		 time_limit_seconds = COALESCE($3, time_limit_seconds)
+		 WHERE id = $4 AND status = 'pending' RETURNING *`,
+		[problemId, capacity, timeLimitSeconds, request.params.id],
+	);
+	return result.rowCount ? result.rows[0] : reply.code(409).send({ error: 'La ronda no existe o ya inició' });
+});
+
+fastify.delete('/rounds/:id', async (request, reply) => {
+	if (await requireRole(request, reply, 'admin')) return;
+	const result = await query("DELETE FROM rounds WHERE id = $1 AND status = 'pending' RETURNING id", [request.params.id]);
+	return result.rowCount ? { deleted: true } : reply.code(409).send({ error: 'La ronda no existe o ya inició' });
+});
+
 fastify.post('/rounds/:id/start', async (request, reply) => {
 	if (await requireRole(request, reply, 'admin')) return;
 	const result = await query(
@@ -181,7 +326,7 @@ fastify.post('/rounds/:id/pause', async (request, reply) => {
 
 fastify.get('/public/rounds/active', async () => {
 	const result = await query(
-		`SELECT r.*, p.name AS problem_name, p.statement, p.difficulty
+		`SELECT r.*, p.name AS problem_name, p.statement, p.difficulty, p.test_cases
 		 FROM rounds r JOIN problems p ON p.id = r.problem_id
 		 WHERE r.status = 'active' ORDER BY r.started_at DESC LIMIT 1`,
 	);
@@ -248,6 +393,35 @@ fastify.get('/rounds/:id/leaderboard', async (request) => {
 		`SELECT rp.*, p.display_name FROM round_participants rp
 		 JOIN participants p ON p.id = rp.participant_id
 		 WHERE rp.round_id = $1 ORDER BY rp.final_rank NULLS LAST, rp.best_pass_percentage DESC`,
+		[request.params.id],
+	);
+	return result.rows;
+});
+
+fastify.get('/rounds/:id/submissions', async (request, reply) => {
+	if (await requireRole(request, reply, 'admin')) return;
+	const result = await query(
+		`SELECT s.id, s.participant_id, p.display_name, s.language, s.verdict,
+		        s.test_cases_passed, s.test_cases_total, s.submitted_at
+		 FROM submissions s JOIN participants p ON p.id = s.participant_id
+		 WHERE s.round_id = $1 ORDER BY s.submitted_at DESC LIMIT 200`,
+		[request.params.id],
+	);
+	return result.rows;
+});
+
+fastify.get('/tournaments/:id/leaderboard', async (request, reply) => {
+	if (await requireRole(request, reply, 'admin')) return;
+	const result = await query(
+		`SELECT p.id AS participant_id, p.display_name,
+			MAX(rp.final_rank) FILTER (WHERE rp.final_rank IS NOT NULL) AS final_rank,
+			MAX(rp.best_pass_percentage) AS best_pass_percentage,
+			SUM(rp.failed_attempts_count)::int AS failed_attempts_count
+		 FROM participants p JOIN round_participants rp ON rp.participant_id = p.id
+		 JOIN rounds r ON r.id = rp.round_id
+		 WHERE r.tournament_id = $1
+		 GROUP BY p.id, p.display_name
+		 ORDER BY final_rank NULLS LAST, best_pass_percentage DESC, failed_attempts_count ASC`,
 		[request.params.id],
 	);
 	return result.rows;
@@ -381,4 +555,4 @@ if (require.main === module) {
 	});
 }
 
-module.exports = { fastify, start, requireRole, sessions, closeRound };
+module.exports = { fastify, start, requireRole, sessions: memorySessions, closeRound };

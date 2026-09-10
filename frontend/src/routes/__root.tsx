@@ -12,6 +12,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { clearSession, getSession, type Session } from "../lib/session";
+import { logout } from "../lib/api";
 
 function NotFoundComponent() {
   return (
@@ -165,8 +166,10 @@ function RoleNavigation() {
             type="button"
             className="ml-auto text-muted-foreground hover:text-foreground"
             onClick={() => {
-              clearSession();
-              void navigate.navigate({ to: "/login" });
+              void logout().catch(() => undefined).finally(() => {
+                clearSession();
+                void navigate.navigate({ to: "/login" });
+              });
             }}
           >
             Salir

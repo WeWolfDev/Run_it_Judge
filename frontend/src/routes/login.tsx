@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { setSession } from "@/lib/session";
-import { login } from "@/lib/api";
+import { login, register } from "@/lib/api";
 
 export const Route = createFileRoute("/login")({
   component: LoginPage,
@@ -26,6 +26,7 @@ function LoginPage() {
   const [accessCode, setAccessCode] = useState("");
   const [acceptedRules, setAcceptedRules] = useState(false);
   const [showCode, setShowCode] = useState(false);
+  const [registerMode, setRegisterMode] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -50,7 +51,9 @@ function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      const result = await login(username.trim(), accessCode.trim());
+      const result = registerMode
+        ? await register(username.trim(), accessCode.trim())
+        : await login(username.trim(), accessCode.trim());
       setSession({ username: result.user.username, role: result.user.role, token: result.token });
       await navigate({ to: result.user.role === "admin" ? "/admin" : "/participante" });
     } catch (requestError) {
@@ -111,8 +114,19 @@ function LoginPage() {
 
           <Button type="submit" variant="secondary" className="w-full" disabled={loading}>
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Entrar al torneo
+            {registerMode ? "Crear acceso" : "Entrar al torneo"}
           </Button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setRegisterMode((mode) => !mode);
+              setError("");
+            }}
+            className="w-full text-center text-xs text-muted-foreground hover:text-foreground hover:underline"
+          >
+            {registerMode ? "Ya tengo un acceso" : "Registrarme con un código"}
+          </button>
 
           <Link
             to="/pista"
