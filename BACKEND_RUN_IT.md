@@ -184,15 +184,48 @@ socket.emit("round:snapshot", roundId);
 
 ## Seguridad y producción
 
-La autenticación actual es suficiente para desarrollo local, pero no para producción:
+### Resuelto en producción (2026-09-10)
 
-- Las sesiones viven en memoria y se pierden al reiniciar.
-- Los códigos están almacenados en texto plano.
-- Falta JWT o sesiones persistentes.
-- El rate limit debe migrarse a Redis.
-- CORS debe restringirse al dominio del frontend.
-- Judge0 no debe exponerse públicamente sin firewall/autenticación.
-- Faltan HTTPS, backups, métricas y pruebas de carga.
+- `POST /submissions` sin auth eliminado; la única vía de ejecución es
+  `POST /rounds/:id/submissions` con sesión de participante y ronda activa.
+- CORS (HTTP y Socket.io) restringido con `ALLOWED_ORIGINS`.
+- Judge0, PostgreSQL y Redis solo escuchan en `127.0.0.1` (Docker publica
+  puertos fuera de UFW, por eso el bind explícito importa).
+- Secretos fuera del código: `judge0.conf` y `run-it-backend/secrets` (no
+  versionados, `chmod 600`/`440`); sin credenciales demo en producción,
+  seed condicionado a `RUN_IT_SEED_DEMO` y código admin solo por
+  `ADMIN_ACCESS_CODE`.
+- HTTPS vía nginx con Let's Encrypt; el frontend consume la API en el mismo
+  origen.
+- Scoring corregido: el worker compara la salida con el `expected` del
+  problema (antes aceptaba cualquier salida no vacía).
+
+### Gap de producto (bloqueante para un torneo)
+
+- **No existe flujo de alta de participantes.** `/auth/login` solo valida
+  usuarios ya existentes en la tabla `users`, y los endpoints admin
+  (`/access-codes/generate`, `/access-codes/:code/claim`) generan y
+  reclaman códigos pero nunca crean un `user`. Hace falta un endpoint
+  tipo `POST /auth/register` que consuma un access code y cree el
+  participante (o un endpoint admin que cree usuarios). Sin esto, el
+  torneo solo puede arrancar insertando usuarios a mano en la base de
+  datos.
+
+### Limitaciones conocidas (aceptadas en MVP)
+
+- Sesiones en memoria: se pierden al reiniciar el backend (logout global),
+  no tienen expiración y no hay invalidación de token.
+- Rate limit de submissions en memoria (1/s por usuario): se resetea al
+  reiniciar y no escalaría a varias instancias; migrar a Redis.
+- Códigos de acceso y `access_code` de usuarios guardados en texto plano.
+- Token de sesión en `localStorage` (superficie XSS estándar; CORS
+  restringido mitiga el resto de sitios).
+- Scoring usa solo el primer caso de prueba (`test_cases[0]`); no hay
+  ejecución multi-test.
+- `/pista` expone los display names de los participantes (por diseño).
+- Judge0 corre con `privileged: true` (requisito del sandbox isolate de
+  judge0 CE); riesgo conocido y documentado upstream.
+- Sin backups, métricas ni pruebas de carga.
 
 ## Validación disponible
 

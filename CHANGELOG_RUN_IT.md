@@ -2,6 +2,13 @@
 
 ## 2026-09-10
 
+### Documentación de seguridad y gaps
+
+- Reescrita la sección «Seguridad y producción»: estado resuelto en
+  producción, gap de producto (alta de participantes bloquea el torneo) y
+  limitaciones MVP aceptadas (sesiones/rate limit en memoria, códigos en
+  texto plano, scoring de un solo test, `privileged` de Judge0).
+
 ### Despliegue en producción (runit.gelatina.lat)
 
 - Stack: Judge0 1.13.1 + Postgres 16.2 + Redis 7.2.4 en Docker con binds solo
