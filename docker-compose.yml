@@ -31,9 +31,9 @@ services:
     image: postgres:16.2
     env_file: judge0.conf
     volumes:
-      - data:/var/lib/postgresql/data/
+      - data_v2:/var/lib/postgresql/data/
     ports:
-      - "5432:5432"
+      - "5433:5432"
     <<: *default-logging
     restart: always
 
@@ -50,4 +50,4 @@ services:
     restart: always
 
 volumes:
-  data:
+  data_v2:

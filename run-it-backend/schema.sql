@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS rounds (
   UNIQUE (tournament_id, round_number)
 );
 
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS paused BOOLEAN NOT NULL DEFAULT false;
+
 CREATE TABLE IF NOT EXISTS participants (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tournament_id UUID NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,

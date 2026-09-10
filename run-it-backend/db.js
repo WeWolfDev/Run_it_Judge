@@ -2,9 +2,41 @@ const { Pool } = require('pg');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgres://judge0:RunItJudgePostgres_2026_local@localhost:5432/judge0',
-});
+const DEFAULT_DATABASE_URL = process.env.DATABASE_URL || 'postgres://judge0:RunItJudgePostgres_2026_local@127.0.0.1:5433/judge0';
+const pool = new Pool({ connectionString: DEFAULT_DATABASE_URL });
+
+async function ensurePostgresBootstrap() {
+  const desiredUser = process.env.POSTGRES_USER || 'judge0';
+  const desiredPassword = process.env.POSTGRES_PASSWORD || 'RunItJudgePostgres_2026_local';
+  const desiredDatabase = process.env.POSTGRES_DB || 'judge0';
+  const adminCandidates = [
+    process.env.DATABASE_ADMIN_URL,
+    'postgres://postgres@127.0.0.1:5432/postgres',
+    'postgres://postgres:postgres@127.0.0.1:5432/postgres',
+    'postgres://judge0:RunItJudgePostgres_2026_local@127.0.0.1:5432/postgres',
+  ].filter(Boolean);
+
+  for (const candidate of adminCandidates) {
+    const adminPool = new Pool({ connectionString: candidate });
+    try {
+      await adminPool.query('SELECT 1');
+      const userExists = await adminPool.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [desiredUser]);
+      if (!userExists.rowCount) {
+        await adminPool.query(`CREATE ROLE "${desiredUser}" WITH LOGIN PASSWORD '${desiredPassword}'`);
+      }
+      const databaseExists = await adminPool.query('SELECT 1 FROM pg_database WHERE datname = $1', [desiredDatabase]);
+      if (!databaseExists.rowCount) {
+        await adminPool.query(`CREATE DATABASE "${desiredDatabase}" OWNER "${desiredUser}"`);
+      }
+      await adminPool.query(`GRANT ALL PRIVILEGES ON DATABASE "${desiredDatabase}" TO "${desiredUser}"`);
+      return;
+    } catch (error) {
+      // Try the next admin connection candidate.
+    } finally {
+      await adminPool.end();
+    }
+  }
+}
 
 async function query(text, values) {
   return pool.query(text, values);
@@ -26,6 +58,7 @@ async function withTransaction(callback) {
 }
 
 async function initDb() {
+  await ensurePostgresBootstrap();
   const schema = await fs.readFile(path.join(__dirname, 'schema.sql'), 'utf8');
   await pool.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
   await pool.query(schema);

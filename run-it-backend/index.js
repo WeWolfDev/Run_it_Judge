@@ -109,7 +109,7 @@ fastify.post('/tournaments/:id/participants', async (request, reply) => {
 
 fastify.post('/rounds/:id/participants/join', async (request, reply) => {
 	if (await requireRole(request, reply, 'participant')) return;
-	const round = await query('SELECT * FROM rounds WHERE id = $1 AND status = $2', [request.params.id, 'pending']);
+	const round = await query("SELECT * FROM rounds WHERE id = $1 AND status IN ('pending', 'active')", [request.params.id]);
 	if (!round.rowCount) return reply.code(409).send({ error: 'La ronda no está disponible' });
 	const displayName = request.body?.displayName || request.user.username;
 	const participant = await query(
