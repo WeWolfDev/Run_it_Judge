@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
+const API_URL = import.meta.env.VITE_API_URL ?? "";
 
 function authHeaders() {
   const raw = window.localStorage.getItem("run-it-session");
@@ -20,17 +20,6 @@ export async function login(username: string, accessCode: string) {
 
 export function apiUrl(path: string) {
   return `${API_URL}${path}`;
-}
-
-export async function submitCode(code: string, language: string, problemId: string) {
-  const response = await fetch(`${API_URL}/submissions`, {
-    method: "POST",
-    headers: { "content-type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ code, language, problemId }),
-  });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error || "No se pudo enviar la solución");
-  return body;
 }
 
 export async function closeRound(roundId: string) {

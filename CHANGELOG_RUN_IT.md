@@ -1,5 +1,29 @@
 # Bitácora de Run It
 
+## 2026-09-10
+
+### Documentación de seguridad y gaps
+
+- Reescrita la sección «Seguridad y producción»: estado resuelto en
+  producción, gap de producto (alta de participantes bloquea el torneo) y
+  limitaciones MVP aceptadas (sesiones/rate limit en memoria, códigos en
+  texto plano, scoring de un solo test, `privileged` de Judge0).
+
+### Despliegue en producción (runit.gelatina.lat)
+
+- Stack: Judge0 1.13.1 + Postgres 16.2 + Redis 7.2.4 en Docker con binds solo
+  a `127.0.0.1`; backend en systemd (`:3001`), frontend SSR con preset Node
+  (`:3002`), nginx con TLS Let's Encrypt.
+- Run It usa la base de datos `run_it`, separada de la base `judge0` que
+  gestiona el propio Judge0 (colisión de tablas `submissions`/`users`/
+  `problems` corregida).
+- Seguridad: eliminado `POST /submissions` público, CORS restringido,
+  credenciales demo fuera del repositorio, seed demo solo con
+  `RUN_IT_SEED_DEMO=true`, código admin por `ADMIN_ACCESS_CODE`.
+- Scoring: el worker compara la salida con el `expected` del problema.
+- Judge0 en cgroup v2: límites por proceso/hilo activados para evitar
+  `--cg` (isolate 1.13.1 solo soporta cgroup v1).
+
 ## 2026-09-09
 
 ### Infraestructura local

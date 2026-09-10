@@ -2,27 +2,33 @@ const { Pool } = require('pg');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-const DEFAULT_DATABASE_URL = process.env.DATABASE_URL || 'postgres://judge0:RunItJudgePostgres_2026_local@127.0.0.1:5433/judge0';
-const pool = new Pool({ connectionString: DEFAULT_DATABASE_URL });
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  throw new Error('DATABASE_URL es obligatorio (ej. postgres://usuario:password@127.0.0.1:5433/judge0)');
+}
+const pool = new Pool({ connectionString: DATABASE_URL });
+
+const SAFE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/;
 
 async function ensurePostgresBootstrap() {
-  const desiredUser = process.env.POSTGRES_USER || 'judge0';
-  const desiredPassword = process.env.POSTGRES_PASSWORD || 'RunItJudgePostgres_2026_local';
+  const desiredUser = process.env.POSTGRES_USER;
+  const desiredPassword = process.env.POSTGRES_PASSWORD;
   const desiredDatabase = process.env.POSTGRES_DB || 'judge0';
-  const adminCandidates = [
-    process.env.DATABASE_ADMIN_URL,
-    'postgres://postgres@127.0.0.1:5432/postgres',
-    'postgres://postgres:postgres@127.0.0.1:5432/postgres',
-    'postgres://judge0:RunItJudgePostgres_2026_local@127.0.0.1:5432/postgres',
-  ].filter(Boolean);
+  const adminCandidates = [process.env.DATABASE_ADMIN_URL].filter(Boolean);
+
+  if (!adminCandidates.length) return;
 
   for (const candidate of adminCandidates) {
     const adminPool = new Pool({ connectionString: candidate });
     try {
       await adminPool.query('SELECT 1');
+      if (!SAFE_IDENTIFIER.test(desiredUser) || !SAFE_IDENTIFIER.test(desiredDatabase)) {
+        throw new Error('POSTGRES_USER o POSTGRES_DB contienen caracteres no permitidos');
+      }
       const userExists = await adminPool.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [desiredUser]);
       if (!userExists.rowCount) {
-        await adminPool.query(`CREATE ROLE "${desiredUser}" WITH LOGIN PASSWORD '${desiredPassword}'`);
+        const quotedPassword = desiredPassword.replace(/'/g, "''");
+        await adminPool.query(`CREATE ROLE "${desiredUser}" WITH LOGIN PASSWORD '${quotedPassword}'`);
       }
       const databaseExists = await adminPool.query('SELECT 1 FROM pg_database WHERE datname = $1', [desiredDatabase]);
       if (!databaseExists.rowCount) {
@@ -62,9 +68,24 @@ async function initDb() {
   const schema = await fs.readFile(path.join(__dirname, 'schema.sql'), 'utf8');
   await pool.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
   await pool.query(schema);
+
+  const adminUsername = process.env.ADMIN_USERNAME || 'admin';
+  if (process.env.ADMIN_ACCESS_CODE) {
+    await pool.query(
+      `INSERT INTO users (username, access_code, role)
+       VALUES ($1, $2, 'admin')
+       ON CONFLICT (username) DO NOTHING`,
+      [adminUsername, process.env.ADMIN_ACCESS_CODE],
+    );
+  } else {
+    console.warn('ADMIN_ACCESS_CODE no definido: no se crea el usuario admin');
+  }
+
+  if (process.env.RUN_IT_SEED_DEMO !== 'true') return;
+
   await pool.query(`
     INSERT INTO users (username, access_code, role)
-    VALUES ('admin', 'ADMIN-RUN-IT', 'admin'), ('demo', 'RUN-IT-2026', 'participant')
+    VALUES ('demo', 'RUN-IT-2026', 'participant')
     ON CONFLICT (username) DO NOTHING
   `);
   await pool.query(`
