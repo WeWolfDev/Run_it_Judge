@@ -1,5 +1,4 @@
 const fastify = require('fastify')({ logger: true });
-const { createSubmission, waitForSubmission } = require('./judge0-client');
 
 const crypto = require('node:crypto');
 const cors = require('@fastify/cors');
@@ -10,33 +9,14 @@ const { submissionQueue, startSubmissionWorker } = require('./queue');
 const sessions = new Map();
 const submissionRate = new Map();
 
-fastify.register(cors, { origin: true });
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:8080,http://127.0.0.1:8080')
+	.split(',')
+	.map((origin) => origin.trim())
+	.filter(Boolean);
+
+fastify.register(cors, { origin: allowedOrigins });
 
 fastify.get('/health', async () => ({ status: 'ok' }));
-
-fastify.post('/submissions', async (request, reply) => {
-	const { code, language, problemId } = request.body || {};
-
-	if (!code || !language || !problemId) {
-		return reply.code(400).send({ error: 'code, language y problemId son obligatorios' });
-	}
-
-	if (problemId !== 'hola-mundo') {
-		return reply.code(400).send({ error: 'Solo está disponible el problema hola-mundo' });
-	}
-
-	try {
-		const created = await createSubmission(code, language);
-		const result = await waitForSubmission(created.token);
-		const verdict = result.status?.id === 3 && result.stdout?.trim() === 'Hola mundo'
-			? 'accepted'
-			: result.status?.description || 'rejected';
-
-		return { verdict, token: created.token, result };
-	} catch (error) {
-		return reply.code(502).send({ error: error.message });
-	}
-});
 
 fastify.post('/auth/login', async (request, reply) => {
 	const { username, accessCode } = request.body || {};
@@ -275,22 +255,31 @@ fastify.get('/rounds/:id/leaderboard', async (request) => {
 
 async function start() {
 	await initDb();
-	await fastify.listen({ port: 3000, host: '127.0.0.1' });
-	fastify.io = new Server(fastify.server, { cors: { origin: true } });
+	await fastify.listen({ port: Number(process.env.PORT || 3000), host: '127.0.0.1' });
+	fastify.io = new Server(fastify.server, { cors: { origin: allowedOrigins } });
 	startSubmissionWorker(async ({ submissionId, result, token }) => {
-		const passed = result.status?.id === 3 && result.stdout?.trim() ? 1 : 0;
-		const verdict = result.status?.description || 'rejected';
+		const submissionRow = await query(
+			`SELECT s.round_id, s.participant_id, p.test_cases
+			 FROM submissions s
+			 JOIN rounds r ON r.id = s.round_id
+			 JOIN problems p ON p.id = r.problem_id
+			 WHERE s.id = $1`,
+			[submissionId],
+		);
+		const testCases = submissionRow.rows[0]?.test_cases || [];
+		const expected = (testCases[0]?.expected ?? '').toString().trim();
+		const actual = result.stdout?.toString().trim() ?? '';
+		const passed = result.status?.id === 3 && expected !== '' && actual === expected ? 1 : 0;
+		const verdict = passed === 1
+			? 'accepted'
+			: (result.status?.description || 'rejected');
 		const updated = await query(
 			`UPDATE submissions SET verdict = $1, judge0_token = $2,
 				test_cases_passed = $3, test_cases_total = 1 WHERE id = $4 RETURNING *`,
 			[verdict, token, passed, submissionId],
 		);
-		const submissionData = await query(
-			`SELECT round_id, participant_id FROM submissions WHERE id = $1`,
-			[submissionId],
-		);
-		if (submissionData.rowCount) {
-			const { round_id: roundId, participant_id: participantId } = submissionData.rows[0];
+		if (submissionRow.rowCount) {
+			const { round_id: roundId, participant_id: participantId } = submissionRow.rows[0];
 			await query(
 				`UPDATE round_participants
 				 SET best_pass_percentage = GREATEST(best_pass_percentage, $1),
@@ -310,7 +299,7 @@ async function start() {
 			}
 		}
 		fastify.io?.emit('participant:progress', {
-			participant_id: participantId,
+			participant_id: submissionRow.rows[0]?.participant_id,
 			test_cases_passed: passed,
 			test_cases_total: 1,
 			solved: passed === 1,

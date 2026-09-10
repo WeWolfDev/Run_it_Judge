@@ -1,4 +1,5 @@
 judge0.conf
 .env
+secrets
 node_modules/
 .DS_Store

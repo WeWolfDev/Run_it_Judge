@@ -217,7 +217,66 @@ docker compose down
 
 Esto conserva PostgreSQL. No uses `docker compose down -v` salvo que quieras borrar los datos.
 
+## Despliegue en producción (gelatina.lat)
+
+Run It sirve en `https://runit.gelatina.lat` (Cloudflare → nginx TLS → servicios
+en loopback) desde `/root/judge` en el host gelatina-lat.
+
+Arquitectura de puertos (todos en `127.0.0.1`, nada expuesto al exterior):
+
+| Servicio | Puerto | Gestión |
+| --- | --- | --- |
+| Judge0 | 2358 | `docker compose up -d` en `/root/judge` |
+| PostgreSQL | 5433 (BD `run_it`, separada de la BD `judge0` de Judge0) | docker |
+| Redis (docker) | 6380 (el host ya usa 6379) | docker |
+| Backend Fastify | 3001 | `systemctl restart run-it-backend` |
+| Frontend SSR | 3002 | `systemctl restart run-it-frontend` |
+
+- `judge0.conf` (secretos de Judge0) y `run-it-backend/secrets` (env del
+  backend) no se versionan. Ambos requieren `chmod 440 judge0.conf` con
+  propietario `1000:999` para que el contenedor pueda leerlo.
+- Docker publica puertos fuera de UFW: por eso todos los binds son a
+  `127.0.0.1` explícito en `docker-compose.yml`.
+- El host usa cgroup v2 y el isolate de judge0 1.13.1 espera cgroup v1: se
+  evita `--cg` fijando `ENABLE_PER_PROCESS_AND_THREAD_TIME_LIMIT=true` y
+  `ENABLE_PER_PROCESS_AND_THREAD_MEMORY_LIMIT=true` en `judge0.conf`.
+- El backend no arranca sin `DATABASE_URL`; `RUN_IT_SEED_DEMO=true` solo
+  siembra datos demo (desactivado en producción). `ADMIN_ACCESS_CODE` define
+  el código del usuario `admin` y no tiene valor por defecto.
+- El CORS (HTTP y Socket.io) se restringe con `ALLOWED_ORIGINS`; en
+  producción: `https://runit.gelatina.lat`.
+- El endpoint público `POST /submissions` (ejecución arbitraria sin auth) se
+  eliminó; la única vía de ejecución es `POST /rounds/:id/submissions` con
+  sesión de participante y ronda activa.
+- El frontend se compila para mismo origen (`VITE_API_URL=""`,
+  `VITE_SOCKET_URL=/`) con preset Node: `nitro: { preset: "node-server" }` en
+  `frontend/vite.config.ts`; nginx enruta `/socket.io/` y las rutas de API al
+  backend (`nginx -t` antes de recargar).
+- El worker de submissions compara `stdout` con el `expected` del problema
+  (antes daba por resuelto cualquier salida no vacía).
+
+Ciclo de despliegue del frontend:
+
+```bash
+cd frontend && VITE_API_URL="" VITE_SOCKET_URL="/" npm run build
+systemctl restart run-it-frontend
+```
+
 ## Bitácora de cambios
+
+### 2026-09-10: producción en gelatina.lat (runit.gelatina.lat)
+
+- Seguridad: eliminado `POST /submissions` sin auth, CORS restringido por
+  `ALLOWED_ORIGINS`, secretos fuera del código (`judge0.conf` y
+  `run-it-backend/secrets`, no versionados), seed demo condicionado a
+  `RUN_IT_SEED_DEMO`, código admin por `ADMIN_ACCESS_CODE`.
+- Corregida la colisión de esquema: Run It usa su propia base de datos
+  `run_it` (Judge0 Rails usa la BD `judge0` y también define `submissions`,
+  `users` y `problems`).
+- Scoring corregido: el worker compara la salida con el `expected` del
+  problema en vez de aceptar cualquier salida.
+- Desplegado con judge0 1.13.1 fijo, systemd (`run-it-backend`,
+  `run-it-frontend`), nginx `runit.gelatina.lat` con TLS Let's Encrypt.
 
 ### 2026-09-09: arranque local reproducible
 
