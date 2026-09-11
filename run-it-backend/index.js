@@ -6,8 +6,8 @@ const { Server } = require('socket.io');
 const { initDb, query, withTransaction } = require('./db');
 const { submissionQueue, startSubmissionWorker } = require('./queue');
 const { setSession, getSession, deleteSession, memorySessions } = require('./session-store');
-
-const submissionRate = new Map();
+const { allowSubmission } = require('./rate-limit');
+const { evaluateSubmission } = require('./scoring');
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:8080,http://127.0.0.1:8080')
 	.split(',')
@@ -360,11 +360,15 @@ fastify.get('/rounds/:id/state', async (request) => {
 fastify.post('/rounds/:id/submissions', async (request, reply) => {
 	if (await requireRole(request, reply, 'participant')) return;
 	const { participantId, code, language } = request.body || {};
-	const recent = submissionRate.get(request.user.id) || 0;
-	if (Date.now() - recent < 1000) return reply.code(429).send({ error: 'Espera antes de enviar otra solución' });
-	submissionRate.set(request.user.id, Date.now());
-	const round = await query("SELECT * FROM rounds WHERE id = $1 AND status = 'active'", [request.params.id]);
+	const allowed = await allowSubmission(request.user.id);
+	if (!allowed) return reply.code(429).send({ error: 'Espera antes de enviar otra solución' });
+	const round = await query(
+		`SELECT r.*, p.test_cases FROM rounds r JOIN problems p ON p.id = r.problem_id
+		 WHERE r.id = $1 AND r.status = 'active'`,
+		[request.params.id],
+	);
 	if (!round.rowCount) return reply.code(409).send({ error: 'La ronda no está activa' });
+	const testCases = round.rows[0].test_cases || [];
 	const participant = await query(
 		`SELECT id FROM participants WHERE id = $1 AND user_id = $2 AND tournament_id = $3`,
 		[participantId, request.user.id, round.rows[0].tournament_id],
@@ -383,6 +387,7 @@ fastify.post('/rounds/:id/submissions', async (request, reply) => {
 		language,
 		roundId: request.params.id,
 		participantId,
+		testCases,
 	});
 	fastify.io?.emit('submission:queued', submission.rows[0]);
 	return reply.code(202).send(submission.rows[0]);
@@ -431,26 +436,17 @@ async function start() {
 	await initDb();
 	await fastify.listen({ port: Number(process.env.PORT || 3000), host: '127.0.0.1' });
 	fastify.io = new Server(fastify.server, { cors: { origin: allowedOrigins } });
-	startSubmissionWorker(async ({ submissionId, result, token }) => {
+	startSubmissionWorker(async ({ submissionId, testCases, results }) => {
 		const submissionRow = await query(
-			`SELECT s.round_id, s.participant_id, p.test_cases
-			 FROM submissions s
-			 JOIN rounds r ON r.id = s.round_id
-			 JOIN problems p ON p.id = r.problem_id
-			 WHERE s.id = $1`,
+			'SELECT round_id, participant_id FROM submissions WHERE id = $1',
 			[submissionId],
 		);
-		const testCases = submissionRow.rows[0]?.test_cases || [];
-		const expected = (testCases[0]?.expected ?? '').toString().trim();
-		const actual = result.stdout?.toString().trim() ?? '';
-		const passed = result.status?.id === 3 && expected !== '' && actual === expected ? 1 : 0;
-		const verdict = passed === 1
-			? 'accepted'
-			: (result.status?.description || 'rejected');
+		const evaluation = evaluateSubmission(testCases, results);
+		const tokens = (results || []).map((result) => result?.token).filter(Boolean).join(',') || null;
 		const updated = await query(
 			`UPDATE submissions SET verdict = $1, judge0_token = $2,
-				test_cases_passed = $3, test_cases_total = 1 WHERE id = $4 RETURNING *`,
-			[verdict, token, passed, submissionId],
+				test_cases_passed = $3, test_cases_total = $4 WHERE id = $5 RETURNING *`,
+			[evaluation.verdict, tokens, evaluation.passed, evaluation.total, submissionId],
 		);
 		if (submissionRow.rowCount) {
 			const { round_id: roundId, participant_id: participantId } = submissionRow.rows[0];
@@ -460,7 +456,7 @@ async function start() {
 				     solved_at = CASE WHEN $2 THEN COALESCE(solved_at, now()) ELSE solved_at END,
 				     failed_attempts_count = failed_attempts_count + CASE WHEN $2 THEN 0 ELSE 1 END
 				 WHERE round_id = $3 AND participant_id = $4`,
-				[passed * 100, passed === 1, roundId, participantId],
+				[evaluation.percentage, evaluation.solved, roundId, participantId],
 			);
 			const capacityResult = await query('SELECT capacity FROM rounds WHERE id = $1', [roundId]);
 			const solvedResult = await query(
@@ -474,9 +470,9 @@ async function start() {
 		}
 		fastify.io?.emit('participant:progress', {
 			participant_id: submissionRow.rows[0]?.participant_id,
-			test_cases_passed: passed,
-			test_cases_total: 1,
-			solved: passed === 1,
+			test_cases_passed: evaluation.passed,
+			test_cases_total: evaluation.total,
+			solved: evaluation.solved,
 		});
 		return updated.rows[0];
 	});

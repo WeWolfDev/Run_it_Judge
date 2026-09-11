@@ -1,5 +1,5 @@
 const { Queue, Worker } = require('bullmq');
-const { createSubmission, waitForSubmission } = require('./judge0-client');
+const { runTestCases } = require('./judge0-client');
 
 const connection = {
   host: process.env.REDIS_HOST || 'localhost',
@@ -13,9 +13,8 @@ function startSubmissionWorker(processSubmission) {
   return new Worker(
     'run-it-submissions',
     async (job) => {
-      const created = await createSubmission(job.data.code, job.data.language);
-      const result = await waitForSubmission(created.token);
-      return processSubmission({ ...job.data, result, token: created.token });
+      const results = await runTestCases(job.data.code, job.data.language, job.data.testCases);
+      return processSubmission({ ...job.data, results });
     },
     { connection, concurrency: Number(process.env.SUBMISSION_CONCURRENCY || 4) },
   );
