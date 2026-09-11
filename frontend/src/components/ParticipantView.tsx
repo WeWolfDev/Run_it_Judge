@@ -2,12 +2,32 @@ import { useEffect, useState } from "react";
 import { formatClock, MOCK_ROUND } from "@/lib/runit";
 import { useRoundTimer } from "@/hooks/use-round-timer";
 import { getActiveRound, joinRound, submitRound } from "@/lib/api";
-import { getSession } from "@/lib/session";
+import { getSelectedCharacter, getSession, setSelectedCharacter as saveSelectedCharacter } from "@/lib/session";
 
 const STARTER = `def max_sliding_window(nums, k):
     # tu solución aquí
     return []
 `;
+
+const CHARACTERS = [
+  { name: "Aurora", title: "La veloz", silk: 0 },
+  { name: "Nilo", title: "El estratega", silk: 1 },
+  { name: "Mango", title: "El constante", silk: 2 },
+  { name: "Sol", title: "La precisa", silk: 3 },
+  { name: "Pixel", title: "El veloz", silk: 4 },
+  { name: "Nova", title: "La resistente", silk: 5 },
+] as const;
+
+function HorseIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 64 64" className={className} aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M12 46c0-9 5-14 12-17l4-9c1-3 4-6 8-7l6-2 3 5-4 3 2 4c4 2 6 6 6 11l4 3-3 4-4-2c-1 4-4 7-8 9l1 8h-5l-1-7-8 1-2 6h-5l1-7-4-1-3 4-3-2z"
+      />
+    </svg>
+  );
+}
 
 export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_ROUND }) {
   const [activeRound, setActiveRound] = useState(round);
@@ -20,6 +40,8 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
   const [language, setLanguage] = useState("python");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const username = getSession()?.username || "demo";
+  const [selectedCharacter, setSelectedCharacterState] = useState(() => getSelectedCharacter(username));
   const passed = 0;
   const totalTests = testCases.length;
   const pct = totalTests ? Math.round((passed / totalTests) * 100) : 0;
@@ -30,7 +52,7 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
     try {
       const result = participantId
         ? await submitRound(String(displayedRound.round_id), participantId, code, language)
-        : await joinRound(String(displayedRound.round_id), getSession()?.username || "demo").then(async (participant) => {
+        : await joinRound(String(displayedRound.round_id), username).then(async (participant) => {
             setParticipantId(participant.id);
             return submitRound(String(displayedRound.round_id), participant.id, code, language);
           });
@@ -70,6 +92,41 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
         </p>
       </header>
 
+      <section className="rounded-xl border border-border bg-card p-5">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-widest text-muted-foreground">Tu corredor</p>
+            <h2 className="mt-1 text-lg font-semibold text-foreground">Elige tu personaje</h2>
+          </div>
+          <p className="text-xs text-muted-foreground">{CHARACTERS[selectedCharacter].name} seleccionado</p>
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
+          {CHARACTERS.map((character, index) => {
+            const selected = selectedCharacter === index;
+            return (
+              <button
+                key={character.name}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => {
+                  saveSelectedCharacter(username, index);
+                  setSelectedCharacterState(index);
+                }}
+                className={`group rounded-lg border p-3 text-center transition-colors ${
+                  selected
+                    ? "border-primary bg-primary/10 ring-2 ring-primary/20"
+                    : "border-border bg-muted hover:border-primary/50"
+                }`}
+              >
+                <HorseIcon className={`mx-auto h-10 w-10 text-silk-${character.silk} transition-transform group-hover:-translate-y-1`} />
+                <span className="mt-2 block text-xs font-semibold text-foreground">{character.name}</span>
+                <span className="mt-0.5 block text-[10px] text-muted-foreground">{character.title}</span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
       <section className="rounded-xl border border-border bg-card px-5 py-4">
         <div className="relative h-10">
           <div
@@ -79,12 +136,7 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
             <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-medium text-primary-foreground">
               tú
             </span>
-            <svg viewBox="0 0 64 64" className="h-7 w-7 animate-gallop text-silk-4" aria-hidden="true">
-              <path
-                fill="currentColor"
-                d="M12 46c0-9 5-14 12-17l4-9c1-3 4-6 8-7l6-2 3 5-4 3 2 4c4 2 6 6 6 11l4 3-3 4-4-2c-1 4-4 7-8 9l1 8h-5l-1-7-8 1-2 6h-5l1-7-4-1-3 4-3-2z"
-              />
-            </svg>
+            <HorseIcon className={`h-7 w-7 animate-gallop text-silk-${selectedCharacter}`} />
           </div>
           <div className="absolute bottom-0 h-1.5 w-full rounded-full bg-muted">
             <div
