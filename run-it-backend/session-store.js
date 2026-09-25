@@ -3,47 +3,70 @@ const Redis = require('ioredis');
 const memorySessions = new Map();
 const ttlSeconds = Number(process.env.SESSION_TTL_SECONDS || 28800);
 const useRedis = process.env.SESSION_STORE === 'redis';
+const redisConnectTimeoutMs = Number(process.env.REDIS_CONNECT_TIMEOUT_MS || 3000);
 let redis;
-let redisReady;
 
 if (useRedis) {
   redis = new Redis({
     host: process.env.REDIS_HOST || 'localhost',
     port: Number(process.env.REDIS_PORT || 6379),
     password: process.env.REDIS_PASSWORD || undefined,
-    lazyConnect: true,
     enableOfflineQueue: false,
     maxRetriesPerRequest: 1,
-    retryStrategy: () => null,
+    retryStrategy: (attempt) => Math.min(attempt * 250, 2000),
   });
-  redisReady = redis.connect().catch(() => false);
+}
+
+async function waitForRedis() {
+  if (!redis) return;
+  if (redis.status === 'ready') return;
+
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('Redis de sesiones no está disponible'));
+    }, redisConnectTimeoutMs);
+    const onReady = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error('Redis de sesiones no está disponible'));
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      redis.off('ready', onReady);
+      redis.off('error', onError);
+    };
+
+    redis.once('ready', onReady);
+    redis.once('error', onError);
+    if (redis.status === 'end') redis.connect().catch(onError);
+  });
 }
 
 async function setSession(token, user) {
   if (redis) {
-    if (!(await redisReady) || redis.status !== 'ready') {
-      throw new Error('Redis de sesiones no está disponible');
-    }
+    await waitForRedis();
     await redis.set(`run-it:session:${token}`, JSON.stringify(user), 'EX', ttlSeconds);
+    return;
   }
   memorySessions.set(token, user);
 }
 
 async function getSession(token) {
   if (!redis) return memorySessions.get(token) || null;
-  if (!(await redisReady) || redis.status !== 'ready') {
-    throw new Error('Redis de sesiones no está disponible');
-  }
+  await waitForRedis();
   const value = await redis.get(`run-it:session:${token}`);
   return value ? JSON.parse(value) : null;
 }
 
 async function deleteSession(token) {
   if (redis) {
-    if (!(await redisReady) || redis.status !== 'ready') {
-      throw new Error('Redis de sesiones no está disponible');
-    }
+    await waitForRedis();
     await redis.del(`run-it:session:${token}`);
+    return;
   }
   memorySessions.delete(token);
 }
@@ -56,7 +79,9 @@ function getSessionStoreStatus() {
 }
 
 async function closeSessionStore() {
-  if (redis) await redis.quit().catch(() => undefined);
+  if (!redis) return;
+  if (redis.status === 'ready') await redis.quit().catch(() => undefined);
+  else redis.disconnect();
 }
 
 module.exports = {

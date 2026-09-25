@@ -74,14 +74,94 @@ export interface RunItFeed {
 /* ------------------------------- datos mock ------------------------------ */
 
 export const MOCK_PARTICIPANTS: Participant[] = [
-  { participant_id: "p1", name: "ada_lovelace", lane: 1, silk: 0, test_cases_passed: 7, test_cases_total: 10, attempts: 3, solved: false, status: "racing" },
-  { participant_id: "p2", name: "linus_t", lane: 2, silk: 1, test_cases_passed: 10, test_cases_total: 10, attempts: 2, solved: true, status: "solved" },
-  { participant_id: "p3", name: "grace_h", lane: 3, silk: 2, test_cases_passed: 4, test_cases_total: 10, attempts: 5, solved: false, status: "racing" },
-  { participant_id: "p4", name: "kernighan", lane: 4, silk: 3, test_cases_passed: 0, test_cases_total: 10, attempts: 4, solved: false, status: "eliminated" },
-  { participant_id: "p5", name: "margaret_h", lane: 5, silk: 4, test_cases_passed: 6, test_cases_total: 10, attempts: 1, solved: false, status: "racing" },
-  { participant_id: "p6", name: "dijkstra", lane: 6, silk: 5, test_cases_passed: 9, test_cases_total: 10, attempts: 6, solved: false, status: "racing" },
-  { participant_id: "p7", name: "hopper_jr", lane: 7, silk: 1, test_cases_passed: 2, test_cases_total: 10, attempts: 2, solved: false, status: "racing" },
-  { participant_id: "p8", name: "turing_a", lane: 8, silk: 0, test_cases_passed: 0, test_cases_total: 10, attempts: 1, solved: false, status: "past" },
+  {
+    participant_id: "p1",
+    name: "ada_lovelace",
+    lane: 1,
+    silk: 0,
+    test_cases_passed: 7,
+    test_cases_total: 10,
+    attempts: 3,
+    solved: false,
+    status: "racing",
+  },
+  {
+    participant_id: "p2",
+    name: "linus_t",
+    lane: 2,
+    silk: 1,
+    test_cases_passed: 10,
+    test_cases_total: 10,
+    attempts: 2,
+    solved: true,
+    status: "solved",
+  },
+  {
+    participant_id: "p3",
+    name: "grace_h",
+    lane: 3,
+    silk: 2,
+    test_cases_passed: 4,
+    test_cases_total: 10,
+    attempts: 5,
+    solved: false,
+    status: "racing",
+  },
+  {
+    participant_id: "p4",
+    name: "kernighan",
+    lane: 4,
+    silk: 3,
+    test_cases_passed: 0,
+    test_cases_total: 10,
+    attempts: 4,
+    solved: false,
+    status: "eliminated",
+  },
+  {
+    participant_id: "p5",
+    name: "margaret_h",
+    lane: 5,
+    silk: 4,
+    test_cases_passed: 6,
+    test_cases_total: 10,
+    attempts: 1,
+    solved: false,
+    status: "racing",
+  },
+  {
+    participant_id: "p6",
+    name: "dijkstra",
+    lane: 6,
+    silk: 5,
+    test_cases_passed: 9,
+    test_cases_total: 10,
+    attempts: 6,
+    solved: false,
+    status: "racing",
+  },
+  {
+    participant_id: "p7",
+    name: "hopper_jr",
+    lane: 7,
+    silk: 1,
+    test_cases_passed: 2,
+    test_cases_total: 10,
+    attempts: 2,
+    solved: false,
+    status: "racing",
+  },
+  {
+    participant_id: "p8",
+    name: "turing_a",
+    lane: 8,
+    silk: 0,
+    test_cases_passed: 0,
+    test_cases_total: 10,
+    attempts: 1,
+    solved: false,
+    status: "past",
+  },
 ];
 
 export const MOCK_ROUND: RoundStartedEvent = {
@@ -136,9 +216,7 @@ export function createMockFeed(participants: Participant[]): RunItFeed {
   };
 }
 
-export function createSocketFeed(
-  roundId = import.meta.env["VITE_ROUND_ID"],
-): RunItFeed | null {
+export function createSocketFeed(roundId = import.meta.env["VITE_ROUND_ID"]): RunItFeed | null {
   const socketUrl = import.meta.env["VITE_SOCKET_URL"];
   if (!socketUrl) return null;
 

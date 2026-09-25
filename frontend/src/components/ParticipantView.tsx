@@ -2,7 +2,11 @@ import { useEffect, useState } from "react";
 import { formatClock, MOCK_ROUND } from "@/lib/runit";
 import { useRoundTimer } from "@/hooks/use-round-timer";
 import { getActiveRound, joinRound, submitRound } from "@/lib/api";
-import { getSelectedCharacter, getSession, setSelectedCharacter as saveSelectedCharacter } from "@/lib/session";
+import {
+  getSelectedCharacter,
+  getSession,
+  setSelectedCharacter as saveSelectedCharacter,
+} from "@/lib/session";
 
 const STARTER = `def max_sliding_window(nums, k):
     # tu solución aquí
@@ -31,7 +35,9 @@ function HorseIcon({ className }: { className?: string }) {
 
 export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_ROUND }) {
   const [activeRound, setActiveRound] = useState(round);
-  const [statement, setStatement] = useState("Dado un problema, resuelve la solución y envíala para evaluación.");
+  const [statement, setStatement] = useState(
+    "Dado un problema, resuelve la solución y envíala para evaluación.",
+  );
   const [participantId, setParticipantId] = useState("");
   const displayedRound = activeRound;
   const remaining = useRoundTimer(displayedRound.ends_at);
@@ -40,7 +46,9 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const username = getSession()?.username || "demo";
-  const [selectedCharacter, setSelectedCharacterState] = useState(() => getSelectedCharacter(username));
+  const [selectedCharacter, setSelectedCharacterState] = useState(() =>
+    getSelectedCharacter(username),
+  );
 
   const send = async () => {
     setSending(true);
@@ -61,16 +69,18 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
   };
 
   useEffect(() => {
-    void getActiveRound().then((remote) => {
-      if (!remote) return;
-      setStatement(remote.statement);
-      setActiveRound({
-        round_id: remote.id,
-        ends_at: new Date(remote.ends_at).getTime(),
-        problem: remote.problem_name,
-        capacity: remote.capacity,
-      });
-    }).catch(() => undefined);
+    void getActiveRound()
+      .then((remote) => {
+        if (!remote) return;
+        setStatement(remote.statement);
+        setActiveRound({
+          round_id: remote.id,
+          ends_at: new Date(remote.ends_at).getTime(),
+          problem: remote.problem_name,
+          capacity: remote.capacity,
+        });
+      })
+      .catch(() => undefined);
   }, []);
 
   return (
@@ -115,9 +125,15 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
                     : "border-border bg-muted hover:border-primary/50"
                 }`}
               >
-                <HorseIcon className={`mx-auto h-10 w-10 text-silk-${character.silk} transition-transform group-hover:-translate-y-1`} />
-                <span className="mt-2 block text-xs font-semibold text-foreground">{character.name}</span>
-                <span className="mt-0.5 block text-[10px] text-muted-foreground">{character.title}</span>
+                <HorseIcon
+                  className={`mx-auto h-10 w-10 text-silk-${character.silk} transition-transform group-hover:-translate-y-1`}
+                />
+                <span className="mt-2 block text-xs font-semibold text-foreground">
+                  {character.name}
+                </span>
+                <span className="mt-0.5 block text-[10px] text-muted-foreground">
+                  {character.title}
+                </span>
               </button>
             );
           })}
@@ -125,9 +141,12 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
       </section>
 
       <section className="rounded-xl border border-border bg-card px-5 py-4">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground">Estado de la evaluación</p>
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">
+          Estado de la evaluación
+        </p>
         <p className="mt-2 text-sm text-foreground">
-          Los casos de prueba son privados. El veredicto aparecerá después de que Judge0 procese tu envío.
+          Los casos de prueba son privados. El veredicto aparecerá después de que Judge0 procese tu
+          envío.
         </p>
       </section>
 
@@ -135,13 +154,19 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
         <div className="space-y-5">
           <section className="rounded-xl border border-border bg-card p-5">
             <h2 className="text-sm font-semibold text-foreground">Enunciado</h2>
-            <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">{statement}</p>
+            <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+              {statement}
+            </p>
           </section>
         </div>
 
         <section className="overflow-hidden rounded-xl border border-border bg-editor">
           <div className="flex items-center justify-between border-b border-editor-border px-4 py-2.5">
-            <select value={language} onChange={(event) => setLanguage(event.target.value)} className="rounded-md border border-editor-border bg-editor px-2 py-1 font-mono text-xs text-editor-foreground outline-none">
+            <select
+              value={language}
+              onChange={(event) => setLanguage(event.target.value)}
+              className="rounded-md border border-editor-border bg-editor px-2 py-1 font-mono text-xs text-editor-foreground outline-none"
+            >
               <option value="python">Python 3</option>
               <option value="javascript">JavaScript</option>
             </select>
@@ -154,14 +179,27 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
             className="h-96 w-full resize-none bg-editor px-4 py-3 font-mono text-sm text-editor-foreground outline-none"
           />
           <div className="flex justify-end gap-3 border-t border-editor-border px-4 py-3">
-            <button type="button" onClick={() => setMessage("Prueba local pendiente de test cases del problema.")} className="rounded-lg border border-editor-border px-4 py-2 text-sm font-medium text-editor-foreground transition-colors hover:bg-white/5">
+            <button
+              type="button"
+              onClick={() => setMessage("Prueba local pendiente de test cases del problema.")}
+              className="rounded-lg border border-editor-border px-4 py-2 text-sm font-medium text-editor-foreground transition-colors hover:bg-white/5"
+            >
               Probar
             </button>
-            <button type="button" onClick={() => void send()} disabled={sending} className="rounded-lg bg-info px-4 py-2 text-sm font-medium text-info-foreground transition-opacity hover:opacity-90 disabled:opacity-50">
+            <button
+              type="button"
+              onClick={() => void send()}
+              disabled={sending}
+              className="rounded-lg bg-info px-4 py-2 text-sm font-medium text-info-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
               Enviar solución
             </button>
           </div>
-          {message && <p className="border-t border-editor-border px-4 py-2 text-xs text-editor-muted">{message}</p>}
+          {message && (
+            <p className="border-t border-editor-border px-4 py-2 text-xs text-editor-muted">
+              {message}
+            </p>
+          )}
         </section>
       </div>
     </div>

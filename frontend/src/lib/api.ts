@@ -15,7 +15,10 @@ export async function login(username: string, accessCode: string) {
 
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "No se pudo iniciar sesión");
-  return body as { token: string; user: { id: string; username: string; role: "admin" | "participant" } };
+  return body as {
+    token: string;
+    user: { id: string; username: string; role: "admin" | "participant" };
+  };
 }
 
 export async function logout() {
@@ -115,13 +118,15 @@ export async function getRoundLeaderboard(roundId: string) {
     headers: authHeaders(),
   });
   if (!response.ok) throw new Error("No se pudo cargar el ranking");
-  return response.json() as Promise<Array<{
-    participant_id: string;
-    display_name: string;
-    final_rank: number | null;
-    best_pass_percentage: number;
-    failed_attempts_count: number;
-  }>>;
+  return response.json() as Promise<
+    Array<{
+      participant_id: string;
+      display_name: string;
+      final_rank: number | null;
+      best_pass_percentage: number;
+      failed_attempts_count: number;
+    }>
+  >;
 }
 
 export async function getRoundSubmissions(roundId: string) {
@@ -129,16 +134,18 @@ export async function getRoundSubmissions(roundId: string) {
     headers: authHeaders(),
   });
   if (!response.ok) throw new Error("No se pudieron cargar los resultados");
-  return response.json() as Promise<Array<{
-    id: string;
-    participant_id: string;
-    display_name: string;
-    language: string;
-    verdict: string;
-    test_cases_passed: number;
-    test_cases_total: number;
-    submitted_at: string;
-  }>>;
+  return response.json() as Promise<
+    Array<{
+      id: string;
+      participant_id: string;
+      display_name: string;
+      language: string;
+      verdict: string;
+      test_cases_passed: number;
+      test_cases_total: number;
+      submitted_at: string;
+    }>
+  >;
 }
 
 export function apiUrl(path: string) {
@@ -195,7 +202,12 @@ export async function joinRound(roundId: string, displayName: string) {
   return body as { id: string; display_name: string };
 }
 
-export async function submitRound(roundId: string, participantId: string, code: string, language: string) {
+export async function submitRound(
+  roundId: string,
+  participantId: string,
+  code: string,
+  language: string,
+) {
   const response = await fetch(`${API_URL}/rounds/${roundId}/submissions`, {
     method: "POST",
     headers: { "content-type": "application/json", ...authHeaders() },

@@ -60,11 +60,12 @@ function waitForEvent(socket, event, timeoutMs = 30_000) {
   });
 }
 
-function connectSocket() {
+function connectSocket(token) {
   const { io } = require(path.join(repoRoot, "frontend", "node_modules", "socket.io-client"));
   return io(apiUrl, {
     transports: ["websocket", "polling"],
     timeout: 10_000,
+    auth: { token },
   });
 }
 
@@ -231,8 +232,12 @@ async function main() {
     });
     participantId = joined.id;
 
+    const publicRound = await request("/public/rounds/active");
+    assert.equal(publicRound.id, roundId);
+    assert.equal(publicRound.test_cases, undefined);
+
     console.log("4/8 Conectar Socket.IO y entrar en la sala de la ronda");
-    socket = connectSocket();
+    socket = connectSocket(adminToken);
     await waitForConnect(socket);
     socket.emit("round:join", roundId);
     await new Promise((resolve) => setTimeout(resolve, 150));
