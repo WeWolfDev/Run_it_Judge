@@ -1,4 +1,4 @@
-const fastify = require('fastify')({ logger: true });
+const fastify = require('fastify')({ logger: true, trustProxy: ['127.0.0.1', '::1'] });
 
 const crypto = require('node:crypto');
 const cors = require('@fastify/cors');
@@ -14,6 +14,70 @@ const {
 } = require('./session-store');
 
 const submissionRate = new Map();
+const authFailures = new Map();
+const authFailureWindowMs = Number(process.env.AUTH_FAILURE_WINDOW_MS || 15 * 60 * 1000);
+const authFailureLimit = Number(process.env.AUTH_FAILURE_LIMIT || 5);
+
+function normalizeAuthIdentity(value) {
+	return String(value || '').trim().toLowerCase().slice(0, 128);
+}
+
+function getAuthFailure(key) {
+	const now = Date.now();
+	const current = authFailures.get(key);
+	if (!current || now - current.firstFailureAt >= authFailureWindowMs) {
+		authFailures.delete(key);
+		return null;
+	}
+	return current;
+}
+
+function authRetryAfter(request, identity) {
+	const keys = [`ip:${request.ip}`];
+	const normalizedIdentity = normalizeAuthIdentity(identity);
+	if (normalizedIdentity) keys.push(`identity:${normalizedIdentity}`);
+
+	let retryAfterMs = 0;
+	for (const key of keys) {
+		const failure = getAuthFailure(key);
+		if (!failure) continue;
+		const remainingMs = authFailureWindowMs - (Date.now() - failure.firstFailureAt);
+		if (failure.count >= authFailureLimit) retryAfterMs = Math.max(retryAfterMs, remainingMs);
+	}
+	return Math.ceil(retryAfterMs / 1000);
+}
+
+function rejectLimitedAuth(request, reply, identity) {
+	const retryAfter = authRetryAfter(request, identity);
+	if (!retryAfter) return false;
+	reply.header('Retry-After', String(retryAfter));
+	return reply.code(429).send({ error: 'Demasiados intentos; prueba más tarde' });
+}
+
+function recordAuthFailure(request, identity) {
+	const now = Date.now();
+	const keys = [`ip:${request.ip}`];
+	const normalizedIdentity = normalizeAuthIdentity(identity);
+	if (normalizedIdentity) keys.push(`identity:${normalizedIdentity}`);
+
+	for (const key of keys) {
+		const current = getAuthFailure(key);
+		if (current) current.count += 1;
+		else authFailures.set(key, { count: 1, firstFailureAt: now });
+	}
+}
+
+function clearIdentityAuthFailures(identity) {
+	const normalizedIdentity = normalizeAuthIdentity(identity);
+	if (normalizedIdentity) authFailures.delete(`identity:${normalizedIdentity}`);
+}
+
+setInterval(() => {
+	const now = Date.now();
+	for (const [key, failure] of authFailures) {
+		if (now - failure.firstFailureAt >= authFailureWindowMs) authFailures.delete(key);
+	}
+}, authFailureWindowMs).unref();
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:8080,http://127.0.0.1:8080')
 	.split(',')
@@ -38,16 +102,24 @@ fastify.get('/ready', async (request, reply) => {
 });
 
 fastify.post('/auth/login', async (request, reply) => {
-	const { username, accessCode } = request.body || {};
+	const username = String(request.body?.username || '').trim();
+	const accessCode = String(request.body?.accessCode || '').trim();
+	if (!username || username.length > 128 || !accessCode || accessCode.length > 256) {
+		return reply.code(400).send({ error: 'Credenciales inválidas' });
+	}
+	if (rejectLimitedAuth(request, reply, username)) return;
+
 	const result = await query(
 		'SELECT id, username, role FROM users WHERE username = $1 AND access_code = $2',
 		[username, accessCode],
 	);
 
 	if (result.rowCount === 0) {
+		recordAuthFailure(request, username);
 		return reply.code(401).send({ error: 'Credenciales inválidas' });
 	}
 
+	clearIdentityAuthFailures(username);
 	const user = result.rows[0];
 	const token = crypto.randomUUID();
 	await setSession(token, user);
@@ -58,9 +130,10 @@ fastify.post('/auth/register', async (request, reply) => {
 	const username = String(request.body?.username || '').trim();
 	const accessCode = String(request.body?.accessCode || '').trim();
 
-	if (username.length < 3 || accessCode.length < 8) {
+	if (username.length < 3 || username.length > 128 || accessCode.length < 8 || accessCode.length > 256) {
 		return reply.code(400).send({ error: 'Usuario y código de acceso no válidos' });
 	}
+	if (rejectLimitedAuth(request, reply, username)) return;
 
 	try {
 		const user = await withTransaction(async (client) => {
@@ -89,6 +162,7 @@ fastify.post('/auth/register', async (request, reply) => {
 			return userResult.rows[0];
 		});
 
+		clearIdentityAuthFailures(username);
 		const token = crypto.randomUUID();
 		await setSession(token, user);
 		return { token, user };
@@ -97,6 +171,7 @@ fastify.post('/auth/register', async (request, reply) => {
 			return reply.code(409).send({ error: 'El nombre de usuario ya está en uso' });
 		}
 		if (error.code === 'ACCESS_CODE_UNAVAILABLE') {
+			recordAuthFailure(request, username);
 			return reply.code(409).send({ error: error.message });
 		}
 		throw error;
@@ -340,7 +415,7 @@ fastify.post('/rounds/:id/pause', async (request, reply) => {
 
 fastify.get('/public/rounds/active', async () => {
 	const result = await query(
-		`SELECT r.*, p.name AS problem_name, p.statement, p.difficulty, p.test_cases
+		`SELECT r.*, p.name AS problem_name, p.statement, p.difficulty
 		 FROM rounds r JOIN problems p ON p.id = r.problem_id
 		 WHERE r.status = 'active' ORDER BY r.started_at DESC LIMIT 1`,
 	);
@@ -405,23 +480,33 @@ fastify.post('/rounds/:id/submissions', async (request, reply) => {
 		 VALUES ($1, $2, $3, $4) RETURNING *`,
 		[request.params.id, participantId, code, language],
 	);
-	await submissionQueue.add('execute', {
-		submissionId: submission.rows[0].id,
-		code,
-		language,
-		roundId: request.params.id,
-		participantId,
-	});
 	const queued = submission.rows[0];
-	fastify.io?.emit('submission:queued', {
+	try {
+		await submissionQueue.add(
+			'execute',
+			{
+				submissionId: queued.id,
+				code,
+				language,
+				roundId: request.params.id,
+				participantId,
+			},
+			{ jobId: queued.id },
+		);
+	} catch (error) {
+		await query("UPDATE submissions SET verdict = 'queue_error' WHERE id = $1", [queued.id]);
+		throw error;
+	}
+	const publicSubmission = {
 		id: queued.id,
 		round_id: queued.round_id,
 		participant_id: queued.participant_id,
 		language: queued.language,
 		submitted_at: queued.submitted_at,
 		verdict: queued.verdict,
-	});
-	return reply.code(202).send(queued);
+	};
+	fastify.io?.emit('submission:queued', publicSubmission);
+	return reply.code(202).send(publicSubmission);
 });
 
 fastify.get('/rounds/:id/leaderboard', async (request) => {
@@ -463,20 +548,61 @@ fastify.get('/tournaments/:id/leaderboard', async (request, reply) => {
 	return result.rows;
 });
 
+async function canAccessSocketRound(user, roundId) {
+	if (typeof roundId !== 'string' || !/^[0-9a-f-]{36}$/i.test(roundId)) return false;
+	const round = await query('SELECT id FROM rounds WHERE id = $1', [roundId]);
+	if (!round.rowCount) return false;
+	if (user.role === 'admin') return true;
+
+	const participant = await query(
+		`SELECT 1 FROM round_participants rp
+		 JOIN participants p ON p.id = rp.participant_id
+		 WHERE rp.round_id = $1 AND p.user_id = $2 AND p.status = 'active'`,
+		[roundId, user.id],
+	);
+	return participant.rowCount > 0;
+}
+
 async function start() {
 	await initDb();
 	await fastify.listen({ port: Number(process.env.PORT || 3000), host: '127.0.0.1' });
 	fastify.io = new Server(fastify.server, { cors: { origin: allowedOrigins } });
-	startSubmissionWorker(async ({ submissionId, result, token }) => {
+	fastify.io.use(async (socket, next) => {
+		const authToken = typeof socket.handshake.auth?.token === 'string'
+			? socket.handshake.auth.token
+			: socket.handshake.headers.authorization?.replace(/^Bearer\s+/i, '');
+		if (!authToken) {
+			socket.data.user = null;
+			return next();
+		}
+		try {
+			const user = await getSession(authToken);
+			if (!user) return next(new Error('Sesión inválida'));
+			socket.data.user = user;
+			return next();
+		} catch (error) {
+			return next(new Error('Sesión no disponible'));
+		}
+	});
+	const submissionWorker = startSubmissionWorker(async ({ submissionId, result, token }) => {
 		const submissionRow = await query(
-			`SELECT s.round_id, s.participant_id, p.test_cases
+			`SELECT s.round_id, s.participant_id, s.verdict, p.test_cases,
+			        r.status AS round_status, r.ends_at, r.paused
 			 FROM submissions s
 			 JOIN rounds r ON r.id = s.round_id
 			 JOIN problems p ON p.id = r.problem_id
 			 WHERE s.id = $1`,
 			[submissionId],
 		);
-		const testCases = submissionRow.rows[0]?.test_cases || [];
+		if (!submissionRow.rowCount || submissionRow.rows[0].verdict !== 'queued') return null;
+		const submission = submissionRow.rows[0];
+		if (submission.round_status !== 'active' || submission.paused || new Date(submission.ends_at) <= new Date()) {
+			return query(
+				"UPDATE submissions SET verdict = 'round_unavailable' WHERE id = $1 AND verdict = 'queued' RETURNING *",
+				[submissionId],
+			).then((updateResult) => updateResult.rows[0] || null);
+		}
+		const testCases = Array.isArray(submission.test_cases) ? submission.test_cases : [];
 		const expected = (testCases[0]?.expected ?? '').toString().trim();
 		const actual = result.stdout?.toString().trim() ?? '';
 		const passed = result.status?.id === 3 && expected !== '' && actual === expected ? 1 : 0;
@@ -485,42 +611,98 @@ async function start() {
 			: (result.status?.description || 'rejected');
 		const updated = await query(
 			`UPDATE submissions SET verdict = $1, judge0_token = $2,
-				test_cases_passed = $3, test_cases_total = 1 WHERE id = $4 RETURNING *`,
+				test_cases_passed = $3, test_cases_total = 1
+			 WHERE id = $4 AND verdict = 'queued' RETURNING *`,
 			[verdict, token, passed, submissionId],
 		);
-		if (submissionRow.rowCount) {
-			const { round_id: roundId, participant_id: participantId } = submissionRow.rows[0];
-			await query(
-				`UPDATE round_participants
-				 SET best_pass_percentage = GREATEST(best_pass_percentage, $1),
-				     solved_at = CASE WHEN $2 THEN COALESCE(solved_at, now()) ELSE solved_at END,
-				     failed_attempts_count = failed_attempts_count + CASE WHEN $2 THEN 0 ELSE 1 END
-				 WHERE round_id = $3 AND participant_id = $4`,
-				[passed * 100, passed === 1, roundId, participantId],
-			);
-			const capacityResult = await query('SELECT capacity FROM rounds WHERE id = $1', [roundId]);
-			const solvedResult = await query(
-				`SELECT count(*)::int AS solved FROM round_participants
-				 WHERE round_id = $1 AND solved_at IS NOT NULL`,
-				[roundId],
-			);
-			if (capacityResult.rowCount && solvedResult.rows[0].solved >= capacityResult.rows[0].capacity) {
-				await closeRound(roundId);
-			}
+		if (!updated.rowCount) return null;
+
+		const { round_id: roundId, participant_id: participantId } = submission;
+		await query(
+			`UPDATE round_participants
+			 SET best_pass_percentage = GREATEST(best_pass_percentage, $1),
+			     solved_at = CASE WHEN $2 THEN COALESCE(solved_at, now()) ELSE solved_at END,
+			     failed_attempts_count = failed_attempts_count + CASE WHEN $2 THEN 0 ELSE 1 END
+			 WHERE round_id = $3 AND participant_id = $4`,
+			[passed * 100, passed === 1, roundId, participantId],
+		);
+		const capacityResult = await query('SELECT capacity FROM rounds WHERE id = $1', [roundId]);
+		const solvedResult = await query(
+			`SELECT count(*)::int AS solved FROM round_participants
+			 WHERE round_id = $1 AND solved_at IS NOT NULL`,
+			[roundId],
+		);
+		if (capacityResult.rowCount && solvedResult.rows[0].solved >= capacityResult.rows[0].capacity) {
+			await closeRound(roundId);
 		}
-		fastify.io?.emit('participant:progress', {
-			participant_id: submissionRow.rows[0]?.participant_id,
+		const progress = {
+			participant_id: submission.participant_id,
 			test_cases_passed: passed,
 			test_cases_total: 1,
 			solved: passed === 1,
-		});
+		};
+		fastify.io?.to(`round:${submission.round_id}`).emit('participant:progress', progress);
+		fastify.io?.emit('participant:progress', progress);
 		return updated.rows[0];
 	});
+	submissionWorker.on('error', (error) => {
+		fastify.log.error(error, 'Submission worker error');
+	});
+	submissionWorker.on('failed', (job, error) => {
+		void (async () => {
+			fastify.log.error({ error, submissionId: job?.data?.submissionId }, 'Submission failed');
+			if (!job?.data?.submissionId) return;
+			const failed = await query(
+				`UPDATE submissions SET verdict = 'judge_error'
+				 WHERE id = $1 AND verdict = 'queued' RETURNING id, round_id, participant_id`,
+				[job.data.submissionId],
+			);
+			if (failed.rowCount) {
+				fastify.io?.emit('submission:queued', {
+					id: failed.rows[0].id,
+					round_id: failed.rows[0].round_id,
+					participant_id: failed.rows[0].participant_id,
+					verdict: 'judge_error',
+				});
+			}
+		})().catch((updateError) => fastify.log.error(updateError, 'Could not mark failed submission'));
+	});
 	fastify.io.on('connection', (socket) => {
-		socket.on('round:join', (roundId) => socket.join(`round:${roundId}`));
+		socket.on('round:join', async (roundId) => {
+			if (!socket.data.user) {
+				socket.emit('socket:error', { error: 'Sesión requerida' });
+				return;
+			}
+			try {
+				if (!(await canAccessSocketRound(socket.data.user, roundId))) {
+					socket.emit('socket:error', { error: 'Ronda no disponible' });
+					return;
+				}
+				await socket.join(`round:${roundId}`);
+			} catch (error) {
+				socket.emit('socket:error', { error: 'No se pudo validar la ronda' });
+			}
+		});
 		socket.on('round:snapshot', async (roundId) => {
-			const result = await query('SELECT * FROM rounds WHERE id = $1', [roundId]);
-			socket.emit('round:snapshot', result.rows[0] || null);
+			if (!socket.data.user) {
+				socket.emit('socket:error', { error: 'Sesión requerida' });
+				return;
+			}
+			try {
+				if (!(await canAccessSocketRound(socket.data.user, roundId))) {
+					socket.emit('round:snapshot', null);
+					return;
+				}
+				const result = await query(
+					`SELECT r.*, p.name AS problem_name, p.statement, p.difficulty
+					 FROM rounds r JOIN problems p ON p.id = r.problem_id
+					 WHERE r.id = $1`,
+					[roundId],
+				);
+				socket.emit('round:snapshot', result.rows[0] || null);
+			} catch (error) {
+				socket.emit('socket:error', { error: 'No se pudo cargar la ronda' });
+			}
 		});
 	});
 	setInterval(async () => {

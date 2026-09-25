@@ -1,7 +1,12 @@
 const JUDGE0_URL = process.env.JUDGE0_URL || 'http://localhost:2358';
+const requestTimeoutMs = Number(process.env.JUDGE0_REQUEST_TIMEOUT_MS || 10000);
+const submissionTimeoutMs = Number(process.env.JUDGE0_SUBMISSION_TIMEOUT_MS || 30000);
 
 async function requestJson(url, options) {
-  const response = await fetch(url, options);
+  const response = await fetch(url, {
+    ...options,
+    signal: AbortSignal.timeout(requestTimeoutMs),
+  });
   const body = await response.json();
 
   if (!response.ok) {
@@ -16,7 +21,7 @@ const LANGUAGE_IDS = {
   javascript: 63,
 };
 
-async function createSubmission(sourceCode, language) {
+async function createSubmission(sourceCode, language, stdin = '') {
   const languageId = LANGUAGE_IDS[language.toLowerCase()] || Number(language);
 
   if (!Number.isInteger(languageId)) {
@@ -29,6 +34,7 @@ async function createSubmission(sourceCode, language) {
     body: JSON.stringify({
       language_id: languageId,
       source_code: sourceCode,
+      stdin,
     }),
   });
 }
@@ -39,7 +45,11 @@ async function getSubmission(token) {
   );
 }
 
-async function waitForSubmission(token) {
+async function waitForSubmission(token, options = {}) {
+  const timeoutMs = Number(options.timeoutMs || submissionTimeoutMs);
+  const pollIntervalMs = Number(options.pollIntervalMs || 500);
+  const deadline = Date.now() + timeoutMs;
+
   for (;;) {
     const submission = await getSubmission(token);
 
@@ -47,7 +57,11 @@ async function waitForSubmission(token) {
       return submission;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (Date.now() >= deadline) {
+      throw new Error(`Judge0 excedió el tiempo de espera de ${timeoutMs} ms`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
 }
 

@@ -7,7 +7,15 @@ const connection = {
   password: process.env.REDIS_PASSWORD || undefined,
 };
 
-const submissionQueue = new Queue('run-it-submissions', { connection });
+const submissionQueue = new Queue('run-it-submissions', {
+  connection,
+  defaultJobOptions: {
+    attempts: 2,
+    backoff: { type: 'exponential', delay: 1000 },
+    removeOnComplete: 1000,
+    removeOnFail: 5000,
+  },
+});
 
 function startSubmissionWorker(processSubmission) {
   return new Worker(

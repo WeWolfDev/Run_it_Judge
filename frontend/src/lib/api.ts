@@ -173,7 +173,6 @@ export async function getActiveRound() {
     ends_at: string;
     problem_name: string;
     statement: string;
-    test_cases: Array<{ stdin?: string; expected?: string }>;
     capacity: number;
     participants: Array<{
       participant_id: string;

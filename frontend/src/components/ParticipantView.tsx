@@ -32,7 +32,6 @@ function HorseIcon({ className }: { className?: string }) {
 export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_ROUND }) {
   const [activeRound, setActiveRound] = useState(round);
   const [statement, setStatement] = useState("Dado un problema, resuelve la solución y envíala para evaluación.");
-  const [testCases, setTestCases] = useState<Array<{ stdin?: string; expected?: string }>>([]);
   const [participantId, setParticipantId] = useState("");
   const displayedRound = activeRound;
   const remaining = useRoundTimer(displayedRound.ends_at);
@@ -42,9 +41,6 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
   const [sending, setSending] = useState(false);
   const username = getSession()?.username || "demo";
   const [selectedCharacter, setSelectedCharacterState] = useState(() => getSelectedCharacter(username));
-  const passed = 0;
-  const totalTests = testCases.length;
-  const pct = totalTests ? Math.round((passed / totalTests) * 100) : 0;
 
   const send = async () => {
     setSending(true);
@@ -68,7 +64,6 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
     void getActiveRound().then((remote) => {
       if (!remote) return;
       setStatement(remote.statement);
-      setTestCases(remote.test_cases);
       setActiveRound({
         round_id: remote.id,
         ends_at: new Date(remote.ends_at).getTime(),
@@ -130,25 +125,9 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
       </section>
 
       <section className="rounded-xl border border-border bg-card px-5 py-4">
-        <div className="relative h-10">
-          <div
-            className="absolute -top-1 z-10 flex flex-col items-center"
-            style={{ left: `calc(${pct}% - 1rem)`, transition: "left 0.55s cubic-bezier(0.22,1,0.36,1)" }}
-          >
-            <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-medium text-primary-foreground">
-              tú
-            </span>
-            <HorseIcon className={`h-7 w-7 animate-gallop text-silk-${selectedCharacter}`} />
-          </div>
-          <div className="absolute bottom-0 h-1.5 w-full rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-primary"
-              style={{ width: `${pct}%`, transition: "width 0.55s ease" }}
-            />
-          </div>
-        </div>
-        <p className="mt-2 text-right font-mono text-xs tabular-nums text-muted-foreground">
-          {passed}/{totalTests} test cases · {pct}%
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">Estado de la evaluación</p>
+        <p className="mt-2 text-sm text-foreground">
+          Los casos de prueba son privados. El veredicto aparecerá después de que Judge0 procese tu envío.
         </p>
       </section>
 
@@ -157,31 +136,6 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
           <section className="rounded-xl border border-border bg-card p-5">
             <h2 className="text-sm font-semibold text-foreground">Enunciado</h2>
             <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">{statement}</p>
-            {testCases.length > 0 && (
-              <div className="mt-4 space-y-3">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Casos de prueba</p>
-                {testCases.map((testCase, index) => (
-                  <div key={index} className="rounded-lg bg-muted p-3 font-mono text-xs text-foreground">
-                    <p>Entrada: {testCase.stdin || "(sin entrada)"}</p>
-                    <p className="mt-1">Salida esperada: {testCase.expected || "(sin salida)"}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section className="rounded-xl border border-border bg-card p-5">
-            <h2 className="text-sm font-semibold text-foreground">Resultados de tus tests</h2>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {testCases.map((_, i) => (
-                <span
-                  key={i}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted px-2.5 py-1 font-mono text-xs text-muted-foreground"
-                >
-                  • test {i + 1}
-                </span>
-              ))}
-            </div>
           </section>
         </div>
 

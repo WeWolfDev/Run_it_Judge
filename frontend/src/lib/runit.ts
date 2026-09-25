@@ -1,3 +1,5 @@
+import { getSession } from "./session";
+
 /**
  * Contrato de datos de Run It.
  *
@@ -146,7 +148,7 @@ export function createSocketFeed(
 
   void import("socket.io-client").then(({ io }) => {
     if (disconnected) return;
-    socket = io(socketUrl);
+    socket = io(socketUrl, { auth: { token: getSession()?.token || null } });
     socket.on("connect", () => {
       if (roundId) {
         socket?.emit("round:join", roundId);
