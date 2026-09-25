@@ -9,6 +9,7 @@ import {
 import { useRoundTimer } from "@/hooks/use-round-timer";
 import {
   closeRound,
+  createProblem,
   createRound,
   createTournament,
   generateAccessCodes,
@@ -56,6 +57,11 @@ export function AdminPanel({
   const [message, setMessage] = useState("");
   const [codeCount, setCodeCount] = useState(10);
   const [generatedCodes, setGeneratedCodes] = useState<string[]>([]);
+  const [problemName, setProblemName] = useState("");
+  const [problemStatement, setProblemStatement] = useState("");
+  const [problemDifficulty, setProblemDifficulty] = useState<"easy" | "medium" | "hard">("easy");
+  const [expectedOutput, setExpectedOutput] = useState("");
+  const [savingProblem, setSavingProblem] = useState(false);
   const [problems, setProblems] = useState<Array<{ id: string; name: string; difficulty: string }>>([]);
   const [tournamentName, setTournamentName] = useState("Run It");
   const [selectedProblem, setSelectedProblem] = useState("");
@@ -108,7 +114,9 @@ export function AdminPanel({
   }, []);
 
   useEffect(() => {
-    const feed = createSocketFeed();
+    const roundId = String(liveRound.round_id);
+    if (!roundId.includes("-")) return;
+    const feed = createSocketFeed(roundId);
     if (!feed) return;
     feed.on("participant:progress", (progress) => {
       setLiveParticipants((current) => current.map((participant) => participant.participant_id === progress.participant_id
@@ -124,7 +132,33 @@ export function AdminPanel({
     feed.on("round:paused", (roundState) => setPaused(Boolean(roundState.paused)));
     feed.on("round:closed", () => setMessage("La ronda se cerró"));
     return () => feed.disconnect();
-  }, []);
+  }, [liveRound.round_id]);
+
+  const saveProblem = async () => {
+    if (!problemName.trim() || !problemStatement.trim() || !expectedOutput.trim()) {
+      setMessage("Completa el nombre, el enunciado y la salida esperada.");
+      return;
+    }
+    setSavingProblem(true);
+    try {
+      const created = await createProblem({
+        name: problemName.trim(),
+        statement: problemStatement.trim(),
+        difficulty: problemDifficulty,
+        testCases: [{ stdin: "", expected: expectedOutput.trim() }],
+      });
+      setProblems((current) => [created, ...current]);
+      setSelectedProblem(created.id);
+      setProblemName("");
+      setProblemStatement("");
+      setExpectedOutput("");
+      setMessage(`Problema “${created.name}” creado y seleccionado.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo crear el problema");
+    } finally {
+      setSavingProblem(false);
+    }
+  };
 
   const saveRound = async () => {
     if (!selectedProblem || !tournamentName.trim()) {
@@ -289,6 +323,70 @@ export function AdminPanel({
       </div>
 
       <aside className="space-y-5">
+        <section className="rounded-xl border border-border bg-card p-5">
+          <h3 className="text-sm font-semibold text-foreground">Crear problema</h3>
+          <p className="mt-2 text-xs text-muted-foreground">
+            La versión actual evalúa el primer caso contra una salida esperada.
+          </p>
+          <form
+            className="mt-4 space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveProblem();
+            }}
+          >
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Nombre</span>
+              <input
+                value={problemName}
+                onChange={(event) => setProblemName(event.target.value)}
+                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 outline-none focus:border-ring"
+                placeholder="Saludo"
+                maxLength={120}
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Enunciado</span>
+              <textarea
+                value={problemStatement}
+                onChange={(event) => setProblemStatement(event.target.value)}
+                className="mt-1 min-h-20 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 outline-none focus:border-ring"
+                placeholder="Imprime el saludo solicitado."
+                maxLength={4000}
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Dificultad</span>
+              <select
+                value={problemDifficulty}
+                onChange={(event) => setProblemDifficulty(event.target.value as "easy" | "medium" | "hard")}
+                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 outline-none focus:border-ring"
+              >
+                <option value="easy">Fácil</option>
+                <option value="medium">Media</option>
+                <option value="hard">Difícil</option>
+              </select>
+            </label>
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Salida esperada</span>
+              <input
+                value={expectedOutput}
+                onChange={(event) => setExpectedOutput(event.target.value)}
+                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:border-ring"
+                placeholder="Hola mundo"
+                maxLength={1000}
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={savingProblem}
+              className="w-full rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {savingProblem ? "Creando..." : "Crear y seleccionar"}
+            </button>
+          </form>
+        </section>
+
         <section className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground">Códigos de acceso</h3>
           <p className="mt-2 text-xs text-muted-foreground">Cada código puede registrarse una sola vez.</p>

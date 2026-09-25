@@ -10,15 +10,13 @@ Run It es un torneo de programación por rondas, con una pista pública en tiemp
 
 - Fastify en `run-it-backend/index.js`.
 - `GET /health`.
-- `GET /ready` comprueba PostgreSQL y Redis para el despliegue.
+- `GET /ready` comprueba PostgreSQL, la cola Redis y el estado del almacen de sesiones.
 - Login por rol mediante `POST /auth/login`.
 - Registro de participantes mediante `POST /auth/register` usando un código de acceso de un solo uso.
-- Sesiones en memoria para desarrollo local.
+- Sesiones en memoria para desarrollo local; en produccion requiere Redis y falla cerrado si Redis no esta disponible.
 - PostgreSQL con tablas para usuarios, códigos, torneos, problemas, rondas, participantes, submissions y ranking.
-- Seed de desarrollo:
-  - `admin` / `ADMIN-RUN-IT`
-  - `demo` / `RUN-IT-2026`
-  - Torneo y ronda demo de `Hola mundo`.
+- Seed de desarrollo opcional con `RUN_IT_SEED_DEMO=true`; no hay credenciales demo por defecto y produccion usa `false`.
+- El administrador puede crear problemas y rondas desde `/admin`; en una base limpia no hace falta sembrar datos.
 - BullMQ + Redis para encolar submissions.
 - Socket.io para eventos y snapshots.
 - Cierre transaccional de rondas con desempate:
@@ -38,11 +36,11 @@ Run It es un torneo de programación por rondas, con una pista pública en tiemp
 - `/pista`: vista pública para espectadores, sin login.
 - `/reglas`: reglas públicas.
 - `RaceTrack`, `AdminPanel` y `ParticipantView`.
-- Feed mock como fallback y Socket.io opcional mediante `VITE_SOCKET_URL`.
+- Socket.io en produccion mediante `VITE_SOCKET_URL=/`; el feed mock solo debe usarse en desarrollo.
 
 ## Requisitos
 
-- Node.js 18 o superior.
+- Node.js 22.12 o superior (Vite 8, Nitro 3 y TanStack Start ya no admiten Node.js 18/20).
 - npm.
 - Docker Desktop y Docker Compose v2.
 - Una arquitectura Linux `amd64`/`x86_64` es la opción recomendada para Judge0.
@@ -62,26 +60,30 @@ El compose publica localmente:
 
 - Judge0: `localhost:2358`
 - PostgreSQL: `localhost:5433` en el host, `5432` dentro de Docker
-- Redis: `localhost:6379`
+- Redis: `localhost:6380` (el host evita el 6379 ocupado)
 
 El puerto `5433` evita el conflicto con una instancia de PostgreSQL instalada
-directamente en macOS que ya escucha en `5432`. El backend usa `5433` por
-defecto cuando no se define `DATABASE_URL`.
+directamente en macOS que ya escucha en `5432`. `DATABASE_URL` es obligatorio y
+debe apuntar a la base `run_it`, separada de `judge0`.
+
+En el bootstrap de produccion el usuario no se agrega al grupo `docker`;
+usa `sudo docker compose ...` para diagnosticar o operar contenedores.
 
 Arranca el backend en otra terminal:
 
 ```bash
 cd run-it-backend
-npm install
-npm run dev
+npm ci
+DATABASE_URL=postgres://run_it:password@127.0.0.1:5433/run_it \
+REDIS_PORT=6380 npm run dev
 ```
 
 Arranca el frontend en otra terminal:
 
 ```bash
 cd frontend
-npm install
-npm run dev
+npm ci
+VITE_API_URL=http://localhost:3001 VITE_SOCKET_URL=http://localhost:3001 npm run dev
 ```
 
 Vite/TanStack Start queda disponible en `http://localhost:8080` en la
@@ -89,19 +91,9 @@ configuración actual.
 
 ## Acceso de prueba
 
-Administrador:
-
-```text
-Usuario: admin
-Código: ADMIN-RUN-IT
-```
-
-Participante:
-
-```text
-Usuario: demo
-Código: RUN-IT-2026
-```
+El usuario admin se crea al arrancar solo cuando se define
+`ADMIN_ACCESS_CODE`; no existe una credencial por defecto. Participantas deben
+registrarse con un codigo generado por el admin.
 
 La pista pública no necesita sesión:
 
@@ -114,20 +106,29 @@ http://localhost:8080/pista
 Backend:
 
 ```bash
-DATABASE_URL=postgres://judge0:password@localhost:5433/judge0
-REDIS_HOST=localhost
-REDIS_PORT=6379
+DATABASE_URL=postgres://run_it:password@127.0.0.1:5433/run_it
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6380
 REDIS_PASSWORD=tu-password
-JUDGE0_URL=http://localhost:2358
+JUDGE0_URL=http://127.0.0.1:2358
+SESSION_STORE=redis
+SESSION_TTL_SECONDS=28800
+ADMIN_USERNAME=admin
+ADMIN_ACCESS_CODE=codigo-privado
+RUN_IT_SEED_DEMO=false
 SUBMISSION_CONCURRENCY=4
 ```
 
 Frontend:
 
 ```bash
-VITE_API_URL=http://localhost:3000
-VITE_SOCKET_URL=http://localhost:3000
-VITE_ROUND_ID=00000000-0000-0000-0000-000000000002
+# Desarrollo:
+VITE_API_URL=http://localhost:3001
+VITE_SOCKET_URL=http://localhost:3001
+
+# Produccion (mismo origen, Nginx enruta API y WebSocket):
+VITE_API_URL=
+VITE_SOCKET_URL=/
 ```
 
 ## Flujo de una submission
@@ -215,38 +216,38 @@ socket.emit("round:snapshot", roundId);
 
 ### Limitaciones conocidas (aceptadas en MVP)
 
-- Sesiones en memoria: se pierden al reiniciar el backend (logout global),
-  no tienen expiración y no hay invalidación de token.
-- Sesiones persistentes opcionales mediante Redis: definir
-  `SESSION_STORE=redis` y `SESSION_TTL_SECONDS` en producción. Si Redis no
-  está disponible, el backend usa el fallback en memoria y registra el estado
-  mediante el readiness check.
+- Sesiones en memoria solo para desarrollo; en produccion `SESSION_STORE=redis` es obligatorio y el backend falla cerrado si Redis no esta disponible.
 - Rate limit de submissions en memoria (1/s por usuario): se resetea al
   reiniciar y no escalaría a varias instancias; migrar a Redis.
 - Códigos de acceso y `access_code` de usuarios guardados en texto plano.
 - Token de sesión en `localStorage` (superficie XSS estándar; CORS
   restringido mitiga el resto de sitios).
+- El endpoint publico de ronda activa incluye los casos de prueba para el MVP;
+  no usar casos secretos en un torneo competitivo hasta implementar ocultamiento.
 - Scoring usa solo el primer caso de prueba (`test_cases[0]`); no hay
   ejecución multi-test.
 - `/pista` expone los display names de los participantes (por diseño).
 - Judge0 corre con `privileged: true` (requisito del sandbox isolate de
   judge0 CE); riesgo conocido y documentado upstream.
-- Sin backups, métricas ni pruebas de carga.
+- Backups y restauracion inicial del bootstrap disponibles; aun no hay metricas,
+  alertas ni pruebas de carga.
 
 ## Validación disponible
 
-Validaciones ejecutadas sin dependencias:
+El bootstrap de produccion ejecuta:
 
 ```bash
 docker compose config -q
+npm ci y npm test                         # backend
+npm ci, npm run typecheck y npm run build # frontend
+npm run judge0                            # ejecucion real de Judge0
+bash deploy/smoke-test.sh
+sudo node deploy/e2e-test.cjs             # flujo completo y limpieza
 ```
 
-También se verificaron diagnósticos estáticos de los archivos backend y frontend. El build completo no se pudo ejecutar en el entorno de trabajo cuando `npm` no estaba disponible; en una máquina con Node instalado debe ejecutarse:
-
-```bash
-cd run-it-backend && npm install
-cd ../frontend && npm install && npm run build
-```
+En el checkout actual se validaron Node 22.22.1, typecheck, build SSR y las
+pruebas backend. El E2E completo queda habilitado por el bootstrap después de
+que Docker, Redis, PostgreSQL y Judge0 esten disponibles.
 
 ## Apagado
 
@@ -267,13 +268,14 @@ Arquitectura de puertos (todos en `127.0.0.1`, nada expuesto al exterior):
 | --- | --- | --- |
 | Judge0 | 2358 | `docker compose up -d` en `/root/judge` |
 | PostgreSQL | 5433 (BD `run_it`, separada de la BD `judge0` de Judge0) | docker |
-| Redis (docker) | 6380 (el host ya usa 6379) | docker |
+| Redis (docker) | 6380 (AOF persistente en volumen Docker) | docker |
 | Backend Fastify | 3001 | `systemctl restart run-it-backend` |
 | Frontend SSR | 3002 | `systemctl restart run-it-frontend` |
 
 - `judge0.conf` (secretos de Judge0) y `run-it-backend/secrets` (env del
-  backend) no se versionan. Ambos requieren `chmod 440 judge0.conf` con
-  propietario `1000:999` para que el contenedor pueda leerlo.
+  backend) no se versionan. `judge0.conf` requiere `chmod 440` y propietario
+  `1000:999` para el contenedor Judge0; el EnvironmentFile del backend es
+  root-only y systemd lo carga antes de drop privileges.
 - Docker publica puertos fuera de UFW: por eso todos los binds son a
   `127.0.0.1` explícito en `docker-compose.yml`.
 - El host usa cgroup v2 y el isolate de judge0 1.13.1 espera cgroup v1: se
@@ -300,6 +302,17 @@ Ciclo de despliegue del frontend:
 cd frontend && VITE_API_URL="" VITE_SOCKET_URL="/" npm run build
 systemctl restart run-it-frontend
 ```
+
+Para un host Ubuntu nuevo se recomienda el bootstrap versionado, que instala
+Node 22, Docker, nginx, systemd y Cockpit sin abrir Cockpit a Internet:
+
+```bash
+sudo bash deploy/bootstrap-ubuntu.sh
+```
+
+Cockpit queda en `127.0.0.1:9090`; el acceso remoto se realiza con
+`ssh -N -L 9090:127.0.0.1:9090 usuario@ servidor`. El HTTP nginx solo atiende
+el challenge ACME y devuelve 503 hasta que exista un certificado TLS valido.
 
 ## Bitácora de cambios
 
@@ -336,22 +349,25 @@ systemctl restart run-it-frontend
 
 1. Docker inicia Judge0, su worker, PostgreSQL y Redis desde
    `docker-compose.yml`.
-2. El backend Fastify escucha en `3000`, inicializa el esquema y los datos demo,
-   y expone autenticación, rondas, submissions y eventos Socket.io.
+2. El backend Fastify escucha en `127.0.0.1:3001` en producción, inicializa el
+   esquema y expone autenticación, rondas, submissions y eventos Socket.io.
 3. Redis/BullMQ desacopla el envío de código de la respuesta HTTP; el worker
    consulta Judge0 y actualiza el progreso de la ronda.
 4. PostgreSQL conserva usuarios, torneos, rondas, participantes y resultados.
-5. El frontend en `8080` consume el backend en `3000`; `/pista` consulta el
-   estado público y puede recibir actualizaciones en tiempo real.
+5. El frontend SSR en `127.0.0.1:3002` consume el backend en `3001` a traves
+   de nginx; `/pista` consulta el estado público y recibe actualizaciones.
 6. En Apple Silicon, Judge0 usa `platform: linux/amd64`; para ejecución fiable
    se recomienda un host Linux `x86_64` o un servicio Judge0 externo.
 
 ### Validación más reciente
 
+El checkout actual valida con Node 22.22.1:
+
 ```text
-docker compose config -q          OK
-PostgreSQL en localhost:5433      current_user=judge0, database=judge0
-Backend http://localhost:3000     /health -> {"status":"ok"}
-Frontend http://localhost:8080    / -> redirección a /login
-Frontend http://localhost:8080    /pista disponible
+Backend npm test                  OK
+Frontend npm run typecheck        OK
+Frontend SSR build                OK
 ```
+
+El host nuevo completa ademas `deploy/smoke-test.sh`, la prueba real de Judge0
+y `deploy/e2e-test.cjs` durante el bootstrap.

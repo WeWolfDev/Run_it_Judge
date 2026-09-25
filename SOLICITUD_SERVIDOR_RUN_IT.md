@@ -12,7 +12,7 @@ Por favor confirmar:
 - Dominio que se usará. Actualmente: `runit.gelatina.lat`.
 - Que el DNS del dominio apunta a la IP del servidor.
 - Que Docker y Docker Compose v2 están instalados.
-- Que Node.js 18 o superior y npm están instalados.
+- Que Node.js 22.12 o superior y npm están instalados.
 - Que nginx está instalado o que puede instalarse.
 - Que los puertos públicos 80 y 443 están disponibles.
 - Que hay espacio en disco suficiente para PostgreSQL, Redis y Judge0.
@@ -69,7 +69,9 @@ docker compose up -d
 docker compose ps
 ```
 
-Los volúmenes de PostgreSQL deben ser persistentes. No ejecutar `docker compose down -v` porque borra los datos.
+Los volúmenes de PostgreSQL deben ser persistentes. El usuario de servicio no
+se agrega al grupo `docker`; usa `sudo docker compose ...` para operaciones
+manuales. No ejecutar `docker compose down -v` porque borra los datos.
 
 ## 4. Base de datos de Run It
 
@@ -140,6 +142,7 @@ Construir el frontend:
 ```bash
 cd /root/judge/frontend
 npm ci
+npm run typecheck
 VITE_API_URL="" VITE_SOCKET_URL="/" npm run build
 ```
 
@@ -173,6 +176,23 @@ nginx -t
 systemctl reload nginx
 ```
 
+### Cockpit y acceso remoto
+
+El bootstrap instala `cockpit` y `cockpit-storaged`, pero fija
+`127.0.0.1:9090` para que el panel no se exponga directamente. Ubuntu 26.04
+no incluye `cockpit-docker` en el repositorio oficial; los contenedores se
+administran con `sudo docker` o mediante un plugin de terceros auditado por
+la organizacion. La persona administradora debe crear un tunel SSH:
+
+```bash
+ssh -N -L 9090:127.0.0.1:9090 <usuario>@<IP-o-DNS-del-servidor>
+```
+
+Abrir `https://localhost:9090` e iniciar sesion con un usuario Linux con sudo.
+El puerto 9090 no debe abrirse en el router ni en UFW. El bootstrap tambien
+puede agregar reglas SSH/HTTP/HTTPS con `RUN_IT_ENABLE_UFW=1` sin cambiar la
+politica firewall existente.
+
 ## 8. Qué debe probar la persona del servidor
 
 Después de configurar todo:
@@ -181,12 +201,13 @@ Después de configurar todo:
 curl -fsS https://runit.gelatina.lat/health
 curl -fsS https://runit.gelatina.lat/ready
 curl -I https://runit.gelatina.lat/login
+sudo node deploy/e2e-test.cjs
 ```
 
 Debe confirmar también:
 
 - `/health` responde HTTP 200.
-- `/ready` responde HTTP 200 y muestra base de datos y Redis disponibles.
+- `/ready` responde HTTP 200 y muestra base de datos, Redis y sesiones disponibles.
 - El login admin funciona con el usuario y código configurados.
 - El panel admin permite crear un torneo o generar un código.
 - Un participante puede registrarse con un código generado.
@@ -207,6 +228,7 @@ Frontend activo: sí/no
 Judge0 y worker activos: sí/no
 PostgreSQL activo: sí/no
 Redis activo: sí/no
+Cockpit activo y restringido a loopback: sí/no
 /health: HTTP <código>
 /ready: HTTP <código>
 Login admin probado: sí/no

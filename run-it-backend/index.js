@@ -5,7 +5,13 @@ const cors = require('@fastify/cors');
 const { Server } = require('socket.io');
 const { initDb, query, withTransaction } = require('./db');
 const { submissionQueue, startSubmissionWorker } = require('./queue');
-const { setSession, getSession, deleteSession, memorySessions } = require('./session-store');
+const {
+  setSession,
+  getSession,
+  deleteSession,
+  getSessionStoreStatus,
+  memorySessions,
+} = require('./session-store');
 
 const submissionRate = new Map();
 
@@ -22,7 +28,9 @@ fastify.get('/ready', async (request, reply) => {
 	try {
 		await query('SELECT 1');
 		await submissionQueue.getJobCounts();
-		return { status: 'ready', database: 'ok', redis: 'ok' };
+		const sessions = getSessionStoreStatus();
+		if (!sessions.ready) throw new Error('El almacen de sesiones no está listo');
+		return { status: 'ready', database: 'ok', redis: 'ok', sessions };
 	} catch (error) {
 		request.log.error(error, 'Readiness check failed');
 		return reply.code(503).send({ status: 'not_ready' });
@@ -106,31 +114,34 @@ async function requireRole(request, reply, role) {
 	const user = token ? await getSession(token) : null;
 
 	if (!user) {
-		return reply.code(401).send({ error: 'Sesión requerida' });
+		reply.code(401).send({ error: 'Sesión requerida' });
+		return false;
 	}
 
 	if (role && user.role !== role) {
-		return reply.code(403).send({ error: 'Rol insuficiente' });
+		reply.code(403).send({ error: 'Rol insuficiente' });
+		return false;
 	}
 
 	request.user = user;
+	return true;
 }
 
 fastify.post('/tournaments', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	const { name } = request.body || {};
 	const result = await query('INSERT INTO tournaments (name) VALUES ($1) RETURNING *', [name]);
 	return reply.code(201).send(result.rows[0]);
 });
 
 fastify.get('/tournaments', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	const result = await query('SELECT * FROM tournaments ORDER BY created_at DESC');
 	return result.rows;
 });
 
 fastify.put('/tournaments/:id', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	const name = String(request.body?.name || '').trim();
 	if (!name) return reply.code(400).send({ error: 'El nombre es obligatorio' });
 	const result = await query('UPDATE tournaments SET name = $1 WHERE id = $2 RETURNING *', [name, request.params.id]);
@@ -138,18 +149,18 @@ fastify.put('/tournaments/:id', async (request, reply) => {
 });
 
 fastify.delete('/tournaments/:id', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	const result = await query('DELETE FROM tournaments WHERE id = $1 RETURNING id', [request.params.id]);
 	return result.rowCount ? { deleted: true } : reply.code(404).send({ error: 'Torneo no encontrado' });
 });
 
 fastify.get('/problems', async () => {
-	const result = await query('SELECT * FROM problems ORDER BY created_at DESC');
+	const result = await query('SELECT id, name, difficulty, created_at FROM problems ORDER BY created_at DESC');
 	return result.rows;
 });
 
 fastify.post('/problems', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	const { name, statement, difficulty = 'easy', testCases = [] } = request.body || {};
 	if (!name || !statement || !Array.isArray(testCases)) {
 		return reply.code(400).send({ error: 'name, statement y testCases son obligatorios' });
@@ -163,12 +174,15 @@ fastify.post('/problems', async (request, reply) => {
 });
 
 fastify.get('/problems/:id', async (request, reply) => {
-	const result = await query('SELECT * FROM problems WHERE id = $1', [request.params.id]);
+	const result = await query(
+		'SELECT id, name, difficulty, created_at FROM problems WHERE id = $1',
+		[request.params.id],
+	);
 	return result.rowCount ? result.rows[0] : reply.code(404).send({ error: 'Problema no encontrado' });
 });
 
 fastify.put('/problems/:id', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	const { name, statement, difficulty = 'easy', testCases = [] } = request.body || {};
 	if (!name || !statement || !Array.isArray(testCases)) {
 		return reply.code(400).send({ error: 'name, statement y testCases son obligatorios' });
@@ -182,7 +196,7 @@ fastify.put('/problems/:id', async (request, reply) => {
 });
 
 fastify.delete('/problems/:id', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	try {
 		const result = await query('DELETE FROM problems WHERE id = $1 RETURNING id', [request.params.id]);
 		return result.rowCount ? { deleted: true } : reply.code(404).send({ error: 'Problema no encontrado' });
@@ -193,7 +207,7 @@ fastify.delete('/problems/:id', async (request, reply) => {
 });
 
 fastify.post('/tournaments/:id/participants', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	const { userId, displayName } = request.body || {};
 	const result = await query(
 		`INSERT INTO participants (tournament_id, user_id, display_name)
@@ -204,7 +218,7 @@ fastify.post('/tournaments/:id/participants', async (request, reply) => {
 });
 
 fastify.post('/rounds/:id/participants/join', async (request, reply) => {
-	if (await requireRole(request, reply, 'participant')) return;
+	if (!(await requireRole(request, reply, 'participant'))) return;
 	const round = await query("SELECT * FROM rounds WHERE id = $1 AND status IN ('pending', 'active')", [request.params.id]);
 	if (!round.rowCount) return reply.code(409).send({ error: 'La ronda no está disponible' });
 	const displayName = request.body?.displayName || request.user.username;
@@ -224,7 +238,7 @@ fastify.post('/rounds/:id/participants/join', async (request, reply) => {
 });
 
 fastify.post('/tournaments/:id/start', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	const result = await query(
 		"UPDATE tournaments SET status = 'active' WHERE id = $1 RETURNING *",
 		[request.params.id],
@@ -233,11 +247,11 @@ fastify.post('/tournaments/:id/start', async (request, reply) => {
 });
 
 fastify.post('/access-codes/generate', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	const count = Math.min(Math.max(Number(request.body?.count || 1), 1), 500);
 	const codes = [];
 	for (let index = 0; index < count; index += 1) {
-		const code = `RUNIT-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+		const code = `RUNIT-${crypto.randomBytes(8).toString('hex').toUpperCase()}`;
 		const result = await query('INSERT INTO access_codes (code) VALUES ($1) RETURNING code', [code]);
 		codes.push(result.rows[0].code);
 	}
@@ -245,7 +259,7 @@ fastify.post('/access-codes/generate', async (request, reply) => {
 });
 
 fastify.post('/access-codes/:code/claim', async (request, reply) => {
-	if (await requireRole(request, reply, 'participant')) return;
+	if (!(await requireRole(request, reply, 'participant'))) return;
 	const { displayName } = request.body || {};
 	const result = await query(
 		`UPDATE access_codes SET status = 'claimed', claimed_by_user_id = $1,
@@ -257,7 +271,7 @@ fastify.post('/access-codes/:code/claim', async (request, reply) => {
 });
 
 fastify.post('/rounds', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	const { tournamentId, roundNumber, problemId, capacity, timeLimitSeconds } = request.body || {};
 	const result = await query(
 		`INSERT INTO rounds (tournament_id, round_number, problem_id, capacity, time_limit_seconds)
@@ -268,7 +282,7 @@ fastify.post('/rounds', async (request, reply) => {
 });
 
 fastify.get('/tournaments/:id/rounds', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	const result = await query(
 		`SELECT r.*, p.name AS problem_name
 		 FROM rounds r JOIN problems p ON p.id = r.problem_id
@@ -279,7 +293,7 @@ fastify.get('/tournaments/:id/rounds', async (request, reply) => {
 });
 
 fastify.put('/rounds/:id', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	const { problemId, capacity, timeLimitSeconds } = request.body || {};
 	const result = await query(
 		`UPDATE rounds SET problem_id = COALESCE($1, problem_id), capacity = COALESCE($2, capacity),
@@ -291,13 +305,13 @@ fastify.put('/rounds/:id', async (request, reply) => {
 });
 
 fastify.delete('/rounds/:id', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	const result = await query("DELETE FROM rounds WHERE id = $1 AND status = 'pending' RETURNING id", [request.params.id]);
 	return result.rowCount ? { deleted: true } : reply.code(409).send({ error: 'La ronda no existe o ya inició' });
 });
 
 fastify.post('/rounds/:id/start', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	const result = await query(
 		`UPDATE rounds SET status = 'active', started_at = now(),
 			ends_at = now() + (time_limit_seconds * interval '1 second')
@@ -314,7 +328,7 @@ fastify.post('/rounds/:id/start', async (request, reply) => {
 });
 
 fastify.post('/rounds/:id/pause', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	const result = await query(
 		`UPDATE rounds SET paused = NOT paused WHERE id = $1 AND status = 'active' RETURNING *`,
 		[request.params.id],
@@ -343,7 +357,7 @@ fastify.get('/public/rounds/active', async () => {
 });
 
 fastify.post('/rounds/:id/close', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	const result = await closeRound(request.params.id);
 	return result;
 });
@@ -358,19 +372,33 @@ fastify.get('/rounds/:id/state', async (request) => {
 });
 
 fastify.post('/rounds/:id/submissions', async (request, reply) => {
-	if (await requireRole(request, reply, 'participant')) return;
+	if (!(await requireRole(request, reply, 'participant'))) return;
 	const { participantId, code, language } = request.body || {};
+	if (
+		typeof participantId !== 'string' ||
+		typeof code !== 'string' ||
+		code.length === 0 ||
+		code.length > 100_000 ||
+		!['python', 'javascript'].includes(language)
+	) {
+		return reply.code(400).send({ error: 'Envío inválido: use Python o JavaScript y hasta 100000 caracteres' });
+	}
 	const recent = submissionRate.get(request.user.id) || 0;
 	if (Date.now() - recent < 1000) return reply.code(429).send({ error: 'Espera antes de enviar otra solución' });
 	submissionRate.set(request.user.id, Date.now());
-	const round = await query("SELECT * FROM rounds WHERE id = $1 AND status = 'active'", [request.params.id]);
-	if (!round.rowCount) return reply.code(409).send({ error: 'La ronda no está activa' });
-	const participant = await query(
-		`SELECT id FROM participants WHERE id = $1 AND user_id = $2 AND tournament_id = $3`,
-		[participantId, request.user.id, round.rows[0].tournament_id],
+	const round = await query(
+		"SELECT * FROM rounds WHERE id = $1 AND status = 'active' AND ends_at > now()",
+		[request.params.id],
 	);
-	if (!participant.rowCount) return reply.code(403).send({ error: 'Participante no válido' });
+	if (!round.rowCount) return reply.code(409).send({ error: 'La ronda no está activa' });
 	if (round.rows[0].paused) return reply.code(409).send({ error: 'La ronda está pausada' });
+	const participant = await query(
+		`SELECT p.id FROM participants p
+		 JOIN round_participants rp ON rp.participant_id = p.id AND rp.round_id = $1
+		 WHERE p.id = $2 AND p.user_id = $3 AND p.tournament_id = $4 AND p.status = 'active'`,
+		[request.params.id, participantId, request.user.id, round.rows[0].tournament_id],
+	);
+	if (!participant.rowCount) return reply.code(403).send({ error: 'Participante no válido para esta ronda' });
 
 	const submission = await query(
 		`INSERT INTO submissions (round_id, participant_id, code, language)
@@ -384,8 +412,16 @@ fastify.post('/rounds/:id/submissions', async (request, reply) => {
 		roundId: request.params.id,
 		participantId,
 	});
-	fastify.io?.emit('submission:queued', submission.rows[0]);
-	return reply.code(202).send(submission.rows[0]);
+	const queued = submission.rows[0];
+	fastify.io?.emit('submission:queued', {
+		id: queued.id,
+		round_id: queued.round_id,
+		participant_id: queued.participant_id,
+		language: queued.language,
+		submitted_at: queued.submitted_at,
+		verdict: queued.verdict,
+	});
+	return reply.code(202).send(queued);
 });
 
 fastify.get('/rounds/:id/leaderboard', async (request) => {
@@ -399,7 +435,7 @@ fastify.get('/rounds/:id/leaderboard', async (request) => {
 });
 
 fastify.get('/rounds/:id/submissions', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	const result = await query(
 		`SELECT s.id, s.participant_id, p.display_name, s.language, s.verdict,
 		        s.test_cases_passed, s.test_cases_total, s.submitted_at
@@ -411,7 +447,7 @@ fastify.get('/rounds/:id/submissions', async (request, reply) => {
 });
 
 fastify.get('/tournaments/:id/leaderboard', async (request, reply) => {
-	if (await requireRole(request, reply, 'admin')) return;
+	if (!(await requireRole(request, reply, 'admin'))) return;
 	const result = await query(
 		`SELECT p.id AS participant_id, p.display_name,
 			MAX(rp.final_rank) FILTER (WHERE rp.final_rank IS NOT NULL) AS final_rank,

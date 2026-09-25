@@ -1,5 +1,26 @@
 # Bitácora de Run It
 
+## 2026-09-24
+
+### Servidor Ubuntu y endurecimiento
+
+- Se agregó `deploy/bootstrap-ubuntu.sh` para instalar Docker, Node 22, nginx,
+  systemd, SSH, Certbot y Cockpit en un host Ubuntu `amd64`.
+- Cockpit queda enlazado únicamente a `127.0.0.1:9090`; el acceso remoto se
+  realiza mediante túnel SSH y no se publica el puerto 9090.
+- Nginx usa un bloque HTTP challenge-only antes de TLS; nunca enruta login/API
+  en texto plano. Las plantillas HTTPS se validan y activan atómicamente.
+- Redis usa AOF y volumen persistente; el compose fija `linux/amd64` y limita
+  el tamaño de logs.
+- El bootstrap crea bases separadas, comprueba la contraseña de Judge0, genera
+  un backup, prueba su restauración y ejecuta smoke/E2E.
+- Se elevate Node mínimo a 22.12 y se añadió typecheck/build SSR.
+- El panel administrativo puede crear problemas en una instalacion limpia.
+- Las sesiones Redis fallan cerradas; el readiness reporta su estado.
+- Se elimino la emision global de codigo fuente en `submission:queued` y se
+  reforzo la autorizacion de submissions, limites de lenguaje/tamano y salas
+  Socket.io dinamicas.
+
 ## 2026-09-10
 
 ### Documentación de seguridad y gaps
@@ -72,7 +93,8 @@ y el resultado actualiza PostgreSQL y emite `participant:progress` por Socket.io
 
 ## Pendientes conocidos
 
-- Las sesiones son de memoria y deben migrarse a sesiones persistentes o JWT.
-- Las credenciales de desarrollo deben sustituirse por secretos del entorno.
-- Judge0 requiere un entorno x86_64 o un servicio externo para producción.
-- Faltan pruebas automatizadas de ciclo completo, scoring y administración.
+- El rate limit de submissions sigue siendo local al proceso.
+- Los codigos de acceso y `access_code` se almacenan en texto plano.
+- El scoring MVP usa el primer caso de prueba.
+- Judge0 requiere un entorno x86_64 o un servicio externo para produccion.
+- Faltan pruebas de carga, alertas y rotacion automatica de backups.

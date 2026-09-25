@@ -56,6 +56,9 @@ async function main() {
   console.log('Submission creada:', created);
 
   const result = await waitForSubmission(created.token);
+  if (result.status?.id !== 3 || result.stdout?.toString().trim() !== 'Judge0 conectado') {
+    throw new Error(`Judge0 no ejecuto correctamente: ${JSON.stringify(result)}`);
+  }
   console.log('Resultado:', result);
 }
 

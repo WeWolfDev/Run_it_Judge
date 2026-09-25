@@ -98,7 +98,9 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
             <p className="text-xs uppercase tracking-widest text-muted-foreground">Tu corredor</p>
             <h2 className="mt-1 text-lg font-semibold text-foreground">Elige tu personaje</h2>
           </div>
-          <p className="text-xs text-muted-foreground">{CHARACTERS[selectedCharacter].name} seleccionado</p>
+          <p className="text-xs text-muted-foreground">
+            {CHARACTERS[selectedCharacter]?.name ?? "Personaje"} seleccionado
+          </p>
         </div>
         <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
           {CHARACTERS.map((character, index) => {

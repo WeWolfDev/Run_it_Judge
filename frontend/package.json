@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
+    "start": "node .output/server/index.mjs",
     "build": "vite build",
     "build:dev": "vite build --mode development",
+    "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write ."

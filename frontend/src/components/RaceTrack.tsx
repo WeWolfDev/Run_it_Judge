@@ -33,6 +33,7 @@ export function RaceTrack({ round = MOCK_ROUND, participants = MOCK_PARTICIPANTS
   const [runners, setRunners] = useState<Participant[]>(participants);
   const [remoteRound, setRemoteRound] = useState<RoundStartedEvent | null>(null);
   const displayedRound = remoteRound || round;
+  const activeRoundId = typeof displayedRound.round_id === "string" ? displayedRound.round_id : undefined;
   const remaining = useRoundTimer(displayedRound.ends_at);
 
   useEffect(() => {
@@ -62,7 +63,7 @@ export function RaceTrack({ round = MOCK_ROUND, participants = MOCK_PARTICIPANTS
 
   useEffect(() => {
     if (!live) return;
-    const feed = createSocketFeed() ?? createMockFeed(participants);
+    const feed = createSocketFeed(activeRoundId) ?? createMockFeed(participants);
     feed.on("participant:progress", (e) => {
       setRunners((prev) =>
         prev.map((p) =>
@@ -79,7 +80,7 @@ export function RaceTrack({ round = MOCK_ROUND, participants = MOCK_PARTICIPANTS
       );
     });
     return () => feed.disconnect();
-  }, [live, participants]);
+  }, [activeRoundId, live, participants]);
 
   const solvedCount = useMemo(() => runners.filter((r) => r.solved).length, [runners]);
   const closingSoon = remaining <= 60_000;

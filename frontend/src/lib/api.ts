@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL ?? "";
+const API_URL = import.meta.env["VITE_API_URL"] ?? "";
 
 function authHeaders() {
   const raw = window.localStorage.getItem("run-it-session");
@@ -54,6 +54,22 @@ export async function getProblems() {
   const response = await fetch(`${API_URL}/problems`);
   if (!response.ok) throw new Error("No se pudieron cargar los problemas");
   return response.json() as Promise<Array<{ id: string; name: string; difficulty: string }>>;
+}
+
+export async function createProblem(input: {
+  name: string;
+  statement: string;
+  difficulty: "easy" | "medium" | "hard";
+  testCases: Array<{ stdin: string; expected: string }>;
+}) {
+  const response = await fetch(`${API_URL}/problems`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify(input),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudo crear el problema");
+  return body as { id: string; name: string; difficulty: "easy" | "medium" | "hard" };
 }
 
 export async function createTournament(name: string) {

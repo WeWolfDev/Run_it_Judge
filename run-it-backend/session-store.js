@@ -20,41 +20,50 @@ if (useRedis) {
 }
 
 async function setSession(token, user) {
-  memorySessions.set(token, user);
-  if (!redis) return;
-  try {
-    if (await redisReady) await redis.set(`run-it:session:${token}`, JSON.stringify(user), 'EX', ttlSeconds);
-  } catch {
-    // Keep the in-memory fallback when Redis is unavailable.
+  if (redis) {
+    if (!(await redisReady) || redis.status !== 'ready') {
+      throw new Error('Redis de sesiones no está disponible');
+    }
+    await redis.set(`run-it:session:${token}`, JSON.stringify(user), 'EX', ttlSeconds);
   }
+  memorySessions.set(token, user);
 }
 
 async function getSession(token) {
   if (!redis) return memorySessions.get(token) || null;
-  try {
-    if (await redisReady) {
-      const value = await redis.get(`run-it:session:${token}`);
-      return value ? JSON.parse(value) : null;
-    }
-  } catch {
-    // Keep the in-memory fallback when Redis is unavailable.
+  if (!(await redisReady) || redis.status !== 'ready') {
+    throw new Error('Redis de sesiones no está disponible');
   }
-  return memorySessions.get(token) || null;
+  const value = await redis.get(`run-it:session:${token}`);
+  return value ? JSON.parse(value) : null;
 }
 
 async function deleteSession(token) {
-  memorySessions.delete(token);
   if (redis) {
-    try {
-      if (await redisReady) await redis.del(`run-it:session:${token}`);
-    } catch {
-      // Session removal remains effective for the local fallback.
+    if (!(await redisReady) || redis.status !== 'ready') {
+      throw new Error('Redis de sesiones no está disponible');
     }
+    await redis.del(`run-it:session:${token}`);
   }
+  memorySessions.delete(token);
+}
+
+function getSessionStoreStatus() {
+  return {
+    store: useRedis ? 'redis' : 'memory',
+    ready: !useRedis || redis?.status === 'ready',
+  };
 }
 
 async function closeSessionStore() {
   if (redis) await redis.quit().catch(() => undefined);
 }
 
-module.exports = { setSession, getSession, deleteSession, closeSessionStore, memorySessions };
+module.exports = {
+  setSession,
+  getSession,
+  deleteSession,
+  closeSessionStore,
+  getSessionStoreStatus,
+  memorySessions,
+};

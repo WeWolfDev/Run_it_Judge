@@ -4,10 +4,12 @@ x-logging:
     driver: json-file
     options:
       max-size: 100M
+      max-file: "3"
 
 services:
   server:
     image: judge0/judge0:1.13.1
+    platform: linux/amd64
     volumes:
       - ./judge0.conf:/judge0.conf:ro
     ports:
@@ -23,6 +25,7 @@ services:
 
   worker:
     image: judge0/judge0:1.13.1
+    platform: linux/amd64
     command: ["./scripts/workers"]
     volumes:
       - ./judge0.conf:/judge0.conf:ro
@@ -49,13 +52,15 @@ services:
     image: redis:7.2.4
     command: [
       "bash", "-c",
-      'docker-entrypoint.sh --appendonly no --requirepass "$$REDIS_PASSWORD"'
+      'docker-entrypoint.sh --appendonly yes --appendfsync everysec --requirepass "$$REDIS_PASSWORD"'
     ]
     env_file: judge0.conf
+    volumes:
+      - redis_data:/data/
     ports:
       - "127.0.0.1:6380:6379"
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -64,3 +69,4 @@ services:
 
 volumes:
   data_v2:
+  redis_data:

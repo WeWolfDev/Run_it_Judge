@@ -22,7 +22,7 @@ export interface Participant {
 }
 
 export interface RoundStartedEvent {
-  round_id: number;
+  round_id: number | string;
   ends_at: number; // timestamp del servidor (ms)
   problem: string;
   capacity: number;
@@ -43,7 +43,7 @@ export interface RoundClosedEvent {
   ranking: Array<{
     participant_id: string;
     final_rank: number;
-    final_status: "qualified" | "eliminated";
+    final_status: "advanced" | "eliminated";
   }>;
 }
 
@@ -134,17 +134,20 @@ export function createMockFeed(participants: Participant[]): RunItFeed {
   };
 }
 
-export function createSocketFeed(): RunItFeed | null {
-  const socketUrl = import.meta.env.VITE_SOCKET_URL;
+export function createSocketFeed(
+  roundId = import.meta.env["VITE_ROUND_ID"],
+): RunItFeed | null {
+  const socketUrl = import.meta.env["VITE_SOCKET_URL"];
   if (!socketUrl) return null;
 
   const handlers = new Map<string, Array<(payload: unknown) => void>>();
   let socket: import("socket.io-client").Socket | null = null;
+  let disconnected = false;
 
   void import("socket.io-client").then(({ io }) => {
+    if (disconnected) return;
     socket = io(socketUrl);
     socket.on("connect", () => {
-      const roundId = import.meta.env.VITE_ROUND_ID;
       if (roundId) {
         socket?.emit("round:join", roundId);
         socket?.emit("round:snapshot", roundId);
@@ -162,6 +165,7 @@ export function createSocketFeed(): RunItFeed | null {
       handlers.set(event, list);
     },
     disconnect() {
+      disconnected = true;
       socket?.disconnect();
       handlers.clear();
     },

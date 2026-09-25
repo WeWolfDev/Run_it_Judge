@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 process.env.DATABASE_URL ||= 'postgres://test:test@127.0.0.1:5432/test';
+process.env.SESSION_STORE = 'memory';
 
 const { fastify } = require('../index');
 const { pool } = require('../db');

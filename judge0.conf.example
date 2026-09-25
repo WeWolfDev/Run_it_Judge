@@ -8,3 +8,6 @@ POSTGRES_USER=judge0
 POSTGRES_PASSWORD=change-this-postgres-password
 COUNT=8
 MAX_QUEUE_SIZE=100
+# Required on Ubuntu hosts using cgroup v2.
+ENABLE_PER_PROCESS_AND_THREAD_TIME_LIMIT=true
+ENABLE_PER_PROCESS_AND_THREAD_MEMORY_LIMIT=true

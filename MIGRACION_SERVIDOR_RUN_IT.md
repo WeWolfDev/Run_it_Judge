@@ -33,7 +33,7 @@ Antes de empezar, confirmar:
 - Acceso SSH con permisos de administrador.
 - Servidor Linux `amd64`/`x86_64` recomendado para Judge0.
 - Docker Engine y Docker Compose v2.
-- Git, Node.js 18 o superior y npm.
+- Git, Node.js 22.12 o superior y npm. El frontend bloqueado por Vite 8, Nitro 3 y TanStack Start ya no es compatible con Node.js 18/20.
 - nginx y certbot.
 - Dominio y acceso al proveedor DNS.
 - Al menos 20 GB libres para imagenes, logs y bases de datos.
@@ -59,6 +59,42 @@ node --version
 npm --version
 nginx -v
 ```
+
+### Instalacion automatica reproducible
+
+El repositorio incluye un bootstrap idempotente para Ubuntu 22.04 o posterior.
+Desde el checkout ejecuta:
+
+```bash
+sudo bash deploy/bootstrap-ubuntu.sh
+```
+
+El script instala Docker, Compose, Node.js, nginx, Certbot, SSH y Cockpit; genera
+los secretos sin mostrarlos; crea la base `run_it`; configura cgroup v2 para
+Judge0; instala las unidades systemd de `deploy/systemd/`; configura Cockpit
+solo en loopback; crea un backup inicial y ejecuta `deploy/smoke-test.sh`.
+
+Variables opcionales:
+
+```bash
+sudo env RUN_IT_USER=serverwewolf \
+  RUN_IT_ORIGIN=https://runit.gelatina.lat \
+  RUN_IT_ENABLE_UFW=1 \
+  bash deploy/bootstrap-ubuntu.sh
+```
+
+`RUN_IT_ENABLE_UFW=1` es opcional porque modifica reglas del firewall. Si se
+activa, el script agrega 22, 80 y 443 sin cambiar la politica UFW existente;
+esto evita cortar una sesion remota o una configuracion de red. Cockpit sigue
+restringido a `127.0.0.1:9090` y no necesita una regla UFW de entrada.
+
+El bootstrap no cambia DNS, no elimina volumenes Docker y respalda una
+configuracion nginx existente que no reconozca. Si existe, este ultimo caso se
+detiene en lugar de sobrescribirla. El registro queda en
+`/var/log/run-it-bootstrap.log` y no imprime contrasenas.
+
+El usuario de servicio no se agrega al grupo `docker` (membership equivaldria a
+root). Ejecuta los comandos manuales de Docker con `sudo docker compose ...`.
 
 Crear la carpeta de la aplicacion:
 
@@ -97,7 +133,8 @@ Crear el archivo de configuracion sin subirlo al repositorio:
 ```bash
 cd /root/judge
 cp judge0.conf.example judge0.conf
-chmod 440 judge0.conf
+sudo chown 1000:999 judge0.conf
+sudo chmod 440 judge0.conf
 ```
 
 Editar `judge0.conf` y reemplazar los valores de ejemplo. Como minimo debe contener:
@@ -124,7 +161,9 @@ Validar y arrancar:
 
 ```bash
 docker compose config -q
-docker compose up -d
+docker compose up -d db redis
+# Esperar healthchecks de db y redis antes de continuar.
+docker compose up -d server worker
 docker compose ps
 ```
 
@@ -175,7 +214,11 @@ Copiar el archivo al servidor nuevo por un canal seguro y verificar el hash. Des
 
 ```bash
 cat /root/run_it.backup | docker compose exec -T db pg_restore \
-  -U judge0 -d run_it --clean --if-exists --no-owner
+  -U judge0 --role=run_it -d run_it \
+  --clean --if-exists --no-owner --exit-on-error
+
+# Verificar que el backend conserva la propiedad de sus objetos.
+docker compose exec -T db psql -U run_it -d run_it -c '\dt'
 ```
 
 Si la base no existe en el servidor anterior o el despliegue es nuevo, no hace falta restaurar datos: el backend crea el esquema al arrancar.
@@ -223,63 +266,32 @@ npm test
 
 cd /root/judge/frontend
 npm ci
-npm run lint
-npm run build
+npm run typecheck
+VITE_API_URL="" VITE_SOCKET_URL="/" npm run build
 ```
 
 El build del frontend debe generar `.output/server/index.mjs`.
 
 ## 9. Crear los servicios systemd
 
-Crear `/etc/systemd/system/run-it-backend.service`:
+Las unidades mantenidas en el repositorio son:
 
-```ini
-[Unit]
-Description=Run It backend
-After=docker.service
-Requires=docker.service
+- `deploy/systemd/run-it-backend.service`.
+- `deploy/systemd/run-it-frontend.service`.
 
-[Service]
-Type=simple
-WorkingDirectory=/root/judge/run-it-backend
-EnvironmentFile=/root/judge/run-it-backend/secrets
-ExecStart=/usr/bin/node /root/judge/run-it-backend/index.js
-Restart=always
-RestartSec=5
-User=root
+El bootstrap las copia a `/etc/systemd/system/`, sustituye la ruta y el
+usuario de servicio, y las activa. Ejecutan Node.js como usuario no root, con
+archivos de sistema y home en solo lectura, temporales privados y restricciones
+de namespaces. No repliques el ejemplo antiguo que usaba `User=root`.
 
-[Install]
-WantedBy=multi-user.target
-```
-
-Crear `/etc/systemd/system/run-it-frontend.service`:
-
-```ini
-[Unit]
-Description=Run It frontend
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/root/judge/frontend
-Environment=NODE_ENV=production
-Environment=PORT=3002
-Environment=HOST=127.0.0.1
-ExecStart=/usr/bin/node /root/judge/frontend/.output/server/index.mjs
-Restart=always
-RestartSec=5
-User=root
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Activar ambos servicios:
+Para instalarlas manualmente, sustituye los marcadores `@@APP_DIR@@`,
+`@@APP_USER@@` y `@@APP_GROUP@@`; es preferible usar el bootstrap para evitar una
+configuracion incompleta. Después:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now run-it-backend run-it-frontend
-sudo systemctl status run-it-backend run-it-frontend --no-pager
+sudo systemctl enable --now run-it-backend.service run-it-frontend.service
+sudo systemctl status run-it-backend.service run-it-frontend.service --no-pager
 ```
 
 Comprobaciones locales:
@@ -290,76 +302,50 @@ curl -fsS http://127.0.0.1:3001/ready
 curl -I http://127.0.0.1:3002/login
 ```
 
-`/health` debe responder 200. `/ready` debe indicar base de datos y Redis en estado `ok`.
+`/health` debe responder 200. `/ready` debe indicar base de datos, Redis y sesiones en estado `ok`.
 
 ## 10. Configurar nginx y HTTPS
 
-Crear `/etc/nginx/sites-available/runit.gelatina.lat`:
+Usar las plantillas versionadas:
 
-```nginx
-server {
-    listen 80;
-    listen [::]:80;
-    server_name runit.gelatina.lat;
+- `deploy/nginx/runit-http.conf` para la primera validacion y el desafio ACME.
+- `deploy/nginx/runit-https.conf` despues de que exista el certificado.
 
-    location /.well-known/acme-challenge/ {
-        root /var/www/html;
-    }
+No activar el bloque TLS antes de crear el certificado: `nginx -t` fallaria
+por rutas `ssl_certificate` inexistentes. El bootstrap selecciona
+automaticamente HTTP cuando todavia no existe el certificado y selecciona TLS
+en ejecuciones posteriores.
 
-    location / {
-        return 301 https://$host$request_uri;
-    }
-}
-
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name runit.gelatina.lat;
-
-    ssl_certificate /etc/letsencrypt/live/runit.gelatina.lat/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/runit.gelatina.lat/privkey.pem;
-
-    location /socket.io/ {
-        proxy_pass http://127.0.0.1:3001;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    location ~ ^/(health|ready|auth/|problems|tournaments|access-codes/|rounds/|public/) {
-        proxy_pass http://127.0.0.1:3001;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    location / {
-        proxy_pass http://127.0.0.1:3002;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-Primero habilitar HTTP para emitir el certificado:
+Configuracion manual recomendada:
 
 ```bash
+cd /root/judge
 sudo mkdir -p /var/www/html
-sudo ln -s /etc/nginx/sites-available/runit.gelatina.lat /etc/nginx/sites-enabled/runit.gelatina.lat
+sudo cp deploy/nginx/runit-http.conf /etc/nginx/sites-available/run-it
+sudo sed -i 's/@@ORIGIN_HOST@@/runit.gelatina.lat/g' \
+  /etc/nginx/sites-available/run-it
+sudo ln -sfnT /etc/nginx/sites-available/run-it \
+  /etc/nginx/sites-enabled/run-it
 sudo nginx -t
 sudo systemctl reload nginx
-sudo certbot --nginx -d runit.gelatina.lat
+
+# HTTP-01 requiere que DNS/Cloudflare ya apunte el origen a este host.
+# El vhost HTTP solo publica el challenge y devuelve 503 para toda la app.
+sudo certbot certonly --webroot -w /var/www/html -d runit.gelatina.lat
+
+sudo cp deploy/nginx/runit-https.conf /etc/nginx/sites-available/run-it
+sudo sed -i 's/@@ORIGIN_HOST@@/runit.gelatina.lat/g' \
+  /etc/nginx/sites-available/run-it
 sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-Configurar el DNS `A` o `AAAA` para que `runit.gelatina.lat` apunte al servidor nuevo antes de ejecutar certbot. Mantener abiertos solo los puertos 80 y 443 en el firewall.
+El bloque HTTP nunca enruta login, API ni Socket.io: solo permite el challenge
+ACME y devuelve 503 para el resto. Asi, un corte de DNS temporal no degrada la
+aplicacion a HTTP plano. Configurar el DNS `A` o `AAAA` para que
+`runit.gelatina.lat` apunte al servidor nuevo antes de usar HTTP-01. Si se usa
+Cloudflare, cambiar el origen correctamente y mantener el proxy DNS activo; los
+puertos 80 y 443 siguen siendo los unicos puertos publicos de la aplicacion.
 
 ## 11. Cambio de servidor sin perder datos
 
@@ -385,6 +371,26 @@ curl -fsS https://runit.gelatina.lat/ready
 curl -fsSI https://runit.gelatina.lat/login
 ```
 
+La prueba E2E completa se ejecuta en el servidor porque valida tambien Judge0,
+Redis, Socket.IO y la base de datos. Lee el secreto admin sin imprimirlo, crea
+un problema/ronda/participante temporal, comprueba `accepted` y el cierre, y
+luego elimina sus datos:
+
+```bash
+cd /ruta/del/repositorio
+sudo node deploy/e2e-test.cjs
+```
+
+Para apuntar la API al dominio publico en el mismo servidor:
+
+```bash
+sudo env RUN_IT_API_URL=https://runit.gelatina.lat \
+  E2E_ALLOW_REMOTE=1 node deploy/e2e-test.cjs
+```
+
+Usar `E2E_KEEP_DATA=1` solo cuando se quiera conservar la prueba para
+inspeccionarla manualmente.
+
 Comprobar manualmente:
 
 - HTTPS valido y redireccion de HTTP a HTTPS.
@@ -403,9 +409,15 @@ Crear el directorio de backups con permisos restrictivos:
 
 ```bash
 sudo install -d -m 700 /var/backups/run-it
-cd /root/judge
-docker compose exec -T db pg_dump -U judge0 -d run_it --format=custom > /var/backups/run-it/run_it_$(date +%F).dump
-chmod 600 /var/backups/run-it/*.dump
+sudo bash -c '
+  cd /root/judge || exit 1
+  dump="/var/backups/run-it/run_it_$(date -u +%Y%m%dT%H%M%SZ).dump"
+  docker compose exec -T db pg_dump -U judge0 -d run_it --format=custom > "$dump"
+  chmod 600 "$dump"
+  sha256sum "$dump" > "$dump.sha256"
+  chmod 600 "$dump" "$dump.sha256"
+  printf "Backup creado: %s\n" "$dump"
+'
 ```
 
 Conservar tambien una copia segura de:
@@ -428,7 +440,7 @@ cd /root/judge
 docker compose ps
 docker compose logs --tail=100 server worker db redis
 sudo nginx -t
-sudo ss -lntp | grep -E ':(80|443|2358|3001|3002|5433|6380)'
+sudo ss -lntp | grep -E ':(22|80|443|2358|3001|3002|5433|6380|9090)'
 ```
 
 Problemas frecuentes:
@@ -438,20 +450,68 @@ Problemas frecuentes:
 - Frontend 502: comprobar que existe `.output/server/index.mjs` y que escucha en `127.0.0.1:3002`.
 - Socket.io no actualiza: comprobar la ruta `/socket.io/` y los headers WebSocket de nginx.
 - Login admin falla tras una migracion: comprobar que se restauro `run_it` y que `ADMIN_ACCESS_CODE` coincide con el usuario existente.
+- Cockpit no conecta: comprobar `systemctl status cockpit.socket`, que `9090` escucha solo en `127.0.0.1` y que el tunel SSH sigue abierto.
 
-## 15. Rollback
+## 15. Cockpit y acceso remoto seguro
+
+El bootstrap instala `cockpit` y `cockpit-storaged`, habilita `cockpit.socket` y
+añade este override. Ubuntu 26.04 ya no ofrece `cockpit-docker` en sus
+repositorios oficiales; el plugin de contenedores no es necesario para
+administrar el host y no se instala desde terceros automáticamente:
+
+```ini
+[Socket]
+ListenStream=
+ListenStream=127.0.0.1:9090
+```
+
+Asi Cockpit no escucha en la IP publica del servidor. Desde la computadora del
+administrador crear un tunel SSH:
+
+```bash
+ssh -N -L 9090:127.0.0.1:9090 <usuario>@<IP-o-DNS-del-servidor>
+```
+
+Abrir `https://localhost:9090`, aceptar el certificado local de Cockpit e
+iniciar sesion con un usuario Linux del servidor que tenga `sudo`. El plugin de
+Containers permite observar Docker; para reiniciar contenedores se requiere
+privilegio administrativo.
+
+La maquina tambien debe ser alcanzable por SSH. Si esta en una red privada:
+
+- Para acceso desde la misma LAN, usar su IP privada.
+- Para acceso remoto, configurar un reenvio TCP del router al puerto 22 o usar
+  una VPN.
+- Con IPv6 publica, comprobar reglas del router, del ISP y del firewall antes
+  de depender de ese camino.
+- No abrir 9090 en el router. El tunel termina en el puerto 22.
+
+Comprobaciones:
+
+```bash
+sudo systemctl status cockpit.socket --no-pager
+sudo ss -lntp | grep ':9090'
+# Debe mostrar 127.0.0.1:9090, no 0.0.0.0:9090 ni [::]:9090.
+```
+
+## 16. Rollback
 
 Si el servidor nuevo falla:
 
-1. Detener `run-it-backend` y `run-it-frontend` en el servidor nuevo.
-2. Volver el DNS a la IP del servidor anterior.
-3. Arrancar los servicios anteriores.
-4. No borrar el volumen Docker ni el backup del servidor nuevo.
-5. Investigar los logs y corregir antes de repetir el cambio.
+1. Detener `run-it-backend` y `run-it-frontend` en el servidor nuevo para
+   impedir nuevas escrituras.
+2. Si el servidor nuevo ya recibio tráfico, crear un dump final de `run_it` y
+   restaurarlo en el servidor anterior antes de reabrirlo.
+3. Verificar la restauracion y el estado de la base anterior.
+4. Volver el DNS al origen anterior.
+5. Arrancar los servicios anteriores.
+6. No borrar el volumen Docker ni el backup del servidor nuevo.
+7. Investigar los logs y corregir antes de repetir el cambio.
 
-No ejecutar `docker compose down -v` durante un rollback.
+Cambiar el DNS sin sincronizar los datos aceptados en el servidor nuevo puede
+perder escrituras. No ejecutar `docker compose down -v` durante un rollback.
 
-## 16. Entrega final
+## 17. Entrega final
 
 Devolver estos datos, sin contrasenas ni archivos de secretos:
 
@@ -464,6 +524,8 @@ Frontend activo: si/no
 Judge0 y worker activos: si/no
 PostgreSQL activo: si/no
 Redis activo: si/no
+Cockpit activo y restringido a loopback: si/no
+Tunel SSH remoto a Cockpit probado: si/no
 /health: HTTP <codigo>
 /ready: HTTP <codigo>
 Login admin probado: si/no
