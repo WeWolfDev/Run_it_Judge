@@ -2,6 +2,8 @@
 
 Resumen operativo del entorno de desarrollo por ramas. La explicación
 completa del diseño está en [LOCAL_CHANGES_CONFIG.md](LOCAL_CHANGES_CONFIG.md).
+Los códigos de acceso y las credenciales de prueba están en
+[CODIGOS_ACCESO.md](CODIGOS_ACCESO.md).
 
 ## Lo único que tienes que ejecutar tú
 
@@ -83,7 +85,7 @@ HMR. `Ctrl-C` detiene ambos.
 **2. En el Mac, terminal nueva** — el túnel:
 
 ```bash
-ssh -NL 4000:127.0.0.1:4000 -L 5000:127.0.0.1:5000 serverwewolf@runit-server
+ssh -NL 4000:127.0.0.1:4000 -L 5000:127.0.0.1:5000 serverwewolf@run-it-server.tail32f6e5.ts.net
 ```
 
 Se deja abierta. Es lo que sostiene el acceso.
@@ -97,7 +99,14 @@ Se deja abierta. Es lo que sostiene el acceso.
 | Backend readiness | http://localhost:5000/ready |
 | Login dev | http://localhost:4000/login |
 
-Usuario `devadmin`, código `dev-codigo-no-usar-en-produccion`.
+| Qué | Valor |
+| --- | --- |
+| Usuario | `devadmin` |
+| Código | `dev-admin-dev` |
+
+Definidos en `deploy/dev-branch.sh` como `DEV_ADMIN_USERNAME` y
+`DEV_ADMIN_ACCESS_CODE`. Viven solo en la base `run_it_dev` y no se escriben
+nunca en el archivo de secretos de producción.
 
 ## Comprobaciones
 

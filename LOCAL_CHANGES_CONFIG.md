@@ -5,6 +5,9 @@ entorno de `main`**, que es el que está sirviendo producción en este servidor.
 
 > Para el resumen operativo de los comandos, mira
 > [DEVELOPMENT_COMMANDS.md](DEVELOPMENT_COMMANDS.md).
+>
+> Para los códigos de acceso y las credenciales de prueba, mira
+> [CODIGOS_ACCESO.md](CODIGOS_ACCESO.md).
 
 ## 1. Para qué existe
 
@@ -281,7 +284,7 @@ cierras, el túnel se cae y el navegador dejará de cargar.
 | Login del admin de desarrollo | http://localhost:4000/login |
 
 El login de desarrollo es con el usuario `devadmin` y el código
-`dev-codigo-no-usar-en-produccion`. La pista pública está en
+`dev-admin-dev`. La pista pública está en
 http://localhost:4000/pista y con `RUN_IT_SEED_DEMO=true` ya viene con un
 problema y un participante de ejemplo.
 

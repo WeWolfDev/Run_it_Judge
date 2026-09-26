@@ -84,6 +84,46 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:8080,ht
 	.map((origin) => origin.trim())
 	.filter(Boolean);
 
+// Kahoot-style short codes. The alphabet drops I, O, 0 and 1 so codes survive
+// being read aloud or copied off a whiteboard. 32 symbols, 6 characters:
+// 30 bits of entropy, about a billion combinations.
+const ACCESS_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const ACCESS_CODE_LENGTH = 6;
+const ACCESS_CODE_MAX_COUNT = 500;
+
+function generateAccessCode() {
+	let code = '';
+	for (let position = 0; position < ACCESS_CODE_LENGTH; position += 1) {
+		// randomInt, not a modulo of randomBytes: rejection-free and free of
+		// the modulo bias that % 32 would introduce.
+		code += ACCESS_CODE_ALPHABET[crypto.randomInt(ACCESS_CODE_ALPHABET.length)];
+	}
+	return code;
+}
+
+// Participants retype a code from a printed list or a chat message, so accept
+// lowercase, spaces and stray dashes. Codes are stored without separators.
+function normalizeAccessCode(raw) {
+	return String(raw || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+// An access code is usable when it is unused, its deadline has not passed and,
+// if it was minted for a tournament, that tournament has not finished.
+const USABLE_ACCESS_CODE_SQL = `
+	SELECT id, tournament_id
+	FROM access_codes ac
+	WHERE ac.code = $1
+	  AND ac.status = 'unused'
+	  AND (ac.expires_at IS NULL OR ac.expires_at > now())
+	  AND (
+	    ac.tournament_id IS NULL
+	    OR EXISTS (
+	      SELECT 1 FROM tournaments t
+	      WHERE t.id = ac.tournament_id AND t.status <> 'finished'
+	    )
+	  )
+	FOR UPDATE OF ac`;
+
 fastify.register(cors, { origin: allowedOrigins });
 
 fastify.get('/health', async () => ({ status: 'ok' }));
@@ -109,9 +149,12 @@ fastify.post('/auth/login', async (request, reply) => {
 	}
 	if (rejectLimitedAuth(request, reply, username)) return;
 
+	// The raw value is tried first so codes minted before normalisation keep
+	// working verbatim; the normalized form is the fallback for the short PINs,
+	// which participants tend to retype in lowercase.
 	const result = await query(
-		'SELECT id, username, role FROM users WHERE username = $1 AND access_code = $2',
-		[username, accessCode],
+		'SELECT id, username, role FROM users WHERE username = $1 AND (access_code = $2 OR access_code = $3)',
+		[username, accessCode, normalizeAccessCode(accessCode)],
 	);
 
 	if (result.rowCount === 0) {
@@ -128,19 +171,18 @@ fastify.post('/auth/login', async (request, reply) => {
 
 fastify.post('/auth/register', async (request, reply) => {
 	const username = String(request.body?.username || '').trim();
-	const accessCode = String(request.body?.accessCode || '').trim();
+	const accessCode = normalizeAccessCode(request.body?.accessCode);
 
-	if (username.length < 3 || username.length > 128 || accessCode.length < 8 || accessCode.length > 256) {
+	// The minimum is the short-PIN length. The old codes were 22 characters, so
+	// the previous floor of 8 would have rejected every code minted here.
+	if (username.length < 3 || username.length > 128 || accessCode.length < ACCESS_CODE_LENGTH || accessCode.length > 256) {
 		return reply.code(400).send({ error: 'Usuario y código de acceso no válidos' });
 	}
 	if (rejectLimitedAuth(request, reply, username)) return;
 
 	try {
 		const user = await withTransaction(async (client) => {
-			const codeResult = await client.query(
-				"SELECT id FROM access_codes WHERE code = $1 AND status = 'unused' FOR UPDATE",
-				[accessCode],
-			);
+			const codeResult = await client.query(USABLE_ACCESS_CODE_SQL, [accessCode]);
 			if (!codeResult.rowCount) {
 				const error = new Error('Código de acceso no disponible');
 				error.code = 'ACCESS_CODE_UNAVAILABLE';
@@ -321,28 +363,134 @@ fastify.post('/tournaments/:id/start', async (request, reply) => {
 	return result.rowCount ? result.rows[0] : reply.code(404).send({ error: 'Torneo no encontrado' });
 });
 
+// Invalidates every still-unused code of a tournament. Called from the places
+// where a tournament can end, so no scheduled job is involved: the codes are
+// dead in the same transaction that ends the event.
+async function expireTournamentAccessCodes(client, tournamentId) {
+	const { rows } = await client.query(
+		`UPDATE access_codes SET status = 'expired'
+		 WHERE tournament_id = $1 AND status = 'unused' RETURNING id`,
+		[tournamentId],
+	);
+	return rows.length;
+}
+
 fastify.post('/access-codes/generate', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
-	const count = Math.min(Math.max(Number(request.body?.count || 1), 1), 500);
+	const count = Math.min(Math.max(Number(request.body?.count || 1), 1), ACCESS_CODE_MAX_COUNT);
+	const tournamentId = request.body?.tournamentId || null;
+	const ttlMinutes = request.body?.ttlMinutes === undefined || request.body?.ttlMinutes === null
+		? null
+		: Math.min(Math.max(Number(request.body.ttlMinutes), 1), 60 * 24 * 30);
+
+	if (tournamentId) {
+		const tournament = await query('SELECT id, status FROM tournaments WHERE id = $1', [tournamentId]);
+		if (!tournament.rowCount) {
+			return reply.code(404).send({ error: 'Torneo no encontrado' });
+		}
+		if (tournament.rows[0].status === 'finished') {
+			return reply.code(409).send({ error: 'El torneo ya terminó; no se pueden generar códigos' });
+		}
+	}
+
+	// Retry on the unique constraint rather than pre-checking: two admins
+	// generating at the same time can legitimately collide, and only the
+	// constraint is authoritative.
+	const expiresAt = ttlMinutes === null
+		? null
+		: new Date(Date.now() + ttlMinutes * 60 * 1000).toISOString();
 	const codes = [];
-	for (let index = 0; index < count; index += 1) {
-		const code = `RUNIT-${crypto.randomBytes(8).toString('hex').toUpperCase()}`;
-		const result = await query('INSERT INTO access_codes (code) VALUES ($1) RETURNING code', [code]);
-		codes.push(result.rows[0].code);
+	for (let attempt = 0; attempt < count; attempt += 1) {
+		for (let retry = 0; retry < 5; retry += 1) {
+			const code = generateAccessCode();
+			try {
+				const result = await query(
+					`INSERT INTO access_codes (code, tournament_id, expires_at)
+					 VALUES ($1, $2, $3) RETURNING code, tournament_id, expires_at`,
+					[code, tournamentId, expiresAt],
+				);
+				codes.push(result.rows[0]);
+				break;
+			} catch (error) {
+				if (error.code !== '23505') throw error;
+			}
+		}
 	}
 	return reply.code(201).send({ codes });
+});
+
+fastify.get('/access-codes', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const tournamentId = request.query?.tournamentId || null;
+	const result = await query(
+		`SELECT ac.id, ac.code, ac.status, ac.display_name, ac.claimed_at, ac.created_at,
+		        ac.tournament_id, ac.expires_at, t.name AS tournament_name
+		 FROM access_codes ac
+		 LEFT JOIN tournaments t ON t.id = ac.tournament_id
+		 WHERE ($1::uuid IS NULL OR ac.tournament_id = $1)
+		 ORDER BY ac.created_at DESC
+		 LIMIT 500`,
+		[tournamentId],
+	);
+	return result.rows;
+});
+
+// Bulk revoke. The explicit escape hatch for when an event is called off
+// without reaching a natural finish.
+fastify.post('/access-codes/revoke', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const { tournamentId, codes } = request.body || {};
+	const conditions = ["status = 'unused'"];
+	const values = [];
+	if (tournamentId) {
+		values.push(tournamentId);
+		conditions.push(`tournament_id = $${values.length}`);
+	}
+	if (Array.isArray(codes) && codes.length) {
+		values.push(codes);
+		conditions.push(`code = ANY($${values.length}::text[])`);
+	}
+	if (values.length === 0) {
+		return reply.code(400).send({ error: 'Indica tournamentId o codes para revocar' });
+	}
+	const result = await query(
+		`UPDATE access_codes SET status = 'expired' WHERE ${conditions.join(' AND ')} RETURNING code`,
+		values,
+	);
+	return { revoked: result.rowCount, codes: result.rows.map((row) => row.code) };
+});
+
+fastify.post('/tournaments/:id/finish', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const result = await withTransaction(async (client) => {
+		const finished = await client.query(
+			"UPDATE tournaments SET status = 'finished' WHERE id = $1 RETURNING *",
+			[request.params.id],
+		);
+		if (!finished.rowCount) return null;
+		const expired = await expireTournamentAccessCodes(client, request.params.id);
+		return { tournament: finished.rows[0], expiredAccessCodes: expired };
+	});
+	if (!result) return reply.code(404).send({ error: 'Torneo no encontrado' });
+	return result;
 });
 
 fastify.post('/access-codes/:code/claim', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'participant'))) return;
 	const { displayName } = request.body || {};
-	const result = await query(
-		`UPDATE access_codes SET status = 'claimed', claimed_by_user_id = $1,
-			display_name = $2, claimed_at = now()
-		 WHERE code = $3 AND status = 'unused' RETURNING *`,
-		[request.user.id, displayName, request.params.code],
-	);
-	return result.rowCount ? result.rows[0] : reply.code(409).send({ error: 'Código no disponible' });
+	const result = await withTransaction(async (client) => {
+		const codeResult = await client.query(USABLE_ACCESS_CODE_SQL, [normalizeAccessCode(request.params.code)]);
+		if (!codeResult.rowCount) return null;
+		const updated = await client.query(
+			`UPDATE access_codes
+			 SET status = 'claimed', claimed_by_user_id = $1,
+			     display_name = $2, claimed_at = now()
+			 WHERE id = $3 RETURNING *`,
+			[request.user.id, displayName, codeResult.rows[0].id],
+		);
+		return updated.rows[0];
+	});
+	return result || reply.code(409).send({ error: 'Código no disponible' });
 });
 
 fastify.post('/rounds', async (request, reply) => {
@@ -753,6 +901,9 @@ async function closeRound(roundId) {
 		if (advanced.length === 1) {
 			await client.query("UPDATE participants SET status = 'winner' WHERE id = $1", [advanced[0].participant_id]);
 			await client.query("UPDATE tournaments SET status = 'finished' WHERE id = $1", [round.tournament_id]);
+			// Any code still unused for this tournament dies with it, in the same
+			// transaction that declares the winner.
+			await expireTournamentAccessCodes(client, round.tournament_id);
 			fastify.io?.emit('tournament:winner', { participant_id: advanced[0].participant_id });
 		}
 		fastify.io?.emit('round:closed', {

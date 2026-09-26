@@ -12,13 +12,18 @@ import {
   createProblem,
   createRound,
   createTournament,
+  finishTournament,
   generateAccessCodes,
   getActiveRound,
   getProblems,
   getRoundLeaderboard,
   getRoundSubmissions,
+  getTournaments,
+  listAccessCodes,
+  revokeAccessCodes,
   startRound,
   toggleRoundPause,
+  type AccessCode,
 } from "@/lib/api";
 import { createSocketFeed } from "@/lib/runit";
 
@@ -35,6 +40,27 @@ const STATUS_CLASS: Record<Participant["status"], string> = {
   eliminated: "bg-danger-soft text-danger",
   past: "bg-muted text-muted-foreground",
 };
+
+const CODE_STATUS_LABEL: Record<AccessCode["status"], string> = {
+  unused: "Sin usar",
+  claimed: "Canjeado",
+  expired: "Invalidado",
+};
+
+const CODE_STATUS_CLASS: Record<AccessCode["status"], string> = {
+  unused: "bg-info-soft text-info",
+  claimed: "bg-success-soft text-success",
+  expired: "bg-muted text-muted-foreground",
+};
+
+function formatExpiry(iso: string) {
+  const minutes = Math.round((new Date(iso).getTime() - Date.now()) / 60000);
+  if (minutes <= 0) return "vencido";
+  if (minutes < 60) return `en ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `en ${hours} h`;
+  return new Date(iso).toLocaleDateString();
+}
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
@@ -56,7 +82,15 @@ export function AdminPanel({
   const [paused, setPaused] = useState(false);
   const [message, setMessage] = useState("");
   const [codeCount, setCodeCount] = useState(10);
+  const [codeTtlMinutes, setCodeTtlMinutes] = useState(240);
+  const [codeTournamentId, setCodeTournamentId] = useState("");
   const [generatedCodes, setGeneratedCodes] = useState<string[]>([]);
+  const [codes, setCodes] = useState<AccessCode[]>([]);
+  const [loadingCodes, setLoadingCodes] = useState(false);
+  const [busyCodes, setBusyCodes] = useState(false);
+  const [tournaments, setTournaments] = useState<
+    Array<{ id: string; name: string; status: string }>
+  >([]);
   const [problemName, setProblemName] = useState("");
   const [problemStatement, setProblemStatement] = useState("");
   const [problemDifficulty, setProblemDifficulty] = useState<"easy" | "medium" | "hard">("easy");
@@ -103,6 +137,39 @@ export function AdminPanel({
   );
   const solved = liveParticipants.filter((p) => p.solved).length;
   const active = liveParticipants.filter((p) => p.status === "racing").length;
+
+  const refreshCodes = useMemo(
+    () => async () => {
+      setLoadingCodes(true);
+      try {
+        setCodes(await listAccessCodes(codeTournamentId || null));
+      } catch {
+        setCodes([]);
+      } finally {
+        setLoadingCodes(false);
+      }
+    },
+    [codeTournamentId],
+  );
+
+  const refreshTournaments = useMemo(
+    () => async () => {
+      try {
+        setTournaments(await getTournaments());
+      } catch {
+        setTournaments([]);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    void refreshTournaments();
+  }, [refreshTournaments]);
+
+  useEffect(() => {
+    void refreshCodes();
+  }, [refreshCodes]);
 
   useEffect(() => {
     void getProblems()
@@ -452,37 +519,87 @@ export function AdminPanel({
         <section className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground">Códigos de acceso</h3>
           <p className="mt-2 text-xs text-muted-foreground">
-            Cada código puede registrarse una sola vez.
+            Cada código se puede canjear una sola vez. Si lo asocias a un torneo, se invalida solo
+            cuando el torneo termina o cuando vence el plazo.
           </p>
-          <div className="mt-4 flex gap-2">
-            <input
-              type="number"
-              min={1}
-              max={500}
-              value={codeCount}
-              onChange={(event) => setCodeCount(Number(event.target.value))}
-              className="w-20 rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
-              aria-label="Cantidad de códigos"
-            />
+
+          <div className="mt-4 space-y-3">
+            <label className="block text-xs">
+              <span className="text-muted-foreground">Torneo (opcional)</span>
+              <select
+                value={codeTournamentId}
+                onChange={(event) => setCodeTournamentId(event.target.value)}
+                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+              >
+                <option value="">Sin torneo (código global)</option>
+                {tournaments.map((tournament) => (
+                  <option
+                    key={tournament.id}
+                    value={tournament.id}
+                    disabled={tournament.status === "finished"}
+                  >
+                    {tournament.name}
+                    {tournament.status === "finished" ? " — finalizado" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="flex gap-2">
+              <label className="block flex-1 text-xs">
+                <span className="text-muted-foreground">Cantidad</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={500}
+                  value={codeCount}
+                  onChange={(event) => setCodeCount(Number(event.target.value))}
+                  className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+                  aria-label="Cantidad de códigos"
+                />
+              </label>
+              <label className="block flex-1 text-xs">
+                <span className="text-muted-foreground">Válidos por (minutos)</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={43200}
+                  value={codeTtlMinutes}
+                  onChange={(event) => setCodeTtlMinutes(Number(event.target.value))}
+                  className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+                  aria-label="Minutos de validez"
+                />
+              </label>
+            </div>
+
             <button
               type="button"
-              onClick={() =>
-                void generateAccessCodes(codeCount)
-                  .then(({ codes }) => {
-                    setGeneratedCodes(codes);
-                    setMessage(`${codes.length} códigos generados`);
+              disabled={busyCodes}
+              onClick={() => {
+                setBusyCodes(true);
+                void generateAccessCodes({
+                  count: codeCount,
+                  tournamentId: codeTournamentId || null,
+                  ttlMinutes: codeTtlMinutes || null,
+                })
+                  .then((result) => {
+                    setGeneratedCodes(result.codes.map((item) => item.code));
+                    setMessage(`${result.codes.length} códigos generados`);
+                    return refreshCodes();
                   })
                   .catch((error) =>
                     setMessage(
                       error instanceof Error ? error.message : "No se pudieron generar los códigos",
                     ),
                   )
-              }
-              className="flex-1 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                  .finally(() => setBusyCodes(false));
+              }}
+              className="w-full rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
             >
-              Generar
+              {busyCodes ? "Generando..." : "Generar"}
             </button>
           </div>
+
           {generatedCodes.length > 0 && (
             <textarea
               readOnly
@@ -491,6 +608,103 @@ export function AdminPanel({
               aria-label="Códigos generados"
             />
           )}
+
+          <div className="mt-4 flex items-center justify-between">
+            <h4 className="text-xs font-semibold text-foreground">Códigos emitidos</h4>
+            <button
+              type="button"
+              onClick={() => void refreshCodes()}
+              className="text-xs text-primary hover:underline"
+            >
+              Actualizar
+            </button>
+          </div>
+
+          {codes.length > 0 && (
+            <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-border">
+              <table className="w-full text-left text-xs">
+                <thead className="sticky top-0 bg-muted text-muted-foreground">
+                  <tr>
+                    <th className="px-2 py-1.5 font-medium">Código</th>
+                    <th className="px-2 py-1.5 font-medium">Estado</th>
+                    <th className="px-2 py-1.5 font-medium">Vence</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {codes.map((item) => (
+                    <tr key={item.id} className="border-t border-border">
+                      <td className="px-2 py-1.5 font-mono text-foreground">
+                        {item.code}
+                        {item.display_name ? (
+                          <span className="ml-1 font-sans text-muted-foreground">
+                            {item.display_name}
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <span className={CODE_STATUS_CLASS[item.status]}>
+                          {CODE_STATUS_LABEL[item.status]}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5 text-muted-foreground">
+                        {item.expires_at ? formatExpiry(item.expires_at) : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {loadingCodes && <p className="mt-2 text-xs text-muted-foreground">Cargando…</p>}
+          {!loadingCodes && codes.length === 0 && (
+            <p className="mt-2 text-xs text-muted-foreground">Todavía no hay códigos emitidos.</p>
+          )}
+
+          {codeTournamentId && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={busyCodes}
+                onClick={() => {
+                  setBusyCodes(true);
+                  void revokeAccessCodes({ tournamentId: codeTournamentId })
+                    .then((result) => {
+                      setMessage(`${result.revoked} códigos revocados`);
+                      return refreshCodes();
+                    })
+                    .catch((error) =>
+                      setMessage(error instanceof Error ? error.message : "No se pudieron revocar"),
+                    )
+                    .finally(() => setBusyCodes(false));
+                }}
+                className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-opacity hover:opacity-70 disabled:opacity-50"
+              >
+                Revocar sin usar
+              </button>
+              <button
+                type="button"
+                disabled={busyCodes}
+                onClick={() => {
+                  setBusyCodes(true);
+                  void finishTournament(codeTournamentId)
+                    .then((result) => {
+                      setMessage(
+                        `Torneo finalizado y ${result.expiredAccessCodes} códigos invalidados`,
+                      );
+                      return Promise.all([refreshCodes(), refreshTournaments()]);
+                    })
+                    .catch((error) =>
+                      setMessage(error instanceof Error ? error.message : "No se pudo finalizar"),
+                    )
+                    .finally(() => setBusyCodes(false));
+                }}
+                className="rounded-lg border border-danger px-3 py-1.5 text-xs font-medium text-danger transition-opacity hover:opacity-70 disabled:opacity-50"
+              >
+                Finalizar torneo e invalidar
+              </button>
+            </div>
+          )}
+
           {message && <p className="mt-2 text-xs text-muted-foreground">{message}</p>}
         </section>
 

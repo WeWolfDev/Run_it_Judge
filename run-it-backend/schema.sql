@@ -9,12 +9,46 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS access_codes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   code TEXT NOT NULL UNIQUE,
-  status TEXT NOT NULL DEFAULT 'unused' CHECK (status IN ('unused', 'claimed')),
+  status TEXT NOT NULL DEFAULT 'unused' CHECK (status IN ('unused', 'claimed', 'expired')),
   claimed_by_user_id UUID REFERENCES users(id),
   display_name TEXT,
   claimed_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- Tournament this code was minted for. NULL keeps the legacy behaviour:
+  -- a global code with no automatic expiry.
+  tournament_id UUID REFERENCES tournaments(id) ON DELETE CASCADE,
+  -- Wall-clock deadline. A code past this instant stops validating even if the
+  -- row still says 'unused', so no cron or reaper job is needed.
+  expires_at TIMESTAMPTZ
 );
+
+-- tournaments is created after access_codes in this file, so the foreign key
+-- above is added once the referenced table exists.
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS tournament_id UUID;
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'access_codes_tournament_id_fkey'
+  ) THEN
+    ALTER TABLE access_codes
+      ADD CONSTRAINT access_codes_tournament_id_fkey
+      FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE;
+  END IF;
+END
+$$;
+
+-- Widen the status CHECK so codes can be marked 'expired'. ALTER ... DROP IF
+-- EXISTS keeps this re-runnable against databases created before the change.
+ALTER TABLE access_codes DROP CONSTRAINT IF EXISTS access_codes_status_check;
+ALTER TABLE access_codes
+  ADD CONSTRAINT access_codes_status_check
+  CHECK (status IN ('unused', 'claimed', 'expired'));
+
+CREATE INDEX IF NOT EXISTS access_codes_tournament_status_idx
+  ON access_codes(tournament_id, status);
+CREATE INDEX IF NOT EXISTS access_codes_expires_at_idx
+  ON access_codes(expires_at) WHERE status = 'unused';
 
 CREATE TABLE IF NOT EXISTS tournaments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

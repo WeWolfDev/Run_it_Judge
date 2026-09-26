@@ -41,16 +41,86 @@ export async function register(username: string, accessCode: string) {
   return body as { token: string; user: { id: string; username: string; role: "participant" } };
 }
 
-export async function generateAccessCodes(count: number) {
+export type AccessCodeStatus = "unused" | "claimed" | "expired";
+
+export type AccessCode = {
+  id: string;
+  code: string;
+  status: AccessCodeStatus;
+  display_name: string | null;
+  claimed_at: string | null;
+  created_at: string;
+  tournament_id: string | null;
+  tournament_name: string | null;
+  expires_at: string | null;
+};
+
+export async function generateAccessCodes(input: {
+  count: number;
+  tournamentId?: string | null;
+  ttlMinutes?: number | null;
+}) {
   const response = await fetch(`${API_URL}/access-codes/generate`, {
     method: "POST",
     headers: { "content-type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ count }),
+    body: JSON.stringify({
+      count: input.count,
+      tournamentId: input.tournamentId ?? null,
+      ttlMinutes: input.ttlMinutes ?? null,
+    }),
   });
 
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "No se pudieron generar los códigos");
-  return body as { codes: string[] };
+  return body as { codes: AccessCode[] };
+}
+
+export async function listAccessCodes(tournamentId?: string | null) {
+  const query = tournamentId ? `?tournamentId=${encodeURIComponent(tournamentId)}` : "";
+  const response = await fetch(`${API_URL}/access-codes${query}`, {
+    headers: authHeaders(),
+  });
+
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudieron cargar los códigos");
+  return body as AccessCode[];
+}
+
+export async function getTournaments() {
+  const response = await fetch(`${API_URL}/tournaments`, { headers: authHeaders() });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudieron cargar los torneos");
+  return body as Array<{ id: string; name: string; status: string }>;
+}
+
+export async function revokeAccessCodes(input: { tournamentId?: string | null; codes?: string[] }) {
+  const response = await fetch(`${API_URL}/access-codes/revoke`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify({
+      tournamentId: input.tournamentId ?? null,
+      codes: input.codes ?? null,
+    }),
+  });
+
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudieron revocar los códigos");
+  return body as { revoked: number; codes: string[] };
+}
+
+export async function finishTournament(tournamentId: string) {
+  const response = await fetch(`${API_URL}/tournaments/${tournamentId}/finish`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify({}),
+  });
+
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudo finalizar el torneo");
+  return body as {
+    tournament: { id: string; name: string; status: string };
+    expiredAccessCodes: number;
+  };
 }
 
 export async function getProblems() {

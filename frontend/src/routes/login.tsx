@@ -38,8 +38,11 @@ function LoginPage() {
       return;
     }
 
-    if (accessCode.trim().length < 8) {
-      setError("Ingresa tu código de acceso.");
+    // Matches ACCESS_CODE_LENGTH in run-it-backend/index.js. The old floor of 8
+    // came from the retired 22-character codes and silently blocked the
+    // 6-character PINs, so the form could never submit one.
+    if (accessCode.trim().length < 6) {
+      setError("Ingresa tu código de acceso (6 caracteres).");
       return;
     }
 
