@@ -85,7 +85,7 @@ HMR. `Ctrl-C` detiene ambos.
 **2. En el Mac, terminal nueva** — el túnel:
 
 ```bash
-ssh -NL 4000:127.0.0.1:4000 -L 5000:127.0.0.1:5000 serverwewolf@runit-server
+ssh -NL 4000:127.0.0.1:4000 -L 5000:127.0.0.1:5000 serverwewolf@run-it-server.tail32f6e5.ts.net
 ```
 
 Se deja abierta. Es lo que sostiene el acceso.
