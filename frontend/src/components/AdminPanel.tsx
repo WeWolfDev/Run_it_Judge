@@ -9,12 +9,14 @@ import {
 import { useRoundTimer } from "@/hooks/use-round-timer";
 import {
   closeRound,
+  createNextRound,
   createProblem,
   createRound,
   createTournament,
   finishTournament,
   generateAccessCodes,
   getActiveRound,
+  getNextRound,
   getProblems,
   getRoundLeaderboard,
   getRoundSubmissions,
@@ -24,6 +26,7 @@ import {
   startRound,
   toggleRoundPause,
   type AccessCode,
+  type NextRoundPreview,
 } from "@/lib/api";
 import { createSocketFeed } from "@/lib/runit";
 
@@ -103,6 +106,9 @@ export function AdminPanel({
   const [selectedProblem, setSelectedProblem] = useState("");
   const [roundNumber, setRoundNumber] = useState(1);
   const [capacity, setCapacity] = useState(4);
+  const [nextRoundPreview, setNextRoundPreview] = useState<NextRoundPreview | null>(null);
+  const [nextRoundCapacity, setNextRoundCapacity] = useState(0);
+  const [savingNextRound, setSavingNextRound] = useState(false);
   const [timeLimitMinutes, setTimeLimitMinutes] = useState(10);
   const [createdRoundId, setCreatedRoundId] = useState("");
   const [savingRound, setSavingRound] = useState(false);
@@ -130,6 +136,7 @@ export function AdminPanel({
   const [liveRound, setLiveRound] = useState(round);
   const displayedRound = liveRound;
   const remaining = useRoundTimer(displayedRound.ends_at);
+  const liveRoundId = String(displayedRound.round_id);
 
   const filtered = useMemo(
     () => liveParticipants.filter((p) => p.name.toLowerCase().includes(query.toLowerCase())),
@@ -170,6 +177,31 @@ export function AdminPanel({
   useEffect(() => {
     void refreshCodes();
   }, [refreshCodes]);
+
+  // La vista previa de la ronda siguiente se consulta siempre: si la ronda
+  // está cerrada y hay clasificados, aparece el botón. Es la única forma de que
+  // el panel ofrezca continuar el torneo sin que el admin cuente a mano.
+  useEffect(() => {
+    if (!liveRoundId || liveRoundId === "undefined" || liveRoundId === "null") {
+      setNextRoundPreview(null);
+      return;
+    }
+    let cancelled = false;
+    void getNextRound(liveRoundId)
+      .then((preview) => {
+        if (cancelled) return;
+        setNextRoundPreview(preview);
+        // El cupo por defecto es "clasifican todos". El admin puede bajarlo
+        // para eliminar más, nunca subirlo.
+        setNextRoundCapacity(preview.advancingCount);
+      })
+      .catch(() => {
+        if (!cancelled) setNextRoundPreview(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [liveRoundId]);
 
   useEffect(() => {
     void getProblems()
@@ -285,7 +317,29 @@ export function AdminPanel({
     }
   };
 
-  const liveRoundId = String(displayedRound.round_id);
+  const saveNextRound = async () => {
+    if (!selectedProblem) {
+      setMessage("Elegí un problema para la ronda siguiente.");
+      return;
+    }
+    setSavingNextRound(true);
+    try {
+      const created = await createNextRound(liveRoundId, {
+        problemId: selectedProblem,
+        capacity: nextRoundCapacity || null,
+        timeLimitSeconds: timeLimitMinutes * 60,
+      });
+      setCreatedRoundId(created.round.id);
+      setNextRoundPreview(null);
+      setMessage(
+        `Ronda ${created.round.round_number} creada con ${created.participants} participantes. Iniciala cuando estés listo.`,
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo crear la ronda siguiente");
+    } finally {
+      setSavingNextRound(false);
+    }
+  };
 
   return (
     <div className="grid gap-5 lg:grid-cols-[7fr_3fr]">
@@ -707,6 +761,86 @@ export function AdminPanel({
 
           {message && <p className="mt-2 text-xs text-muted-foreground">{message}</p>}
         </section>
+
+        {nextRoundPreview && (
+          <section className="rounded-xl border border-border bg-card p-5">
+            <h3 className="text-sm font-semibold text-foreground">Ronda siguiente</h3>
+            {nextRoundPreview.available ? (
+              <>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {nextRoundPreview.advancingCount} de {liveParticipants.length} participantes
+                  clasificaron a la ronda {nextRoundPreview.nextRoundNumber}. Ya están inscriptos.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {nextRoundPreview.advancing.map((entry) => (
+                    <span
+                      key={entry.participant_id}
+                      className="rounded-md bg-muted px-2 py-0.5 text-xs text-foreground"
+                    >
+                      {entry.final_rank}. {entry.display_name}
+                    </span>
+                  ))}
+                </div>
+                <div className="mt-4 space-y-3">
+                  <label className="block text-sm">
+                    <span className="text-muted-foreground">Problema</span>
+                    <select
+                      value={selectedProblem}
+                      onChange={(event) => setSelectedProblem(event.target.value)}
+                      className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+                    >
+                      {problems.length === 0 && (
+                        <option value="">No hay problemas disponibles</option>
+                      )}
+                      {problems.map((problem) => (
+                        <option key={problem.id} value={problem.id}>
+                          {problem.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="flex gap-2">
+                    <label className="block flex-1 text-sm">
+                      <span className="text-muted-foreground">
+                        Cupo (máx. {nextRoundPreview.advancingCount})
+                      </span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={nextRoundPreview.advancingCount}
+                        value={nextRoundCapacity}
+                        onChange={(event) => setNextRoundCapacity(Number(event.target.value))}
+                        className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+                      />
+                    </label>
+                    <label className="block flex-1 text-sm">
+                      <span className="text-muted-foreground">Tiempo límite (minutos)</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={timeLimitMinutes}
+                        onChange={(event) => setTimeLimitMinutes(Number(event.target.value))}
+                        className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+                      />
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void saveNextRound()}
+                    disabled={savingNextRound}
+                    className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                  >
+                    {savingNextRound
+                      ? "Creando..."
+                      : `Crear ronda ${nextRoundPreview.nextRoundNumber}`}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="mt-2 text-xs text-muted-foreground">{nextRoundPreview.reason}</p>
+            )}
+          </section>
+        )}
 
         <section className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground">Configurar ronda</h3>

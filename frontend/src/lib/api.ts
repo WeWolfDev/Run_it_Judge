@@ -232,6 +232,55 @@ export async function closeRound(roundId: string) {
   return body;
 }
 
+export type NextRoundAdvancing = {
+  participant_id: string;
+  display_name: string;
+  final_rank: number;
+  best_pass_percentage: string;
+};
+
+export type NextRoundPreview = {
+  available: boolean;
+  reason?: string;
+  nextRoundNumber: number;
+  tournamentId: string;
+  tournamentStatus: string;
+  advancingCount: number;
+  advancing: NextRoundAdvancing[];
+  existing: { id: string; round_number: number; status: string } | null;
+};
+
+export async function getNextRound(roundId: string) {
+  const response = await fetch(`${API_URL}/rounds/${roundId}/next`, {
+    headers: authHeaders(),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudo consultar la ronda siguiente");
+  return body as NextRoundPreview;
+}
+
+export async function createNextRound(
+  roundId: string,
+  input: { problemId: string; capacity?: number | null; timeLimitSeconds: number },
+) {
+  const response = await fetch(`${API_URL}/rounds/${roundId}/next`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify({
+      problemId: input.problemId,
+      capacity: input.capacity ?? null,
+      timeLimitSeconds: input.timeLimitSeconds,
+    }),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudo crear la ronda siguiente");
+  return body as {
+    round: { id: string; round_number: number; capacity: number; status: string };
+    participants: number;
+    advancing: NextRoundAdvancing[];
+  };
+}
+
 export async function toggleRoundPause(roundId: string) {
   const response = await fetch(`${API_URL}/rounds/${roundId}/pause`, {
     method: "POST",

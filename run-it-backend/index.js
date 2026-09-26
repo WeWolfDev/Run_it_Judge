@@ -515,6 +515,140 @@ fastify.get('/tournaments/:id/rounds', async (request, reply) => {
 	return result.rows;
 });
 
+// Lee el estado de una ronda para saber si se puede generar la siguiente y con
+// quienes. Lo usa el panel para prellenar el formulario antes de crearla.
+async function nextRoundPreview(roundId) {
+	const roundResult = await query('SELECT * FROM rounds WHERE id = $1', [roundId]);
+	if (!roundResult.rowCount) return { available: false, reason: 'La ronda no existe' };
+	const round = roundResult.rows[0];
+
+	const tournament = await query('SELECT id, status FROM tournaments WHERE id = $1', [round.tournament_id]);
+	const tournamentStatus = tournament.rows[0]?.status;
+
+	// Quien quedó con final_status 'advanced' en esta ronda es el que juega la
+	// siguiente. closeRound (index.js:884) ya lo calculó.
+	const advancing = await query(
+		`SELECT rp.participant_id, rp.final_rank, rp.best_pass_percentage, p.display_name
+		 FROM round_participants rp
+		 JOIN participants p ON p.id = rp.participant_id
+		 WHERE rp.round_id = $1 AND rp.final_status = 'advanced'
+		 ORDER BY rp.final_rank`,
+		[roundId],
+	);
+
+	// La siguiente es la que sigue a esta, no la siguiente libre. Importa: con
+	// MAX(round_number)+1 el chequeo de "¿ya existe?" nunca encontraría nada,
+	// porque ese número por definición no existe, y un segundo POST crearía la
+	// ronda N+2 en lugar de rechazar.
+	const nextRoundNumber = Number(round.round_number) + 1;
+
+	const existing = await query(
+		'SELECT id, round_number, status FROM rounds WHERE tournament_id = $1 AND round_number = $2',
+		[round.tournament_id, nextRoundNumber],
+	);
+
+	const preview = {
+		nextRoundNumber,
+		tournamentId: round.tournament_id,
+		tournamentStatus,
+		advancingCount: advancing.rows.length,
+		advancing: advancing.rows.map((row) => ({
+			participant_id: row.participant_id,
+			display_name: row.display_name,
+			final_rank: row.final_rank,
+			best_pass_percentage: row.best_pass_percentage,
+		})),
+		existing: existing.rowCount
+			? { id: existing.rows[0].id, round_number: existing.rows[0].round_number, status: existing.rows[0].status }
+			: null,
+	};
+
+	if (round.status !== 'closed') {
+		return { ...preview, available: false, reason: 'La ronda todavía no está cerrada' };
+	}
+	if (tournamentStatus === 'finished') {
+		return { ...preview, available: false, reason: 'El torneo ya terminó' };
+	}
+	if (advancing.rows.length < 2) {
+		// Un solo clasificado significa que closeRound ya declaró ganador.
+		return { ...preview, available: false, reason: 'No hay suficientes clasificados para otra ronda' };
+	}
+	if (existing.rowCount) {
+		return { ...preview, available: false, reason: `La ronda ${nextRoundNumber} ya existe` };
+	}
+	return { ...preview, available: true };
+}
+
+fastify.get('/rounds/:id/next', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	return nextRoundPreview(request.params.id);
+});
+
+// Genera la ronda siguiente con los clasificados, ya inscriptos. Evita que el
+// admin tenga que contarlos a mano y se equivoque.
+fastify.post('/rounds/:id/next', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const { problemId, capacity, timeLimitSeconds } = request.body || {};
+
+	if (typeof problemId !== 'string' || !/^[0-9a-f-]{36}$/i.test(problemId)) {
+		return reply.code(400).send({ error: 'problemId no es válido' });
+	}
+	const seconds = Number(timeLimitSeconds);
+	if (!Number.isInteger(seconds) || seconds < 10 || seconds > 86400) {
+		return reply.code(400).send({ error: 'timeLimitSeconds debe estar entre 10 y 86400' });
+	}
+
+	const problem = await query('SELECT id FROM problems WHERE id = $1', [problemId]);
+	if (!problem.rowCount) return reply.code(404).send({ error: 'El problema no existe' });
+
+	const preview = await nextRoundPreview(request.params.id);
+	if (!preview.available) {
+		return reply.code(409).send({ error: preview.reason, preview });
+	}
+
+	// Por defecto clasifican todos los que avanzaron. El admin puede bajar el
+	// cupo para eliminar más, pero nunca subirlo: no hay más participantes en
+	// juego que los clasificados de esta ronda.
+	const requested = capacity === undefined || capacity === null ? null : Number(capacity);
+	if (requested !== null && (!Number.isInteger(requested) || requested < 1)) {
+		return reply.code(400).send({ error: 'capacity debe ser un entero positivo' });
+	}
+	if (requested !== null && requested > preview.advancingCount) {
+		return reply.code(400).send({
+			error: `El cupo no puede ser mayor que los ${preview.advancingCount} clasificados`,
+		});
+	}
+	const finalCapacity = requested === null ? preview.advancingCount : requested;
+
+	const created = await withTransaction(async (client) => {
+		const inserted = await client.query(
+			`INSERT INTO rounds (tournament_id, round_number, problem_id, capacity, time_limit_seconds)
+			 VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+			[preview.tournamentId, preview.nextRoundNumber, problemId, finalCapacity, seconds],
+		);
+		const nextRound = inserted.rows[0];
+		// Los clasificados entran ya en la ronda. Si se dejaran para que se
+		// unieran solos, un participante que no está presente bloquearía a todos.
+		await client.query(
+			`INSERT INTO round_participants (round_id, participant_id)
+			 SELECT $1, unnest($2::uuid[]) ON CONFLICT DO NOTHING`,
+			[nextRound.id, preview.advancing.map((entry) => entry.participant_id)],
+		);
+		const joined = await client.query(
+			'SELECT count(*)::int AS n FROM round_participants WHERE round_id = $1',
+			[nextRound.id],
+		);
+		return { round: nextRound, participants: joined.rows[0].n };
+	});
+
+	fastify.io?.emit('round:created', {
+		round_id: created.round.id,
+		round_number: created.round.round_number,
+		participants: created.participants,
+	});
+	return reply.code(201).send({ ...created, advancing: preview.advancing });
+});
+
 fastify.put('/rounds/:id', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
 	const { problemId, capacity, timeLimitSeconds } = request.body || {};
