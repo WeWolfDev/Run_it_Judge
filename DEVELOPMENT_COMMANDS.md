@@ -65,6 +65,10 @@ deploy/dev-branch.sh status         # rama, puertos, proceso y aviso si está ve
 deploy/dev-branch.sh logs           # log del backend, en vivo
 deploy/dev-branch.sh down           # detener el entorno completo
 deploy/dev-branch.sh reset-db       # borrar la base y el rol de desarrollo
+```
+
+`bootstrap-db` ya está hecho: la base `run_it_dev` y su rol existen. Opcional,
+porque `up` los crea igual en el primer arranque.
 
 ### Después de un `git checkout`, `git pull` o `git merge`
 
@@ -86,10 +90,6 @@ deploy/dev-branch.sh status
 ```
 
 El frontend con Vite no sufre esto: detecta los reemplazos de git sin problema.
-```
-
-`bootstrap-db` ya está hecho: la base `run_it_dev` y su rol existen. Opcional,
-porque `up` los crea igual en el primer arranque.
 
 ## Flujo completo de una sesión de trabajo
 
