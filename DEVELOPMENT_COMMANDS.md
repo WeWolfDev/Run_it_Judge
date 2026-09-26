@@ -60,10 +60,32 @@ cd /home/serverwewolf/ServerRunIt/Run_it_Judge
 
 deploy/dev-branch.sh bootstrap-db   # crear la base y el rol de desarrollo
 deploy/dev-branch.sh up             # backend en background + frontend con HMR
-deploy/dev-branch.sh status         # rama, puertos y proceso del backend
+deploy/dev-branch.sh restart        # reiniciar todo (tras un git checkout o pull)
+deploy/dev-branch.sh status         # rama, puertos, proceso y aviso si está vencido
 deploy/dev-branch.sh logs           # log del backend, en vivo
-deploy/dev-branch.sh down           # detener el backend
+deploy/dev-branch.sh down           # detener el entorno completo
 deploy/dev-branch.sh reset-db       # borrar la base y el rol de desarrollo
+
+### Después de un `git checkout`, `git pull` o `git merge`
+
+**Reiniciá.** El backend corre con `node --watch`, que reinicia el proceso al
+cambiar un archivo, pero **se pierde los eventos que dispara git**: `git
+checkout` reemplaza los archivos en vez de modificarlos, y el watcher a veces no
+lo ve.
+
+El síntoma es silencioso y por eso engañoso: `/health` sigue respondiendo 200 y
+todo parece sano, pero el proceso ejecuta la versión anterior del código. Pasó
+con los códigos de acceso, que seguían saliendo con el formato viejo de 22
+caracteres sin que apareciera ningún error.
+
+`status` compara el hash de los archivos del backend con el que se guardó al
+arrancar, y avisa cuando el proceso no corresponde al código en disco:
+
+```bash
+deploy/dev-branch.sh status
+```
+
+El frontend con Vite no sufre esto: detecta los reemplazos de git sin problema.
 ```
 
 `bootstrap-db` ya está hecho: la base `run_it_dev` y su rol existen. Opcional,
@@ -125,7 +147,9 @@ curl -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3002/login   # producció
 | Síntoma | Causa |
 | --- | --- |
 | `El Redis de desarrollo no está levantado` | falta el comando `sudo` del principio |
+| `El backend de desarrollo está vencido` | el código en disco cambió; `deploy/dev-branch.sh restart` |
 | `El puerto 4000/5000 ya está ocupado` | hay otro dev corriendo; `deploy/dev-branch.sh down` |
+| Los códigos salen con formato viejo (22 caracteres) | proceso vencido; `deploy/dev-branch.sh restart` |
 | `La rama activa es 'main'` | es el entorno de producción; cambia de rama |
 | `/ready` devuelve 503 en dev | el Redis dev no está arriba |
 | El navegador no carga | se cayó el túnel SSH; reabre la terminal del paso 2 |
