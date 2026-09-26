@@ -281,7 +281,7 @@ cierras, el túnel se cae y el navegador dejará de cargar.
 | Login del admin de desarrollo | http://localhost:4000/login |
 
 El login de desarrollo es con el usuario `devadmin` y el código
-`dev-codigo-no-usar-en-produccion`. La pista pública está en
+`dev-admin-dev`. La pista pública está en
 http://localhost:4000/pista y con `RUN_IT_SEED_DEMO=true` ya viene con un
 problema y un participante de ejemplo.
 

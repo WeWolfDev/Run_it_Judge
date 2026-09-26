@@ -39,6 +39,16 @@ PROD_DB_NAME=run_it
 # que las submissions de desarrollo compiten por los slots del worker.
 JUDGE0_URL=${RUN_IT_DEV_JUDGE0_URL:-http://127.0.0.1:2358}
 
+# --- Credenciales del admin de desarrollo -----------------------------------
+# Definidas en un solo lugar y referenciadas desde DEVELOPMENT_COMMANDS.md,
+# para que no circulen dos contraseñas distintas. Solo existen dentro de la
+# base run_it_dev, que es inaccesible desde la red, y nunca se escriben en el
+# archivo de secretos de producción.
+# El código debe tener al menos 8 caracteres: el formulario de login rechaza
+# lo que no llegue a ese mínimo.
+DEV_ADMIN_USERNAME=${RUN_IT_DEV_ADMIN_USERNAME:-devadmin}
+DEV_ADMIN_ACCESS_CODE=${RUN_IT_DEV_ADMIN_ACCESS_CODE:-dev-admin-dev}
+
 # --- Estado ----------------------------------------------------------------
 # En /tmp a propósito: así el script no escribe nada dentro del repositorio y
 # no hace falta tocar .gitignore. Nota: si /tmp se limpia, la contraseña del rol
@@ -175,8 +185,8 @@ load_backend_env() {
   export ALLOWED_ORIGINS="$DEV_FRONTEND_ORIGIN,http://127.0.0.1:$DEV_FRONTEND_PORT"
   export SESSION_STORE=redis
   export SESSION_TTL_SECONDS=28800
-  export ADMIN_USERNAME=devadmin
-  export ADMIN_ACCESS_CODE=dev-codigo-no-usar-en-produccion
+  export ADMIN_USERNAME="$DEV_ADMIN_USERNAME"
+  export ADMIN_ACCESS_CODE="$DEV_ADMIN_ACCESS_CODE"
   export RUN_IT_SEED_DEMO=true
   # Bajo a propósito: las submissions de desarrollo compiten por los slots del
   # worker de Judge0 compartido con producción.

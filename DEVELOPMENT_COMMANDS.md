@@ -97,7 +97,14 @@ Se deja abierta. Es lo que sostiene el acceso.
 | Backend readiness | http://localhost:5000/ready |
 | Login dev | http://localhost:4000/login |
 
-Usuario `devadmin`, código `dev-codigo-no-usar-en-produccion`.
+| Qué | Valor |
+| --- | --- |
+| Usuario | `devadmin` |
+| Código | `dev-admin-dev` |
+
+Definidos en `deploy/dev-branch.sh` como `DEV_ADMIN_USERNAME` y
+`DEV_ADMIN_ACCESS_CODE`. Viven solo en la base `run_it_dev` y no se escriben
+nunca en el archivo de secretos de producción.
 
 ## Comprobaciones
 
