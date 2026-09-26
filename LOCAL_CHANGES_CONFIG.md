@@ -152,6 +152,19 @@ detenerlo:
 sudo docker compose -p runit-dev -f docker-compose.dev.yml down
 ```
 
+Este es el **único paso del setup que necesita `sudo`**, porque el usuario de
+servicio no está en el grupo `docker` a propósito
+(`MIGRACION_SERVIDOR_RUN_IT.md:96-97`). Todo lo demás corre sin privilegios.
+
+La base de datos se puede dejar lista antes, también sin `sudo`:
+
+```bash
+deploy/dev-branch.sh bootstrap-db
+```
+
+No es obligatorio — `up` la crea sola en el primer arranque — pero sirve para
+adelantar esa parte y dejar el comando de Docker como único paso pendiente.
+
 ### 4.2 Cada vez que quieras trabajar
 
 ```bash
@@ -172,6 +185,7 @@ Otros subcomandos:
 
 ```bash
 deploy/dev-branch.sh status        # rama, puertos y proceso del backend
+deploy/dev-branch.sh bootstrap-db  # crear la base y el rol de desarrollo
 deploy/dev-branch.sh logs          # log del backend, en vivo
 deploy/dev-branch.sh down          # detener el backend
 deploy/dev-branch.sh reset-db      # borrar la base y el rol de desarrollo

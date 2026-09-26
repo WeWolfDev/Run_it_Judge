@@ -7,6 +7,7 @@
 # arrancar en main para que nadie lo confunda con el stack real.
 #
 #   deploy/dev-branch.sh up          # backend en background + frontend en primer plano
+#   deploy/dev-branch.sh bootstrap-db  # crear base y rol de desarrollo (sin sudo)
 #   deploy/dev-branch.sh status      # estado y URLs
 #   deploy/dev-branch.sh logs        # log del backend
 #   deploy/dev-branch.sh down        # detener el backend de desarrollo
@@ -314,6 +315,28 @@ cmd_logs() {
   tail -n "${1:-50}" -f "$BACKEND_LOG"
 }
 
+# Crea la base y el rol de desarrollo sin necesidad de sudo ni del Redis.
+# Útil para dejar esa parte del setup lista antes de poder correr el comando
+# de Docker que sí pide sudo.
+cmd_bootstrap_db() {
+  require_dev_branch
+  assert_isolated
+  mkdir -p "$STATE_DIR"
+  chmod 700 "$STATE_DIR"
+  load_backend_env
+  info "Creando base y rol de desarrollo ($DEV_DB_NAME / $DEV_DB_USER)..."
+  # db.js:13-45 usa DATABASE_ADMIN_URL para el bootstrap del rol y de la base,
+  # y db.js:66-70 aplica schema.sql. Todo contra $DEV_DB_NAME, nunca run_it.
+  (
+    cd -- "$REPO_ROOT/run-it-backend"
+    node -e '
+      require("./db").initDb()
+        .then(() => { console.log("Base de desarrollo lista."); process.exit(0); })
+        .catch((error) => { console.error(error.message); process.exit(1); })
+    '
+  )
+}
+
 # Dropea la base y el rol de desarrollo. Úsalo si /tmp se limpió y se perdió la
 # contraseña del rol, o si quieres empezar de cero.
 cmd_reset_db() {
@@ -344,11 +367,12 @@ case "${1:-up}" in
   down) cmd_down ;;
   status) cmd_status ;;
   logs) shift; cmd_logs "${1:-50}" ;;
+  bootstrap-db) cmd_bootstrap_db ;;
   reset-db) cmd_reset_db ;;
   -h | --help | help)
     awk 'NR > 1 { if ($0 ~ /^#/) { sub(/^#[[:space:]]?/, ""); print } else exit }' "$0"
     ;;
   *)
-    die "Subcomando desconocido: $1 (usa up, down, status, logs o reset-db)"
+    die "Subcomando desconocido: $1 (usa up, down, status, logs, bootstrap-db o reset-db)"
     ;;
 esac
