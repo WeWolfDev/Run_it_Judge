@@ -3,6 +3,9 @@
 Este documento explica cómo trabajar en una rama de desarrollo **sin tocar el
 entorno de `main`**, que es el que está sirviendo producción en este servidor.
 
+> Para el resumen operativo de los comandos, mira
+> [DEVELOPMENT_COMMANDS.md](DEVELOPMENT_COMMANDS.md).
+
 ## 1. Para qué existe
 
 `main` en este servidor no es un checkout cualquiera: es el directorio de trabajo
