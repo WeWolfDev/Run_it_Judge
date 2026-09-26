@@ -20,6 +20,7 @@ import {
   getProblems,
   getRoundLeaderboard,
   getRoundSubmissions,
+  getTournamentRounds,
   getTournaments,
   listAccessCodes,
   revokeAccessCodes,
@@ -294,22 +295,46 @@ export function AdminPanel({
   };
 
   const saveRound = async () => {
-    if (!selectedProblem || !tournamentName.trim()) {
+    const name = tournamentName.trim();
+    if (!selectedProblem || !name) {
       setMessage("Indica un nombre de torneo y un problema.");
       return;
     }
     setSavingRound(true);
     try {
-      const tournament = await createTournament(tournamentName.trim());
+      // Reusa el torneo con el mismo nombre mientras no esté finalizado. Antes
+      // cada llamada creaba un torneo nuevo, y con UNIQUE(tournament_id,
+      // round_number) eso hacía imposible armar un torneo de varias rondas desde
+      // este control.
+      const existing = tournaments.find((t) => t.name === name && t.status !== "finished");
+      const tournament = existing ?? (await createTournament(name));
+      const reused = Boolean(existing);
+
+      // Si el número ya está usado dentro del torneo, salta al siguiente libre
+      // en lugar de chocar contra el UNIQUE.
+      let targetRound = roundNumber;
+      if (reused) {
+        const rounds = await getTournamentRounds(tournament.id);
+        if (rounds.some((item) => item.round_number === roundNumber)) {
+          targetRound = Math.max(...rounds.map((item) => item.round_number)) + 1;
+          setRoundNumber(targetRound);
+        }
+      }
+
       const created = await createRound(
         tournament.id,
-        roundNumber,
+        targetRound,
         selectedProblem,
         capacity,
         timeLimitMinutes * 60,
       );
       setCreatedRoundId(created.id);
-      setMessage("Ronda creada. Iníciala cuando estés listo.");
+      void refreshTournaments();
+      setMessage(
+        reused
+          ? `Ronda ${targetRound} agregada a "${name}". Iníciala cuando estés listo.`
+          : `Torneo "${name}" y ronda ${targetRound} creados. Iníciala cuando estés listo.`,
+      );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo crear la ronda");
     } finally {

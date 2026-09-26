@@ -496,11 +496,41 @@ fastify.post('/access-codes/:code/claim', async (request, reply) => {
 fastify.post('/rounds', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
 	const { tournamentId, roundNumber, problemId, capacity, timeLimitSeconds } = request.body || {};
-	const result = await query(
-		`INSERT INTO rounds (tournament_id, round_number, problem_id, capacity, time_limit_seconds)
-		 VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-		[tournamentId, roundNumber, problemId, capacity, timeLimitSeconds],
-	);
+	if (typeof tournamentId !== 'string' || !/^[0-9a-f-]{36}$/i.test(tournamentId)) {
+		return reply.code(400).send({ error: 'tournamentId no es válido' });
+	}
+	if (typeof problemId !== 'string' || !/^[0-9a-f-]{36}$/i.test(problemId)) {
+		return reply.code(400).send({ error: 'problemId no es válido' });
+	}
+	if (!Number.isInteger(roundNumber) || roundNumber < 1) {
+		return reply.code(400).send({ error: 'roundNumber debe ser un entero desde 1' });
+	}
+	if (!Number.isInteger(capacity) || capacity < 1) {
+		return reply.code(400).send({ error: 'capacity debe ser un entero positivo' });
+	}
+	if (!Number.isInteger(timeLimitSeconds) || timeLimitSeconds < 10 || timeLimitSeconds > 86400) {
+		return reply.code(400).send({ error: 'timeLimitSeconds debe estar entre 10 y 86400' });
+	}
+	let result;
+	try {
+		result = await query(
+			`INSERT INTO rounds (tournament_id, round_number, problem_id, capacity, time_limit_seconds)
+			 VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+			[tournamentId, roundNumber, problemId, capacity, timeLimitSeconds],
+		);
+	} catch (error) {
+		// UNIQUE (tournament_id, round_number). Sin esto Fastify lo convierte en
+		// un 500 crudo que no le dice nada al admin.
+		if (error.code === '23505') {
+			return reply.code(409).send({
+				error: `El torneo ya tiene una ronda ${roundNumber}. Usá la ronda siguiente o elegí otro número.`,
+			});
+		}
+		if (error.code === '23503') {
+			return reply.code(404).send({ error: 'El torneo o el problema no existe' });
+		}
+		throw error;
+	}
 	return reply.code(201).send(result.rows[0]);
 });
 

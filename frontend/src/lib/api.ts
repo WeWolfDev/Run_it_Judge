@@ -156,6 +156,22 @@ export async function createTournament(name: string) {
   return body as { id: string; name: string };
 }
 
+export async function getTournamentRounds(tournamentId: string) {
+  const response = await fetch(`${API_URL}/tournaments/${tournamentId}/rounds`, {
+    headers: authHeaders(),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudieron cargar las rondas");
+  return body as Array<{
+    id: string;
+    round_number: number;
+    status: string;
+    capacity: number;
+    problem_id: string;
+    problem_name: string;
+  }>;
+}
+
 export async function createRound(
   tournamentId: string,
   roundNumber: number,
