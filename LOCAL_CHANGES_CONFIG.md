@@ -5,6 +5,9 @@ entorno de `main`**, que es el que está sirviendo producción en este servidor.
 
 > Para el resumen operativo de los comandos, mira
 > [DEVELOPMENT_COMMANDS.md](DEVELOPMENT_COMMANDS.md).
+>
+> Para los códigos de acceso y las credenciales de prueba, mira
+> [CODIGOS_ACCESO.md](CODIGOS_ACCESO.md).
 
 ## 1. Para qué existe
 

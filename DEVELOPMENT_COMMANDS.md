@@ -2,6 +2,8 @@
 
 Resumen operativo del entorno de desarrollo por ramas. La explicación
 completa del diseño está en [LOCAL_CHANGES_CONFIG.md](LOCAL_CHANGES_CONFIG.md).
+Los códigos de acceso y las credenciales de prueba están en
+[CODIGOS_ACCESO.md](CODIGOS_ACCESO.md).
 
 ## Lo único que tienes que ejecutar tú
 
