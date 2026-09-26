@@ -55,6 +55,40 @@ Módulos: `tournaments` → `rounds` → `submissions`. Un participante se une a
 ronda, envía código, BullMQ lo encola, el worker lo manda a Judge0 y el resultado
 vuelve por Socket.io.
 
+### Flujo de un torneo
+
+Un torneo tiene N rondas y termina cuando queda un solo clasificado.
+
+```text
+1. Crear torneo y ronda 1        POST /tournaments + POST /rounds
+2. Generar PINs                  POST /access-codes/generate
+3. Registrarse con un PIN         POST /auth/register
+4. Iniciar la ronda               POST /rounds/:id/start
+5. Unirse a la ronda              POST /rounds/:id/participants/join
+6. Cerrar la ronda                POST /rounds/:id/close
+7. Ver quién clasificó            GET  /rounds/:id/next
+8. Crear la ronda siguiente       POST /rounds/:id/next
+   → vuelve al paso 4 con la nueva ronda
+```
+
+El paso 7 devuelve la vista previa: número de ronda, clasificados con su nombre
+y su ranking, y si se puede crear. El paso 8 los inscribe ya en la ronda nueva.
+Rechaza con `409` si la ronda no está cerrada, si el torneo ya terminó, si queda
+un solo clasificado o si la ronda siguiente ya existe.
+
+El número de la ronda siguiente es `round_number + 1` de la que se acaba de
+cerrar, **no** `MAX(round_number) + 1`. Con el `MAX` el chequeo de "¿ya existe?"
+es vacío, porque ese número por definición no existe.
+
+`rounds` tiene `UNIQUE (tournament_id, round_number)`. Para construir un torneo
+de varias rondas hay que reusar el mismo `tournament_id`: el panel reusa el
+torneo con el mismo nombre mientras no esté `finished`, y salta al siguiente
+número libre si el elegido ya existe. Un torneo `finished` no se reusa, así que
+un evento nuevo con el mismo nombre arranca uno nuevo.
+
+**Las rondas se cierran solas.** Hay un `setInterval` de 1 segundo que busca
+rondas `active` con `ends_at <= now()` y las cierra.
+
 ### Puertos
 
 | Entorno | Frontend | Backend | Quién levanta |
@@ -140,7 +174,7 @@ frontend/            App TanStack Start
   .output/           Build SSR. Lo sirve systemd en :3002. NO versionado
 
 run-it-backend/      API Fastify
-  index.js           927 líneas: rutas, auth, scoring, sockets. Sin tipos
+  index.js           1091 líneas: rutas, auth, rondas, scoring, sockets. Sin tipos
   db.js              Pool de Postgres, initDb(), bootstrap de rol y base
   queue.js           BullMQ: Queue + Worker sobre "run-it-submissions"
   session-store.js   Sesiones en Redis o memoria
@@ -184,7 +218,7 @@ deben seguir siéndolo.
 - **Nunca apuntar el backend a la base `judge0`.** Colisión de tablas.
 - **Nunca compartir Redis entre desarrollo y producción.** El backend siempre
   arranca un worker de BullMQ sobre la cola de nombre fijo
-  `run-it-submissions` (`index.js:735`, `queue.js:10`) y no hay flag para
+  `run-it-submissions` (`index.js:899`, `queue.js:10`) y no hay flag para
   desactivarlo. Un worker de desarrollo robaría submissions de producción y
   `index.js` las dejaría en `queued` para siempre, sin error en el log.
 - `serverwewolf` **no** está en el grupo `docker` a propósito. Todo
@@ -305,17 +339,18 @@ Ordenados por impacto. No están resueltos.
 
 **Backend**
 
-- `index.js:754` usa solo `test_cases[0]` para el scoring. Un problema con 5 tests
+- `index.js:918` usa solo `test_cases[0]` para el scoring. Un problema con 5 tests
   cuenta 100% con uno solo.
 - `submissionRate` (`index.js:16`) es un `Map()` en memoria: se reinicia con el
   proceso y no escala a varias instancias. Migrar a Redis.
-- `GET /public/rounds/active` expone `p.statement`. Con un solo test visible, el
-  `expected` es legible antes de enviar código.
-- No hay endpoint para la ronda siguiente. `closeRound` calcula quién avanza
-  (`index.js:900`) pero el admin tiene que crearla a mano.
+- `GET /public/rounds/active` (`index.js:728`) expone `p.statement`. Con un solo
+  test visible, el `expected` es legible antes de enviar código.
 - Falta el evento `round:closing_soon` que promete `frontend/README.md`.
 - `users.access_code` en texto plano. El dilema: hashearlo impide recuperar la
   lista que el organizador repartió.
+- No hay manejador global de errores de Fastify. Cada ruta debe capturar sus
+  propios errores de Postgres: sin eso un `23505` sale como un 500 crudo que no
+  le dice nada al cliente. Ver `POST /rounds` (`index.js:496`) como referencia.
 
 **Frontend**
 
@@ -329,7 +364,7 @@ Ordenados por impacto. No están resueltos.
 
 - No hay CI. Por eso el formato acumuló 108 errores en varios commits.
 - 3 tests, todos triviales. Nada cubre auth, rondas, scoring ni códigos.
-- `index.js` son 927 líneas de JavaScript sin tipar.
+- `index.js` son 1091 líneas de JavaScript sin tipar.
 - Sin métricas ni alertas. Judge0 caído se nota solo si alguien mira `/ready`.
 - Sin pruebas de carga. Con `COUNT=8` en `judge0.conf` no se sabe cuántos
   concurrentes aguanta.
