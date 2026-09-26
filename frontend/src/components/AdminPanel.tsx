@@ -62,7 +62,9 @@ export function AdminPanel({
   const [problemDifficulty, setProblemDifficulty] = useState<"easy" | "medium" | "hard">("easy");
   const [expectedOutput, setExpectedOutput] = useState("");
   const [savingProblem, setSavingProblem] = useState(false);
-  const [problems, setProblems] = useState<Array<{ id: string; name: string; difficulty: string }>>([]);
+  const [problems, setProblems] = useState<Array<{ id: string; name: string; difficulty: string }>>(
+    [],
+  );
   const [tournamentName, setTournamentName] = useState("Run It");
   const [selectedProblem, setSelectedProblem] = useState("");
   const [roundNumber, setRoundNumber] = useState(1);
@@ -70,8 +72,26 @@ export function AdminPanel({
   const [timeLimitMinutes, setTimeLimitMinutes] = useState(10);
   const [createdRoundId, setCreatedRoundId] = useState("");
   const [savingRound, setSavingRound] = useState(false);
-  const [leaderboard, setLeaderboard] = useState<Array<{ participant_id: string; display_name: string; final_rank: number | null; best_pass_percentage: number; failed_attempts_count: number }>>([]);
-  const [submissions, setSubmissions] = useState<Array<{ id: string; display_name: string; language: string; verdict: string; test_cases_passed: number; test_cases_total: number; submitted_at: string }>>([]);
+  const [leaderboard, setLeaderboard] = useState<
+    Array<{
+      participant_id: string;
+      display_name: string;
+      final_rank: number | null;
+      best_pass_percentage: number;
+      failed_attempts_count: number;
+    }>
+  >([]);
+  const [submissions, setSubmissions] = useState<
+    Array<{
+      id: string;
+      display_name: string;
+      language: string;
+      verdict: string;
+      test_cases_passed: number;
+      test_cases_total: number;
+      submitted_at: string;
+    }>
+  >([]);
   const [liveParticipants, setLiveParticipants] = useState<Participant[]>(participants);
   const [liveRound, setLiveRound] = useState(round);
   const displayedRound = liveRound;
@@ -85,32 +105,42 @@ export function AdminPanel({
   const active = liveParticipants.filter((p) => p.status === "racing").length;
 
   useEffect(() => {
-    void getProblems().then((items) => {
-      setProblems(items);
-      setSelectedProblem(items[0]?.id || "");
-    }).catch(() => undefined);
-    void getActiveRound().then((remote) => {
-      if (!remote) return;
-      setLiveRound({
-        round_id: remote.id,
-        ends_at: new Date(remote.ends_at).getTime(),
-        problem: remote.problem_name,
-        capacity: remote.capacity,
-      });
-      setLiveParticipants(remote.participants.map((participant, index) => ({
-        participant_id: participant.participant_id,
-        name: participant.name,
-        lane: index + 1,
-        silk: index % 6,
-        test_cases_passed: Number(participant.best_pass_percentage),
-        test_cases_total: 100,
-        attempts: participant.failed_attempts_count,
-        solved: Boolean(participant.solved_at),
-        status: participant.solved_at ? "solved" : "racing",
-      })));
-      void getRoundLeaderboard(remote.id).then(setLeaderboard).catch(() => undefined);
-      void getRoundSubmissions(remote.id).then(setSubmissions).catch(() => undefined);
-    }).catch(() => undefined);
+    void getProblems()
+      .then((items) => {
+        setProblems(items);
+        setSelectedProblem(items[0]?.id || "");
+      })
+      .catch(() => undefined);
+    void getActiveRound()
+      .then((remote) => {
+        if (!remote) return;
+        setLiveRound({
+          round_id: remote.id,
+          ends_at: new Date(remote.ends_at).getTime(),
+          problem: remote.problem_name,
+          capacity: remote.capacity,
+        });
+        setLiveParticipants(
+          remote.participants.map((participant, index) => ({
+            participant_id: participant.participant_id,
+            name: participant.name,
+            lane: index + 1,
+            silk: index % 6,
+            test_cases_passed: Number(participant.best_pass_percentage),
+            test_cases_total: 100,
+            attempts: participant.failed_attempts_count,
+            solved: Boolean(participant.solved_at),
+            status: participant.solved_at ? "solved" : "racing",
+          })),
+        );
+        void getRoundLeaderboard(remote.id)
+          .then(setLeaderboard)
+          .catch(() => undefined);
+        void getRoundSubmissions(remote.id)
+          .then(setSubmissions)
+          .catch(() => undefined);
+      })
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -119,15 +149,19 @@ export function AdminPanel({
     const feed = createSocketFeed(roundId);
     if (!feed) return;
     feed.on("participant:progress", (progress) => {
-      setLiveParticipants((current) => current.map((participant) => participant.participant_id === progress.participant_id
-        ? {
-            ...participant,
-            test_cases_passed: progress.test_cases_passed,
-            test_cases_total: progress.test_cases_total,
-            solved: progress.solved,
-            status: progress.solved ? "solved" : "racing",
-          }
-        : participant));
+      setLiveParticipants((current) =>
+        current.map((participant) =>
+          participant.participant_id === progress.participant_id
+            ? {
+                ...participant,
+                test_cases_passed: progress.test_cases_passed,
+                test_cases_total: progress.test_cases_total,
+                solved: progress.solved,
+                status: progress.solved ? "solved" : "racing",
+              }
+            : participant,
+        ),
+      );
     });
     feed.on("round:paused", (roundState) => setPaused(Boolean(roundState.paused)));
     feed.on("round:closed", () => setMessage("La ronda se cerró"));
@@ -195,7 +229,9 @@ export function AdminPanel({
               <p className="text-xs uppercase tracking-widest text-muted-foreground">
                 Control de la ronda actual
               </p>
-              <h2 className="mt-1 text-lg font-semibold text-foreground">{displayedRound.problem}</h2>
+              <h2 className="mt-1 text-lg font-semibold text-foreground">
+                {displayedRound.problem}
+              </h2>
             </div>
             <p className="font-mono text-4xl font-semibold tabular-nums text-foreground">
               {formatClock(remaining)}
@@ -217,19 +253,28 @@ export function AdminPanel({
                 }
                 void toggleRoundPause(liveRoundId)
                   .then(({ paused: nextPaused }) => setPaused(nextPaused))
-                  .catch((error) => setMessage(error instanceof Error ? error.message : "No se pudo pausar la ronda"));
+                  .catch((error) =>
+                    setMessage(
+                      error instanceof Error ? error.message : "No se pudo pausar la ronda",
+                    ),
+                  );
               }}
               className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted"
             >
               {paused ? "Reanudar ronda" : "Pausar ronda"}
             </button>
-            <button onClick={() => {
-              if (!liveRoundId.includes("-")) {
-                setMessage("Configura una ronda real para poder cerrarla.");
-                return;
-              }
-              void closeRound(liveRoundId).then(() => setMessage("Ronda cerrada")).catch((error) => setMessage(error.message));
-            }} className="rounded-lg bg-danger px-4 py-2 text-sm font-medium text-danger-foreground transition-opacity hover:opacity-90">
+            <button
+              onClick={() => {
+                if (!liveRoundId.includes("-")) {
+                  setMessage("Configura una ronda real para poder cerrarla.");
+                  return;
+                }
+                void closeRound(liveRoundId)
+                  .then(() => setMessage("Ronda cerrada"))
+                  .catch((error) => setMessage(error.message));
+              }}
+              className="rounded-lg bg-danger px-4 py-2 text-sm font-medium text-danger-foreground transition-opacity hover:opacity-90"
+            >
               Forzar cierre
             </button>
             {message && <p className="mt-3 text-xs text-muted-foreground">{message}</p>}
@@ -269,10 +314,14 @@ export function AdminPanel({
                             style={{ width: `${pct}%`, transition: "width 0.55s ease" }}
                           />
                         </div>
-                        <span className="font-mono text-xs tabular-nums text-muted-foreground">{pct}%</span>
+                        <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                          {pct}%
+                        </span>
                       </div>
                     </td>
-                    <td className="px-5 py-3 font-mono tabular-nums text-muted-foreground">{p.attempts}</td>
+                    <td className="px-5 py-3 font-mono tabular-nums text-muted-foreground">
+                      {p.attempts}
+                    </td>
                     <td className="px-5 py-3">
                       <span
                         className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_CLASS[p.status]}`}
@@ -292,7 +341,12 @@ export function AdminPanel({
           <div className="mt-4 overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <tr><th className="pb-3">Pos.</th><th className="pb-3">Participante</th><th className="pb-3">Avance</th><th className="pb-3">Fallos</th></tr>
+                <tr>
+                  <th className="pb-3">Pos.</th>
+                  <th className="pb-3">Participante</th>
+                  <th className="pb-3">Avance</th>
+                  <th className="pb-3">Fallos</th>
+                </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {leaderboard.map((entry, index) => (
@@ -305,7 +359,9 @@ export function AdminPanel({
                 ))}
               </tbody>
             </table>
-            {leaderboard.length === 0 && <p className="text-xs text-muted-foreground">Aún no hay ranking disponible.</p>}
+            {leaderboard.length === 0 && (
+              <p className="text-xs text-muted-foreground">Aún no hay ranking disponible.</p>
+            )}
           </div>
           <div className="mt-5 border-t border-border pt-4">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Últimos envíos</p>
@@ -313,11 +369,15 @@ export function AdminPanel({
               {submissions.slice(0, 8).map((submission) => (
                 <li key={submission.id} className="flex items-center justify-between gap-3">
                   <span className="font-mono text-foreground">{submission.display_name}</span>
-                  <span className="text-muted-foreground">{submission.language} · {submission.verdict}</span>
+                  <span className="text-muted-foreground">
+                    {submission.language} · {submission.verdict}
+                  </span>
                 </li>
               ))}
             </ul>
-            {submissions.length === 0 && <p className="mt-2 text-xs text-muted-foreground">Aún no hay envíos.</p>}
+            {submissions.length === 0 && (
+              <p className="mt-2 text-xs text-muted-foreground">Aún no hay envíos.</p>
+            )}
           </div>
         </section>
       </div>
@@ -359,7 +419,9 @@ export function AdminPanel({
               <span className="text-muted-foreground">Dificultad</span>
               <select
                 value={problemDifficulty}
-                onChange={(event) => setProblemDifficulty(event.target.value as "easy" | "medium" | "hard")}
+                onChange={(event) =>
+                  setProblemDifficulty(event.target.value as "easy" | "medium" | "hard")
+                }
                 className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 outline-none focus:border-ring"
               >
                 <option value="easy">Fácil</option>
@@ -389,7 +451,9 @@ export function AdminPanel({
 
         <section className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground">Códigos de acceso</h3>
-          <p className="mt-2 text-xs text-muted-foreground">Cada código puede registrarse una sola vez.</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Cada código puede registrarse una sola vez.
+          </p>
           <div className="mt-4 flex gap-2">
             <input
               type="number"
@@ -402,12 +466,18 @@ export function AdminPanel({
             />
             <button
               type="button"
-              onClick={() => void generateAccessCodes(codeCount)
-                .then(({ codes }) => {
-                  setGeneratedCodes(codes);
-                  setMessage(`${codes.length} códigos generados`);
-                })
-                .catch((error) => setMessage(error instanceof Error ? error.message : "No se pudieron generar los códigos"))}
+              onClick={() =>
+                void generateAccessCodes(codeCount)
+                  .then(({ codes }) => {
+                    setGeneratedCodes(codes);
+                    setMessage(`${codes.length} códigos generados`);
+                  })
+                  .catch((error) =>
+                    setMessage(
+                      error instanceof Error ? error.message : "No se pudieron generar los códigos",
+                    ),
+                  )
+              }
               className="flex-1 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
               Generar
@@ -437,9 +507,17 @@ export function AdminPanel({
             </label>
             <label className="block text-sm">
               <span className="text-muted-foreground">Problema</span>
-              <select value={selectedProblem} onChange={(event) => setSelectedProblem(event.target.value)} className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring">
+              <select
+                value={selectedProblem}
+                onChange={(event) => setSelectedProblem(event.target.value)}
+                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+              >
                 {problems.length === 0 && <option value="">No hay problemas disponibles</option>}
-                {problems.map((problem) => <option key={problem.id} value={problem.id}>{problem.name}</option>)}
+                {problems.map((problem) => (
+                  <option key={problem.id} value={problem.id}>
+                    {problem.name}
+                  </option>
+                ))}
               </select>
             </label>
             <label className="block text-sm">
@@ -454,7 +532,13 @@ export function AdminPanel({
             </label>
             <label className="block text-sm">
               <span className="text-muted-foreground">Cupo</span>
-              <input type="number" min={1} value={capacity} onChange={(event) => setCapacity(Number(event.target.value))} className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring" />
+              <input
+                type="number"
+                min={1}
+                value={capacity}
+                onChange={(event) => setCapacity(Number(event.target.value))}
+                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+              />
             </label>
             <label className="block text-sm">
               <span className="text-muted-foreground">Tiempo límite (minutos)</span>
@@ -466,10 +550,31 @@ export function AdminPanel({
                 className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
               />
             </label>
-            <button type="button" onClick={() => void saveRound()} disabled={savingRound} className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50">
+            <button
+              type="button"
+              onClick={() => void saveRound()}
+              disabled={savingRound}
+              className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
               {savingRound ? "Creando..." : "Crear ronda"}
             </button>
-            {createdRoundId && <button type="button" onClick={() => void startRound(createdRoundId).then(() => setMessage("Ronda iniciada")).catch((error) => setMessage(error instanceof Error ? error.message : "No se pudo iniciar la ronda"))} className="w-full rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted">Iniciar ronda creada</button>}
+            {createdRoundId && (
+              <button
+                type="button"
+                onClick={() =>
+                  void startRound(createdRoundId)
+                    .then(() => setMessage("Ronda iniciada"))
+                    .catch((error) =>
+                      setMessage(
+                        error instanceof Error ? error.message : "No se pudo iniciar la ronda",
+                      ),
+                    )
+                }
+                className="w-full rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
+              >
+                Iniciar ronda creada
+              </button>
+            )}
           </div>
         </section>
 
