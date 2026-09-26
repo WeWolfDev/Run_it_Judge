@@ -80,10 +80,17 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Run It — Torneo de programación competitiva" },
-      { name: "description", content: "Plataforma de torneos de programación por eliminación con pista de carreras en vivo." },
+      {
+        name: "description",
+        content:
+          "Plataforma de torneos de programación por eliminación con pista de carreras en vivo.",
+      },
       { name: "author", content: "Lovable" },
       { property: "og:title", content: "Run It — Torneo de programación competitiva" },
-      { property: "og:description", content: "Rondas por eliminación, pista en vivo y panel de control." },
+      {
+        property: "og:description",
+        content: "Rondas por eliminación, pista en vivo y panel de control.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:site", content: "@Lovable" },
@@ -149,7 +156,10 @@ function RoleNavigation() {
   return (
     <header className="border-b border-border bg-card">
       <div className="mx-auto flex max-w-7xl items-center gap-6 px-5 py-3">
-        <Link to={session.role === "admin" ? "/admin" : "/participante"} className="font-mono text-sm font-semibold tracking-tight text-foreground">
+        <Link
+          to={session.role === "admin" ? "/admin" : "/participante"}
+          className="font-mono text-sm font-semibold tracking-tight text-foreground"
+        >
           Run&nbsp;It
         </Link>
         <nav className="flex items-center gap-4 text-sm text-muted-foreground">
@@ -166,10 +176,12 @@ function RoleNavigation() {
             type="button"
             className="ml-auto text-muted-foreground hover:text-foreground"
             onClick={() => {
-              void logout().catch(() => undefined).finally(() => {
-                clearSession();
-                void navigate.navigate({ to: "/login" });
-              });
+              void logout()
+                .catch(() => undefined)
+                .finally(() => {
+                  clearSession();
+                  void navigate.navigate({ to: "/login" });
+                });
             }}
           >
             Salir

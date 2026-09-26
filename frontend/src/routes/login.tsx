@@ -68,7 +68,9 @@ function LoginPage() {
         <header className="mb-8 text-center">
           <div className="mb-2 inline-flex items-center gap-2">
             <div className="h-6 w-6 rounded-sm bg-primary" aria-hidden="true" />
-            <span className="text-xl font-semibold tracking-tight text-card-foreground">Run It</span>
+            <span className="text-xl font-semibold tracking-tight text-card-foreground">
+              Run It
+            </span>
           </div>
           <p className="text-sm text-muted-foreground">Compite. Resuelve. Avanza.</p>
         </header>
@@ -105,8 +107,14 @@ function LoginPage() {
               checked={acceptedRules}
               onCheckedChange={(checked) => setAcceptedRules(checked === true)}
             />
-            <Label htmlFor="rules" className="text-xs font-normal leading-relaxed text-muted-foreground">
-              Acepto las <Link to="/reglas" className="text-primary hover:underline">reglas del torneo</Link>
+            <Label
+              htmlFor="rules"
+              className="text-xs font-normal leading-relaxed text-muted-foreground"
+            >
+              Acepto las{" "}
+              <Link to="/reglas" className="text-primary hover:underline">
+                reglas del torneo
+              </Link>
             </Label>
           </div>
 

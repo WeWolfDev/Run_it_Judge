@@ -7,9 +7,15 @@ export const Route = createFileRoute("/admin")({
   head: () => ({
     meta: [
       { title: "Panel de administración — Run It" },
-      { name: "description", content: "Controla la ronda activa, los cupos y el avance del torneo." },
+      {
+        name: "description",
+        content: "Controla la ronda activa, los cupos y el avance del torneo.",
+      },
       { property: "og:title", content: "Panel de administración — Run It" },
-      { property: "og:description", content: "Control de rondas, cupos y participantes del torneo Run It." },
+      {
+        property: "og:description",
+        content: "Control de rondas, cupos y participantes del torneo Run It.",
+      },
     ],
   }),
   component: AdminPage,

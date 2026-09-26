@@ -7,9 +7,15 @@ export const Route = createFileRoute("/participante")({
   head: () => ({
     meta: [
       { title: "Tu carrera — Run It" },
-      { name: "description", content: "Resuelve el problema de la ronda y sigue tu avance en la pista." },
+      {
+        name: "description",
+        content: "Resuelve el problema de la ronda y sigue tu avance en la pista.",
+      },
       { property: "og:title", content: "Tu carrera — Run It" },
-      { property: "og:description", content: "Enunciado, tests y editor de código para la ronda activa." },
+      {
+        property: "og:description",
+        content: "Enunciado, tests y editor de código para la ronda activa.",
+      },
     ],
   }),
   component: ParticipantPage,

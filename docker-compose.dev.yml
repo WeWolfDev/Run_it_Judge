@@ -1,0 +1,27 @@
+# Redis efímero para el entorno de desarrollo por ramas.
+#
+# Aísla las sesiones y la cola BullMQ del backend de desarrollo del Redis de
+# producción. Es OBLIGATORIO: run-it-backend/index.js:587 siempre arranca un
+# worker de BullMQ sobre la cola de nombre fijo "run-it-submissions"
+# (queue.js:10 y queue.js:21) y no hay forma de desactivarlo por variable de
+# entorno. Si el backend de desarrollo compartiera Redis con producción, ese
+# worker robaría submissions en vuelo de producción, y al buscar el resultado en
+# la base de desarrollo no lo encontraría (index.js:597 corta con return null),
+# dejando esas submissions en "queued" para siempre y sin log de error.
+#
+# Sin volumen y con persistencia desactivada a propósito: este Redis no tiene
+# que sobrevivir a un reinicio. Se recrea vacío en un segundo.
+#
+# NO lo levantes junto al stack de producción. El compose de producción es
+# docker-compose.yml; este usa el project "runit-dev" para no colisionar.
+#
+#   sudo docker compose -p runit-dev -f docker-compose.dev.yml up -d
+#   sudo docker compose -p runit-dev -f docker-compose.dev.yml down
+
+services:
+  redis-dev:
+    image: redis:7.2.4
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6381:6379"
+    restart: "no"

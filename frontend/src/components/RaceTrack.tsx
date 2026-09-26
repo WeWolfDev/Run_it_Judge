@@ -29,34 +29,53 @@ function HorseIcon({ className }: { className?: string }) {
   );
 }
 
-export function RaceTrack({ round = MOCK_ROUND, participants = MOCK_PARTICIPANTS, live = true }: RaceTrackProps) {
+export function RaceTrack({
+  round = MOCK_ROUND,
+  participants = MOCK_PARTICIPANTS,
+  live = true,
+}: RaceTrackProps) {
   const [runners, setRunners] = useState<Participant[]>(participants);
   const [remoteRound, setRemoteRound] = useState<RoundStartedEvent | null>(null);
   const displayedRound = remoteRound || round;
-  const activeRoundId = typeof displayedRound.round_id === "string" ? displayedRound.round_id : undefined;
+  const activeRoundId =
+    typeof displayedRound.round_id === "string" ? displayedRound.round_id : undefined;
   const remaining = useRoundTimer(displayedRound.ends_at);
 
   useEffect(() => {
-    getActiveRound().then((active) => {
-      if (!active) return;
-      setRemoteRound({
-        round_id: active.id,
-        ends_at: new Date(active.ends_at).getTime(),
-        problem: active.problem_name,
-        capacity: active.capacity,
-      });
-      setRunners(active.participants.map((participant: { participant_id: string; name: string; best_pass_percentage: number; solved_at: string | null }, index: number) => ({
-        participant_id: participant.participant_id,
-        name: participant.name,
-        lane: index + 1,
-        silk: index % 6,
-        test_cases_passed: participant.best_pass_percentage === 100 ? 1 : 0,
-        test_cases_total: 1,
-        attempts: 0,
-        solved: Boolean(participant.solved_at),
-        status: participant.solved_at ? "solved" : "racing",
-      })));
-    }).catch(() => undefined);
+    getActiveRound()
+      .then((active) => {
+        if (!active) return;
+        setRemoteRound({
+          round_id: active.id,
+          ends_at: new Date(active.ends_at).getTime(),
+          problem: active.problem_name,
+          capacity: active.capacity,
+        });
+        setRunners(
+          active.participants.map(
+            (
+              participant: {
+                participant_id: string;
+                name: string;
+                best_pass_percentage: number;
+                solved_at: string | null;
+              },
+              index: number,
+            ) => ({
+              participant_id: participant.participant_id,
+              name: participant.name,
+              lane: index + 1,
+              silk: index % 6,
+              test_cases_passed: participant.best_pass_percentage === 100 ? 1 : 0,
+              test_cases_total: 1,
+              attempts: 0,
+              solved: Boolean(participant.solved_at),
+              status: participant.solved_at ? "solved" : "racing",
+            }),
+          ),
+        );
+      })
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => setRunners(participants), [participants]);
@@ -144,14 +163,18 @@ export function RaceTrack({ round = MOCK_ROUND, participants = MOCK_PARTICIPANTS
               </div>
 
               <div className="flex w-56 shrink-0 items-center gap-2">
-                <span className={`h-3 w-3 shrink-0 rounded-full bg-silk-${p.silk} ${out ? "opacity-30" : ""}`} />
+                <span
+                  className={`h-3 w-3 shrink-0 rounded-full bg-silk-${p.silk} ${out ? "opacity-30" : ""}`}
+                />
                 <span
                   className={`truncate font-mono text-sm ${out ? "text-muted-foreground line-through" : "text-foreground"}`}
                 >
                   {p.name}
                 </span>
                 {p.solved && <span aria-label="clasificado">🏁</span>}
-                <span className="ml-auto font-mono text-xs tabular-nums text-muted-foreground">{pct}%</span>
+                <span className="ml-auto font-mono text-xs tabular-nums text-muted-foreground">
+                  {pct}%
+                </span>
               </div>
             </div>
           );
