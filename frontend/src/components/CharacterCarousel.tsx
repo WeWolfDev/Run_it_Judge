@@ -28,7 +28,7 @@ const VISIBLE_COUNT = 6;
 interface CharacterCarouselProps {
   /** Dueño de la selección: forma parte de la clave de localStorage. */
   username: string;
-  /** Se llama después de guardar la selección. */
+  /** Se llama después de guardar la selección. Solo lo dispara el botón de confirmar. */
   onSelect?: (index: number) => void;
 }
 
@@ -49,6 +49,7 @@ export function CharacterCarousel({ username, onSelect }: CharacterCarouselProps
   const [selected, setSelected] = useState(0);
   // Solo las flechas y la carga inicial mueven el carrusel hasta `viewing`; el clic
   // en una tarjeta cambia el foco sin desplazar el grupo que se está mirando.
+  // Ni las flechas, ni arrastrar, ni el clic en una tarjeta eligen: solo el botón.
   const scrollToViewing = useRef(false);
 
   // localStorage solo existe en el cliente: leerlo después de montar evita que
@@ -94,8 +95,6 @@ export function CharacterCarousel({ username, onSelect }: CharacterCarouselProps
 
   // getSelectedCharacter ya acota a [0, CHARACTER_COUNT); el ?? solo satisface a TS.
   const current = CHARACTERS[viewing] ?? CHARACTERS[0];
-  const selectedName = (CHARACTERS[selected] ?? CHARACTERS[0]).name;
-  const isSelected = viewing === selected;
 
   return (
     <div className="mt-4 flex flex-col items-center gap-4">
@@ -120,7 +119,7 @@ export function CharacterCarousel({ username, onSelect }: CharacterCarouselProps
               <CarouselItem key={character.name} className="basis-1/6 pl-2">
                 <button
                   type="button"
-                  onClick={() => choose(index)}
+                  onClick={() => setViewing(index)}
                   aria-pressed={index === selected}
                   className={`w-full rounded-lg border p-1 text-center transition-colors sm:p-2 ${
                     index === selected
@@ -156,7 +155,7 @@ export function CharacterCarousel({ username, onSelect }: CharacterCarouselProps
       </div>
 
       <p className="text-xs text-muted-foreground" aria-live="polite">
-        {viewing + 1} / {CHARACTER_COUNT} · {selectedName} seleccionado
+        {viewing + 1} / {CHARACTER_COUNT} · {current.title}
       </p>
 
       <button
@@ -164,7 +163,7 @@ export function CharacterCarousel({ username, onSelect }: CharacterCarouselProps
         onClick={() => choose(viewing)}
         className="rounded-lg bg-primary px-6 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
       >
-        {isSelected ? `${current.name} seleccionado` : `Seleccionar ${current.name}`}
+        Confirmar {current.name}
       </button>
     </div>
   );

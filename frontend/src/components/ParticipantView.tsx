@@ -4,7 +4,12 @@ import { useRoundTimer, useServerClockOffset } from "@/hooks/use-round-timer";
 import { CharacterCarousel } from "@/components/CharacterCarousel";
 import { ProblemStatement } from "@/components/ProblemStatement";
 import { getActiveRound, getRoundLeaderboard, joinRound, submitRound } from "@/lib/api";
-import { getSession } from "@/lib/session";
+import {
+  getCharacterConfirmed,
+  getSelectedCharacter,
+  getSession,
+  setCharacterConfirmed,
+} from "@/lib/session";
 
 // Las claves coinciden con LANGUAGE_IDS de judge0-client.js. "cpp", no "c++".
 // Sin JavaScript ni Java: el sandbox de Judge0 en este host no deja arrancar
@@ -77,6 +82,9 @@ export function ParticipantView() {
   const [language, setLanguage] = useState<Language>("python");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  // null hasta leer localStorage en el cliente: el SSR no sabe si ya eligió, y
+  // renderizar cualquiera de las dos pantallas antes provocaría un salto visible.
+  const [characterConfirmed, setConfirmedState] = useState<boolean | null>(null);
   const serverOffsetMs = useServerClockOffset(setMessage);
   const remaining = useRoundTimer(live?.endsAt ?? 0, serverOffsetMs);
   const username = getSession()?.username || "demo";
@@ -84,6 +92,10 @@ export function ParticipantView() {
   roundIdRef.current = round?.id ?? null;
 
   const reload = () => setReloadKey((key) => key + 1);
+
+  useEffect(() => {
+    setConfirmedState(getCharacterConfirmed(username));
+  }, [username]);
 
   // Detecta la ronda activa y se inscribe en ella. Sin la inscripción el socket
   // devuelve un snapshot null y el participante no aparece en la pista.
@@ -124,9 +136,13 @@ export function ParticipantView() {
         endsAt: new Date(remote.ends_at).getTime(),
       });
       setLoad("ready");
+      // Sin personaje confirmado no se inscribe: lo hace confirmCharacter. Así el
+      // admin nunca ve un inscripto con el personaje 0 que en realidad no eligió.
+      // Se lee acá, después del await, por si confirmó mientras cargaba la ronda.
+      if (!getCharacterConfirmed(username)) return;
       try {
         // Idempotente en el backend: ON CONFLICT en participants y en round_participants.
-        const joined = await joinRound(remote.id, username);
+        const joined = await joinRound(remote.id, username, getSelectedCharacter(username));
         if (!cancelled) setParticipant({ roundId: remote.id, id: joined.id });
       } catch (error) {
         if (!cancelled) {
@@ -214,6 +230,24 @@ export function ParticipantView() {
   const locked = !live || live.status !== "active" || live.paused || remaining <= 0;
   const inscribed = Boolean(participant && round && participant.roundId === round.id);
 
+  // CharacterCarousel ya guardó el personaje en localStorage antes de llamar acá.
+  const confirmCharacter = (character: number) => {
+    setCharacterConfirmed(username);
+    setConfirmedState(true);
+    // Sin ronda activa no hay dónde inscribirse: el efecto de carga lo hace con
+    // este personaje cuando llegue round:started.
+    const roundId = roundIdRef.current;
+    if (!roundId) return;
+    void joinRound(roundId, username, character)
+      .then((joined) => {
+        if (roundIdRef.current === roundId) setParticipant({ roundId, id: joined.id });
+      })
+      .catch((error) => {
+        // El flag ya está escrito: pasa al panel igual, con el aviso y el reintento.
+        setJoinError(error instanceof Error ? error.message : "No se pudo entrar a la ronda");
+      });
+  };
+
   const send = async () => {
     if (locked || !round || !participant || participant.roundId !== round.id) {
       setMessage("No puedes enviar ahora.");
@@ -235,7 +269,20 @@ export function ParticipantView() {
     }
   };
 
-  if (load === "loading") {
+  if (characterConfirmed === false) {
+    return (
+      <section className="rounded-xl border border-border bg-card p-5">
+        <p className="text-xs uppercase tracking-widest text-muted-foreground">Tu corredor</p>
+        <h1 className="mt-1 text-lg font-semibold text-foreground">Elige tu personaje</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Es tu caballo en la pista durante todo el torneo. Una vez confirmado no se puede cambiar.
+        </p>
+        <CharacterCarousel username={username} onSelect={confirmCharacter} />
+      </section>
+    );
+  }
+
+  if (characterConfirmed === null || load === "loading") {
     return (
       <div className="space-y-5" aria-busy="true">
         <div className="h-20 animate-pulse rounded-xl border border-border bg-card" />
@@ -339,12 +386,6 @@ export function ParticipantView() {
           )}
         </section>
       )}
-
-      <section className="rounded-xl border border-border bg-card p-5">
-        <p className="text-xs uppercase tracking-widest text-muted-foreground">Tu corredor</p>
-        <h2 className="mt-1 text-lg font-semibold text-foreground">Elige tu personaje</h2>
-        <CharacterCarousel username={username} />
-      </section>
 
       <section className="rounded-xl border border-border bg-card px-5 py-4">
         <p className="text-xs uppercase tracking-wide text-muted-foreground">

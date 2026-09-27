@@ -320,6 +320,7 @@ export async function getActiveRound() {
     participants: Array<{
       participant_id: string;
       name: string;
+      character: number;
       best_pass_percentage: number;
       solved_at: string | null;
       failed_attempts_count: number;
@@ -327,15 +328,17 @@ export async function getActiveRound() {
   } | null>;
 }
 
-export async function joinRound(roundId: string, displayName: string) {
+// `character` es obligatorio: el backend conserva el primero que recibe, y un
+// cliente que no lo mande quedaría con el 0 por defecto para todo el torneo.
+export async function joinRound(roundId: string, displayName: string, character: number) {
   const response = await fetch(`${API_URL}/rounds/${roundId}/participants/join`, {
     method: "POST",
     headers: { "content-type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ displayName }),
+    body: JSON.stringify({ displayName, character }),
   });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "No se pudo entrar a la ronda");
-  return body as { id: string; display_name: string };
+  return body as { id: string; display_name: string; character: number };
 }
 
 export async function submitRound(

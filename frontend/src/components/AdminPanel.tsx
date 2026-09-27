@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { formatClock, SILK_COUNT, type Participant, type RoundStartedEvent } from "@/lib/runit";
+import { formatClock, type Participant, type RoundStartedEvent } from "@/lib/runit";
 import { useRoundTimer, useServerClockOffset } from "@/hooks/use-round-timer";
 import { parseCodeforcesZip } from "@/lib/test-case-parser";
 import { ProblemStatement } from "@/components/ProblemStatement";
@@ -308,7 +308,7 @@ export function AdminPanel({
               participant_id: participant.participant_id,
               name: participant.name,
               lane: index + 1,
-              silk: index % SILK_COUNT,
+              silk: participant.character,
               test_cases_passed: Number(participant.best_pass_percentage),
               test_cases_total: 100,
               attempts: participant.failed_attempts_count,
@@ -419,29 +419,11 @@ export function AdminPanel({
         ),
       );
     });
+    // participant:joined no trae el personaje: se relee la ronda activa, que
+    // además refresca el ranking.
     feed.on("participant:joined", (joined) => {
       if (joined.round_id !== roundId) return;
-      setLiveParticipants((current) =>
-        current.some((participant) => participant.participant_id === joined.participant_id)
-          ? current
-          : [
-              ...current,
-              {
-                participant_id: joined.participant_id,
-                name: joined.name,
-                lane: current.length + 1,
-                silk: current.length % SILK_COUNT,
-                test_cases_passed: 0,
-                test_cases_total: 100,
-                attempts: 0,
-                solved: false,
-                status: "racing",
-              },
-            ],
-      );
-      void getRoundLeaderboard(roundId)
-        .then(setLeaderboard)
-        .catch(() => undefined);
+      loadActiveRound();
     });
     feed.on("round:started", (started) => {
       if (started.round_id !== roundId) loadActiveRound();
@@ -721,7 +703,15 @@ export function AdminPanel({
                 const pct = Math.round((p.test_cases_passed / p.test_cases_total) * 100);
                 return (
                   <tr key={p.participant_id}>
-                    <td className="px-5 py-3 font-mono text-foreground">{p.name}</td>
+                    <td className="px-5 py-3 font-mono text-foreground">
+                      <span className="flex items-center gap-2">
+                        <span
+                          className={`h-3 w-3 shrink-0 rounded-full bg-silk-${p.silk}`}
+                          aria-hidden="true"
+                        />
+                        {p.name}
+                      </span>
+                    </td>
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-2">
                         <div className="h-1.5 w-24 rounded-full bg-muted">
