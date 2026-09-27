@@ -799,9 +799,9 @@ fastify.post('/rounds/:id/submissions', async (request, reply) => {
 		typeof code !== 'string' ||
 		code.length === 0 ||
 		code.length > 100_000 ||
-		!['python', 'javascript', 'c', 'cpp'].includes(language)
+		!['python', 'c', 'cpp'].includes(language)
 	) {
-		return reply.code(400).send({ error: 'Envío inválido: use Python, JavaScript, C o C++ y hasta 100000 caracteres' });
+		return reply.code(400).send({ error: 'Envío inválido: use Python, C o C++ y hasta 100000 caracteres' });
 	}
 	const recent = submissionRate.get(request.user.id) || 0;
 	if (Date.now() - recent < 1000) return reply.code(429).send({ error: 'Espera antes de enviar otra solución' });

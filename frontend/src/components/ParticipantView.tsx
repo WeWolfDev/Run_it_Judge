@@ -7,9 +7,10 @@ import { getActiveRound, joinRound, submitRound } from "@/lib/api";
 import { getSession } from "@/lib/session";
 
 // Las claves coinciden con LANGUAGE_IDS de judge0-client.js. "cpp", no "c++".
+// Sin JavaScript ni Java: el sandbox de Judge0 en este host no deja arrancar
+// ni a Node ni a la JVM (TLE seguro o error de VM).
 const LANGUAGES = {
   python: { label: "Python 3", file: "solution.py" },
-  javascript: { label: "JavaScript", file: "solution.js" },
   c: { label: "C", file: "solution.c" },
   cpp: { label: "C++", file: "solution.cpp" },
 } as const;
@@ -26,14 +27,6 @@ def main():
     pass
 if __name__ == '__main__':
     main()`,
-  javascript: `const fs = require('fs');
-function main() {
-    // Lee desde la entrada estándar (stdin)
-    const input = fs.readFileSync(0, 'utf-8').trim().split(/\\s+/);
-    if (input.length === 0 || input[0] === '') return;
-    // --- ESCRIBE TU LÓGICA AQUÍ ---
-}
-main();`,
   c: `#include <stdio.h>
 int main() {
     // --- ESCRIBE TU LÓGICA AQUÍ ---
