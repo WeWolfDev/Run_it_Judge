@@ -124,7 +124,9 @@ const USABLE_ACCESS_CODE_SQL = `
 	  )
 	FOR UPDATE OF ac`;
 
-fastify.register(cors, { origin: allowedOrigins });
+// Date no es un header CORS-safelisted: sin exponerlo, el frontend en otro
+// origen (desarrollo) no puede leerlo para sincronizar el cronómetro.
+fastify.register(cors, { origin: allowedOrigins, exposedHeaders: ['Date'] });
 
 fastify.get('/health', async () => ({ status: 'ok' }));
 
@@ -276,6 +278,17 @@ fastify.get('/problems', async () => {
 	return result.rows;
 });
 
+// Deja cada caso con la forma { stdin, expected, is_sample }. is_sample solo es
+// true si el admin lo marcó explícitamente: un caso nunca se vuelve público por
+// omisión.
+function normalizeTestCases(testCases) {
+	return testCases.map((testCase) => ({
+		stdin: testCase?.stdin,
+		expected: testCase?.expected,
+		is_sample: testCase?.is_sample === true,
+	}))
+}
+
 fastify.post('/problems', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
 	const { name, statement, difficulty = 'easy', testCases } = request.body || {};
@@ -296,7 +309,7 @@ fastify.post('/problems', async (request, reply) => {
 	const result = await query(
 		`INSERT INTO problems (name, statement, difficulty, test_cases)
 		 VALUES ($1, $2, $3, $4::jsonb) RETURNING *`,
-		[name, statement, difficulty, JSON.stringify(testCases)],
+		[name, statement, difficulty, JSON.stringify(normalizeTestCases(testCases))],
 	);
 	return reply.code(201).send(result.rows[0]);
 });
@@ -318,7 +331,7 @@ fastify.put('/problems/:id', async (request, reply) => {
 	const result = await query(
 		`UPDATE problems SET name = $1, statement = $2, difficulty = $3, test_cases = $4::jsonb
 		 WHERE id = $5 RETURNING *`,
-		[name, statement, difficulty, JSON.stringify(testCases), request.params.id],
+		[name, statement, difficulty, JSON.stringify(normalizeTestCases(testCases)), request.params.id],
 	);
 	return result.rowCount ? result.rows[0] : reply.code(404).send({ error: 'Problema no encontrado' });
 });
@@ -737,8 +750,17 @@ fastify.post('/rounds/:id/pause', async (request, reply) => {
 });
 
 fastify.get('/public/rounds/active', async () => {
+	// Endpoint sin sesión: de test_cases solo sale lo marcado como ejemplo, y
+	// proyectado a stdin/expected. El resto nunca deja la base.
 	const result = await query(
-		`SELECT r.*, p.name AS problem_name, p.statement, p.difficulty
+		`SELECT r.*, p.name AS problem_name, p.statement, p.difficulty,
+		        COALESCE((
+		          SELECT jsonb_agg(
+		                   jsonb_build_object('stdin', tc->'stdin', 'expected', tc->'expected')
+		                   ORDER BY ord)
+		          FROM jsonb_array_elements(p.test_cases) WITH ORDINALITY AS t(tc, ord)
+		          WHERE tc->'is_sample' = 'true'::jsonb
+		        ), '[]'::jsonb) AS samples
 		 FROM rounds r JOIN problems p ON p.id = r.problem_id
 		 WHERE r.status = 'active' ORDER BY r.started_at DESC LIMIT 1`,
 	);

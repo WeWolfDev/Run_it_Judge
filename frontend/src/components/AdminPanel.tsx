@@ -6,7 +6,7 @@ import {
   MOCK_ROUNDS_PROGRESS,
   type Participant,
 } from "@/lib/runit";
-import { useRoundTimer } from "@/hooks/use-round-timer";
+import { useRoundTimer, useServerClockOffset } from "@/hooks/use-round-timer";
 import { parseCodeforcesZip } from "@/lib/test-case-parser";
 import { ProblemStatement } from "@/components/ProblemStatement";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -146,11 +146,15 @@ export function AdminPanel({
   const [problemName, setProblemName] = useState("");
   const [problemStatement, setProblemStatement] = useState("");
   const [problemDifficulty, setProblemDifficulty] = useState<"easy" | "medium" | "hard">("easy");
-  const [testCases, setTestCases] = useState<Array<{ stdin: string; expected: string }>>([
-    { stdin: "", expected: "" },
-  ]);
+  // is_sample marca los casos que ve el participante. Por defecto todo es privado.
+  const [testCases, setTestCases] = useState<
+    Array<{ stdin: string; expected: string; is_sample: boolean }>
+  >([{ stdin: "", expected: "", is_sample: false }]);
   // Casos importados de un .zip que no se muestran en el editor, pero se envían.
-  const [hiddenCases, setHiddenCases] = useState<Array<{ stdin: string; expected: string }>>([]);
+  // Nunca son ejemplo: el admin no los ve, así que no puede decidir publicarlos.
+  const [hiddenCases, setHiddenCases] = useState<
+    Array<{ stdin: string; expected: string; is_sample: boolean }>
+  >([]);
   const [savingProblem, setSavingProblem] = useState(false);
   const [problems, setProblems] = useState<Array<{ id: string; name: string; difficulty: string }>>(
     [],
@@ -187,7 +191,8 @@ export function AdminPanel({
   const [liveParticipants, setLiveParticipants] = useState<Participant[]>(participants);
   const [liveRound, setLiveRound] = useState(round);
   const displayedRound = liveRound;
-  const remaining = useRoundTimer(displayedRound.ends_at);
+  const serverOffsetMs = useServerClockOffset(setMessage);
+  const remaining = useRoundTimer(displayedRound.ends_at, serverOffsetMs);
   const liveRoundId = String(displayedRound.round_id);
 
   const filtered = useMemo(
@@ -395,7 +400,7 @@ export function AdminPanel({
       setSelectedProblem(created.id);
       setProblemName("");
       setProblemStatement("");
-      setTestCases([{ stdin: "", expected: "" }]);
+      setTestCases([{ stdin: "", expected: "", is_sample: false }]);
       setHiddenCases([]);
       setMessage(`Problema “${created.name}” creado y seleccionado.`);
     } catch (error) {
@@ -413,12 +418,13 @@ export function AdminPanel({
         return;
       }
       // Los dos primeros quedan visibles y editables; el resto se envía oculto.
-      setTestCases(parsed.slice(0, 2));
-      setHiddenCases(parsed.slice(2));
+      const imported = parsed.map((testCase) => ({ ...testCase, is_sample: false }));
+      setTestCases(imported.slice(0, 2));
+      setHiddenCases(imported.slice(2));
       setMessage(
         parsed.length > 2
-          ? `Se importaron ${parsed.length} casos: 2 visibles y ${parsed.length - 2} ocultos.`
-          : `Se importaron ${parsed.length} casos.`,
+          ? `Se importaron ${parsed.length} casos: 2 en el editor y ${parsed.length - 2} ocultos. Ninguno es ejemplo público hasta que lo marques.`
+          : `Se importaron ${parsed.length} casos. Ninguno es ejemplo público hasta que lo marques.`,
       );
     } catch (error) {
       setMessage(
@@ -430,7 +436,7 @@ export function AdminPanel({
   };
 
   const clearTestCases = () => {
-    setTestCases([{ stdin: "", expected: "" }]);
+    setTestCases([{ stdin: "", expected: "", is_sample: false }]);
     setHiddenCases([]);
   };
 
@@ -827,6 +833,21 @@ export function AdminPanel({
                 <div key={index} className="space-y-2 rounded-lg border border-border p-3">
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-medium text-foreground">Caso {index + 1}</span>
+                    <label className="ml-auto mr-3 flex items-center gap-1.5 text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={testCase.is_sample}
+                        onChange={(event) =>
+                          setTestCases((current) =>
+                            current.map((item, i) =>
+                              i === index ? { ...item, is_sample: event.target.checked } : item,
+                            ),
+                          )
+                        }
+                        className="accent-primary"
+                      />
+                      Ejemplo público
+                    </label>
                     <button
                       type="button"
                       onClick={() =>
@@ -874,7 +895,12 @@ export function AdminPanel({
               ))}
               <button
                 type="button"
-                onClick={() => setTestCases((current) => [...current, { stdin: "", expected: "" }])}
+                onClick={() =>
+                  setTestCases((current) => [
+                    ...current,
+                    { stdin: "", expected: "", is_sample: false },
+                  ])
+                }
                 disabled={testCases.length + hiddenCases.length >= 100}
                 className="w-full rounded-lg border border-dashed border-border px-4 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:opacity-50"
               >

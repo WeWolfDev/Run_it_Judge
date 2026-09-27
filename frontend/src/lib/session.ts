@@ -8,6 +8,7 @@ export interface Session {
 
 const SESSION_KEY = "run-it-session";
 const CHARACTER_KEY_PREFIX = "run-it-character:";
+export const CHARACTER_COUNT = 6;
 
 export function getSession(): Session | null {
   if (typeof window === "undefined") return null;
@@ -37,7 +38,9 @@ export function getSelectedCharacter(username: string) {
 
   const stored = window.localStorage.getItem(`${CHARACTER_KEY_PREFIX}${username}`);
   const character = Number(stored);
-  return Number.isInteger(character) && character >= 0 && character < 6 ? character : 0;
+  return Number.isInteger(character) && character >= 0 && character < CHARACTER_COUNT
+    ? character
+    : 0;
 }
 
 export function setSelectedCharacter(username: string, character: number) {

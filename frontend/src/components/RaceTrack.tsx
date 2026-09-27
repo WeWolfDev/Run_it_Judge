@@ -8,7 +8,7 @@ import {
   type Participant,
   type RoundStartedEvent,
 } from "@/lib/runit";
-import { useRoundTimer } from "@/hooks/use-round-timer";
+import { useRoundTimer, useServerClockOffset } from "@/hooks/use-round-timer";
 import { getActiveRound } from "@/lib/api";
 
 interface RaceTrackProps {
@@ -39,7 +39,8 @@ export function RaceTrack({
   const displayedRound = remoteRound || round;
   const activeRoundId =
     typeof displayedRound.round_id === "string" ? displayedRound.round_id : undefined;
-  const remaining = useRoundTimer(displayedRound.ends_at);
+  const serverOffsetMs = useServerClockOffset();
+  const remaining = useRoundTimer(displayedRound.ends_at, serverOffsetMs);
 
   useEffect(() => {
     getActiveRound()
