@@ -1,12 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  formatClock,
-  MOCK_PARTICIPANTS,
-  MOCK_ROUND,
-  MOCK_ROUNDS_PROGRESS,
-  SILK_COUNT,
-  type Participant,
-} from "@/lib/runit";
+import { formatClock, SILK_COUNT, type Participant, type RoundStartedEvent } from "@/lib/runit";
 import { useRoundTimer, useServerClockOffset } from "@/hooks/use-round-timer";
 import { parseCodeforcesZip } from "@/lib/test-case-parser";
 import { ProblemStatement } from "@/components/ProblemStatement";
@@ -36,6 +29,19 @@ import {
 } from "@/lib/api";
 import { createSocketFeed } from "@/lib/runit";
 import { getSessionToken } from "@/lib/session";
+
+// GET /tournaments/:id/rounds agrega los conteos; el tipo de api.ts no los declara.
+type TournamentRoundProgress = Awaited<ReturnType<typeof getTournamentRounds>>[number] & {
+  participants_count: number;
+  advanced_count: number;
+};
+
+const ROUND_STATUS_LABEL: Record<string, string> = {
+  pending: "Pendiente",
+  active: "En curso",
+  closing: "Cerrando",
+  closed: "Cerrada",
+};
 
 type QueueStats = { waiting: number; active: number; completed: number; failed: number };
 
@@ -125,11 +131,11 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 }
 
 export function AdminPanel({
-  participants = MOCK_PARTICIPANTS,
-  round = MOCK_ROUND,
+  participants,
+  round,
 }: {
   participants?: Participant[];
-  round?: typeof MOCK_ROUND;
+  round?: RoundStartedEvent;
 }) {
   const [query, setQuery] = useState("");
   const [paused, setPaused] = useState(false);
@@ -189,12 +195,18 @@ export function AdminPanel({
   const [submissions, setSubmissions] = useState<SubmissionRow[]>([]);
   const [queueStats, setQueueStats] = useState<QueueStats | null>(null);
   const [queueError, setQueueError] = useState(false);
-  const [liveParticipants, setLiveParticipants] = useState<Participant[]>(participants);
-  const [liveRound, setLiveRound] = useState(round);
+  const [liveParticipants, setLiveParticipants] = useState<Participant[]>(participants ?? []);
+  // null = no hay ronda activa. Al cerrarse se conserva la última, para poder
+  // crear la siguiente desde aquí.
+  const [liveRound, setLiveRound] = useState<RoundStartedEvent | null>(round ?? null);
+  const [liveTournamentId, setLiveTournamentId] = useState("");
+  // Sube con cada round:closed para volver a pedir la vista previa y el progreso.
+  const [closedVersion, setClosedVersion] = useState(0);
+  const [roundsProgress, setRoundsProgress] = useState<TournamentRoundProgress[] | null>(null);
   const displayedRound = liveRound;
   const serverOffsetMs = useServerClockOffset(setMessage);
-  const remaining = useRoundTimer(displayedRound.ends_at, serverOffsetMs);
-  const liveRoundId = String(displayedRound.round_id);
+  const remaining = useRoundTimer(displayedRound?.ends_at ?? 0, serverOffsetMs);
+  const liveRoundId = displayedRound ? String(displayedRound.round_id) : "";
 
   const filtered = useMemo(
     () => liveParticipants.filter((p) => p.name.toLowerCase().includes(query.toLowerCase())),
@@ -274,7 +286,46 @@ export function AdminPanel({
     return () => {
       cancelled = true;
     };
-  }, [liveRoundId]);
+  }, [liveRoundId, closedVersion]);
+
+  const loadActiveRound = useMemo(
+    () => () =>
+      void getActiveRound()
+        .then((remote) => {
+          if (!remote) return;
+          // tournament_id y paused vienen en r.*; el tipo de api.ts no los declara.
+          const extra = remote as { tournament_id?: string; paused?: boolean };
+          setLiveTournamentId(extra.tournament_id ?? "");
+          setPaused(Boolean(extra.paused));
+          setLiveRound({
+            round_id: remote.id,
+            ends_at: new Date(remote.ends_at).getTime(),
+            problem: remote.problem_name,
+            capacity: remote.capacity,
+          });
+          setLiveParticipants(
+            remote.participants.map((participant, index) => ({
+              participant_id: participant.participant_id,
+              name: participant.name,
+              lane: index + 1,
+              silk: index % SILK_COUNT,
+              test_cases_passed: Number(participant.best_pass_percentage),
+              test_cases_total: 100,
+              attempts: participant.failed_attempts_count,
+              solved: Boolean(participant.solved_at),
+              status: participant.solved_at ? "solved" : "racing",
+            })),
+          );
+          void getRoundLeaderboard(remote.id)
+            .then(setLeaderboard)
+            .catch(() => undefined);
+          void getRoundSubmissions(remote.id)
+            .then(setSubmissions)
+            .catch(() => undefined);
+        })
+        .catch(() => setMessage("No se pudo cargar la ronda activa.")),
+    [],
+  );
 
   useEffect(() => {
     void getProblems()
@@ -283,42 +334,39 @@ export function AdminPanel({
         setSelectedProblem(items[0]?.id || "");
       })
       .catch(() => undefined);
-    void getActiveRound()
-      .then((remote) => {
-        if (!remote) return;
-        setLiveRound({
-          round_id: remote.id,
-          ends_at: new Date(remote.ends_at).getTime(),
-          problem: remote.problem_name,
-          capacity: remote.capacity,
-        });
-        setLiveParticipants(
-          remote.participants.map((participant, index) => ({
-            participant_id: participant.participant_id,
-            name: participant.name,
-            lane: index + 1,
-            silk: index % SILK_COUNT,
-            test_cases_passed: Number(participant.best_pass_percentage),
-            test_cases_total: 100,
-            attempts: participant.failed_attempts_count,
-            solved: Boolean(participant.solved_at),
-            status: participant.solved_at ? "solved" : "racing",
-          })),
-        );
-        void getRoundLeaderboard(remote.id)
-          .then(setLeaderboard)
-          .catch(() => undefined);
-        void getRoundSubmissions(remote.id)
-          .then(setSubmissions)
-          .catch(() => undefined);
-      })
-      .catch(() => undefined);
-  }, []);
+    loadActiveRound();
+  }, [loadActiveRound]);
+
+  // Rondas reales del torneo en juego; si no hay ronda activa, las del torneo
+  // elegido en el formulario.
+  const progressTournamentId =
+    liveTournamentId ||
+    tournaments.find((t) => t.name === tournamentName.trim() && t.status !== "finished")?.id ||
+    "";
+
+  const refreshRoundsProgress = useMemo(
+    () => () => {
+      if (!progressTournamentId) {
+        setRoundsProgress(null);
+        return;
+      }
+      void getTournamentRounds(progressTournamentId)
+        .then((rows) => setRoundsProgress(rows as TournamentRoundProgress[]))
+        .catch(() => setRoundsProgress([]));
+    },
+    [progressTournamentId],
+  );
 
   useEffect(() => {
-    const roundId = String(liveRound.round_id);
-    if (!roundId.includes("-")) return;
-    const feed = createSocketFeed(roundId);
+    refreshRoundsProgress();
+  }, [refreshRoundsProgress, closedVersion]);
+
+  const socketRoundId = liveRound ? String(liveRound.round_id) : undefined;
+
+  useEffect(() => {
+    const roundId = socketRoundId ?? "";
+    // Sin ronda el socket igual se conecta, para enterarse de round:started.
+    const feed = createSocketFeed(socketRoundId);
     if (!feed) return;
     // RunItEvents (runit.ts) no declara submission:queued; se tipa aquí.
     const onAny = feed.on as unknown as (
@@ -371,10 +419,45 @@ export function AdminPanel({
         ),
       );
     });
+    feed.on("participant:joined", (joined) => {
+      if (joined.round_id !== roundId) return;
+      setLiveParticipants((current) =>
+        current.some((participant) => participant.participant_id === joined.participant_id)
+          ? current
+          : [
+              ...current,
+              {
+                participant_id: joined.participant_id,
+                name: joined.name,
+                lane: current.length + 1,
+                silk: current.length % SILK_COUNT,
+                test_cases_passed: 0,
+                test_cases_total: 100,
+                attempts: 0,
+                solved: false,
+                status: "racing",
+              },
+            ],
+      );
+      void getRoundLeaderboard(roundId)
+        .then(setLeaderboard)
+        .catch(() => undefined);
+    });
+    feed.on("round:started", (started) => {
+      if (started.round_id !== roundId) loadActiveRound();
+    });
     feed.on("round:paused", (roundState) => setPaused(Boolean(roundState.paused)));
-    feed.on("round:closed", () => setMessage("La ronda se cerró"));
+    feed.on("round:closed", () => {
+      setMessage("La ronda se cerró");
+      setPaused(false);
+      setClosedVersion((version) => version + 1);
+      if (!roundId) return;
+      void getRoundLeaderboard(roundId)
+        .then(setLeaderboard)
+        .catch(() => undefined);
+    });
     return () => feed.disconnect();
-  }, [liveRound.round_id, refreshQueueStats]);
+  }, [socketRoundId, refreshQueueStats, loadActiveRound]);
 
   const saveProblem = async () => {
     if (!problemName.trim() || !problemStatement.trim()) {
@@ -477,6 +560,7 @@ export function AdminPanel({
       );
       setCreatedRoundId(created.id);
       void refreshTournaments();
+      refreshRoundsProgress();
       setMessage(
         reused
           ? `Ronda ${targetRound} agregada a "${name}". Iníciala cuando estés listo.`
@@ -541,6 +625,7 @@ export function AdminPanel({
       });
       setCreatedRoundId(created.round.id);
       setNextRoundPreview(null);
+      refreshRoundsProgress();
       setMessage(
         `Ronda ${created.round.round_number} creada con ${created.participants} participantes. Iniciala cuando estés listo.`,
       );
@@ -567,27 +652,24 @@ export function AdminPanel({
                 Control de la ronda actual
               </p>
               <h2 className="mt-1 text-lg font-semibold text-foreground">
-                {displayedRound.problem}
+                {displayedRound ? displayedRound.problem : "Sin ronda activa"}
               </h2>
             </div>
             <p className="font-mono text-4xl font-semibold tabular-nums text-foreground">
-              {formatClock(remaining)}
+              {displayedRound ? formatClock(remaining) : "--:--"}
             </p>
           </div>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            <Stat label="Cupo" value={displayedRound.capacity} />
+            <Stat label="Cupo" value={displayedRound ? displayedRound.capacity : "—"} />
             <Stat label="Ya resolvieron" value={solved} />
             <Stat label="Activos" value={active} />
           </div>
 
           <div className="mt-5 flex flex-wrap gap-3">
             <button
+              disabled={!liveRoundId}
               onClick={() => {
-                if (!liveRoundId.includes("-")) {
-                  setPaused((value) => !value);
-                  return;
-                }
                 void toggleRoundPause(liveRoundId)
                   .then(({ paused: nextPaused }) => setPaused(nextPaused))
                   .catch((error) =>
@@ -596,21 +678,18 @@ export function AdminPanel({
                     ),
                   );
               }}
-              className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+              className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
             >
               {paused ? "Reanudar ronda" : "Pausar ronda"}
             </button>
             <button
+              disabled={!liveRoundId}
               onClick={() => {
-                if (!liveRoundId.includes("-")) {
-                  setMessage("Configura una ronda real para poder cerrarla.");
-                  return;
-                }
                 void closeRound(liveRoundId)
                   .then(() => setMessage("Ronda cerrada"))
                   .catch((error) => setMessage(error.message));
               }}
-              className="rounded-lg bg-danger px-4 py-2 text-sm font-medium text-danger-foreground transition-opacity hover:opacity-90"
+              className="rounded-lg bg-danger px-4 py-2 text-sm font-medium text-danger-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               Forzar cierre
             </button>
@@ -1051,7 +1130,11 @@ export function AdminPanel({
                 type="button"
                 onClick={() =>
                   void startRound(createdRoundId)
-                    .then(() => setMessage("Ronda iniciada"))
+                    .then(() => {
+                      setMessage("Ronda iniciada");
+                      loadActiveRound();
+                      refreshRoundsProgress();
+                    })
                     .catch((error) =>
                       setMessage(
                         error instanceof Error ? error.message : "No se pudo iniciar la ronda",
@@ -1148,25 +1231,37 @@ export function AdminPanel({
 
         <section className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground">Progreso del torneo</h3>
-          <ul className="mt-4 space-y-1">
-            {MOCK_ROUNDS_PROGRESS.map((r) => (
-              <li
-                key={r.round}
-                className={`flex items-center justify-between rounded-lg px-3 py-2 text-sm ${
-                  r.state === "active"
-                    ? "bg-info-soft font-medium text-foreground"
-                    : r.state === "upcoming"
-                      ? "text-muted-foreground"
-                      : "text-foreground"
-                }`}
-              >
-                <span>Ronda {r.round}</span>
-                <span className="font-mono tabular-nums">
-                  {r.entered} → {r.advanced ?? "—"}
-                </span>
-              </li>
-            ))}
-          </ul>
+          {!progressTournamentId ? (
+            <p className="mt-4 text-sm text-muted-foreground">
+              Elige un torneo o inicia una ronda para ver su progreso.
+            </p>
+          ) : roundsProgress === null ? (
+            <p className="mt-4 text-sm text-muted-foreground">Cargando rondas…</p>
+          ) : roundsProgress.length === 0 ? (
+            <p className="mt-4 text-sm text-muted-foreground">Sin rondas todavía</p>
+          ) : (
+            <ul className="mt-4 space-y-1">
+              {roundsProgress.map((r) => (
+                <li
+                  key={r.id}
+                  className={`flex items-center justify-between rounded-lg px-3 py-2 text-sm ${
+                    r.status === "active"
+                      ? "bg-info-soft font-medium text-foreground"
+                      : r.status === "pending"
+                        ? "text-muted-foreground"
+                        : "text-foreground"
+                  }`}
+                >
+                  <span>
+                    Ronda {r.round_number} · {ROUND_STATUS_LABEL[r.status] ?? r.status}
+                  </span>
+                  <span className="font-mono tabular-nums">
+                    {r.participants_count} → {r.status === "closed" ? r.advanced_count : "—"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       </TabsContent>
 
