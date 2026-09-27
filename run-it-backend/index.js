@@ -984,14 +984,14 @@ async function start() {
 				[submissionId],
 			).then((updateResult) => updateResult.rows[0] || null);
 		}
-		const caseResults = results.map(({ result }, index) => {
+		const caseResults = results.map(({ result, token }, index) => {
 			const expected = (testCases[index]?.expected ?? '').toString().trim();
 			const actual = result.stdout?.toString().trim() ?? '';
 			const passed = result.status?.id === 3 && actual === expected;
 			const status = passed
 				? 'accepted'
 				: (result.status?.id === 3 ? 'Wrong Answer' : (result.status?.description || 'rejected'));
-			return { passed, status };
+			return { passed, status, token };
 		});
 		const total = caseResults.length;
 		const passed = caseResults.filter((caseResult) => caseResult.passed).length;
@@ -1036,7 +1036,8 @@ async function start() {
 			participant_id: submission.participant_id,
 			test_cases_passed: passed,
 			test_cases_total: total,
-			case_results: caseResults,
+			// Sin tokens: participant:progress sale a todos los sockets, con o sin sesión.
+			case_results: caseResults.map((caseResult) => ({ passed: caseResult.passed, status: caseResult.status })),
 			solved,
 		};
 		fastify.io?.to(`round:${submission.round_id}`).emit('participant:progress', progress);
