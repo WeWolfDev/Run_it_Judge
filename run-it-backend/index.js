@@ -285,8 +285,8 @@ fastify.post('/problems', async (request, reply) => {
 	if (!Array.isArray(testCases) || testCases.length === 0) {
 		return reply.code(400).send({ error: 'testCases debe ser una lista con al menos un caso' });
 	}
-	if (testCases.length > 50) {
-		return reply.code(400).send({ error: 'testCases admite como máximo 50 casos' });
+	if (testCases.length > 100) {
+		return reply.code(400).send({ error: 'testCases admite como máximo 100 casos' });
 	}
 	const invalidIndex = testCases.findIndex((testCase) => typeof testCase?.stdin !== 'string'
 		|| typeof testCase?.expected !== 'string');

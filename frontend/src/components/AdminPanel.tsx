@@ -7,6 +7,7 @@ import {
   type Participant,
 } from "@/lib/runit";
 import { useRoundTimer } from "@/hooks/use-round-timer";
+import { parseCodeforcesZip } from "@/lib/test-case-parser";
 import {
   closeRound,
   createNextRound,
@@ -101,6 +102,8 @@ export function AdminPanel({
   const [testCases, setTestCases] = useState<Array<{ stdin: string; expected: string }>>([
     { stdin: "", expected: "" },
   ]);
+  // Casos importados de un .zip que no se muestran en el editor, pero se envían.
+  const [hiddenCases, setHiddenCases] = useState<Array<{ stdin: string; expected: string }>>([]);
   const [savingProblem, setSavingProblem] = useState(false);
   const [problems, setProblems] = useState<Array<{ id: string; name: string; difficulty: string }>>(
     [],
@@ -275,7 +278,8 @@ export function AdminPanel({
       setMessage("Completa el nombre y el enunciado.");
       return;
     }
-    const incomplete = testCases.findIndex(
+    const allCases = [...testCases, ...hiddenCases];
+    const incomplete = allCases.findIndex(
       (testCase) => !testCase.stdin.trim() || !testCase.expected.trim(),
     );
     if (incomplete !== -1) {
@@ -288,19 +292,49 @@ export function AdminPanel({
         name: problemName.trim(),
         statement: problemStatement.trim(),
         difficulty: problemDifficulty,
-        testCases,
+        testCases: allCases,
       });
       setProblems((current) => [created, ...current]);
       setSelectedProblem(created.id);
       setProblemName("");
       setProblemStatement("");
       setTestCases([{ stdin: "", expected: "" }]);
+      setHiddenCases([]);
       setMessage(`Problema “${created.name}” creado y seleccionado.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo crear el problema");
     } finally {
       setSavingProblem(false);
     }
+  };
+
+  const importTestCases = async (file: File) => {
+    try {
+      const parsed = await parseCodeforcesZip(file);
+      if (parsed.length > 100) {
+        setMessage(`El .zip tiene ${parsed.length} casos y el máximo es 100.`);
+        return;
+      }
+      // Los dos primeros quedan visibles y editables; el resto se envía oculto.
+      setTestCases(parsed.slice(0, 2));
+      setHiddenCases(parsed.slice(2));
+      setMessage(
+        parsed.length > 2
+          ? `Se importaron ${parsed.length} casos: 2 visibles y ${parsed.length - 2} ocultos.`
+          : `Se importaron ${parsed.length} casos.`,
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? `No se pudo leer el .zip: ${error.message}`
+          : "No se pudo leer el .zip",
+      );
+    }
+  };
+
+  const clearTestCases = () => {
+    setTestCases([{ stdin: "", expected: "" }]);
+    setHiddenCases([]);
   };
 
   const saveRound = async () => {
@@ -585,6 +619,34 @@ export function AdminPanel({
                 <option value="hard">Difícil</option>
               </select>
             </label>
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Importar casos (.zip)</span>
+              <input
+                type="file"
+                accept=".zip"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  // Se limpia para poder volver a elegir el mismo archivo.
+                  event.target.value = "";
+                  if (file) void importTestCases(file);
+                }}
+                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 outline-none focus:border-ring"
+              />
+            </label>
+            {hiddenCases.length > 0 && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Hay {hiddenCases.length} casos ocultos además de los que se ven abajo. Se envían
+                todos al crear el problema.
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={clearTestCases}
+              disabled={savingProblem}
+              className="rounded-lg border border-danger px-3 py-1.5 text-xs font-medium text-danger transition-opacity hover:opacity-70 disabled:opacity-50"
+            >
+              Limpiar todos los casos
+            </button>
             <div className="space-y-2 text-sm">
               <span className="text-muted-foreground">Casos de prueba</span>
               {testCases.map((testCase, index) => (
@@ -639,7 +701,7 @@ export function AdminPanel({
               <button
                 type="button"
                 onClick={() => setTestCases((current) => [...current, { stdin: "", expected: "" }])}
-                disabled={testCases.length >= 50}
+                disabled={testCases.length + hiddenCases.length >= 100}
                 className="w-full rounded-lg border border-dashed border-border px-4 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:opacity-50"
               >
                 Agregar caso
