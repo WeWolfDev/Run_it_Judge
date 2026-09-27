@@ -66,6 +66,24 @@ CREATE TABLE IF NOT EXISTS problems (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Cada caso lleva is_sample. Los problemas anteriores a la columna se migran a
+-- is_sample = false: nada que era privado se vuelve público sin que el admin lo
+-- marque. Solo toca elementos sin la clave, así que tras la primera pasada el
+-- WHERE no encuentra filas y nunca pisa lo que eligió el admin.
+UPDATE problems p
+SET test_cases = (
+  SELECT jsonb_agg(
+           CASE WHEN jsonb_typeof(tc) <> 'object' OR tc ? 'is_sample' THEN tc
+                ELSE tc || '{"is_sample": false}'::jsonb END
+           ORDER BY ord)
+  FROM jsonb_array_elements(p.test_cases) WITH ORDINALITY AS t(tc, ord)
+)
+WHERE jsonb_typeof(p.test_cases) = 'array'
+  AND EXISTS (
+    SELECT 1 FROM jsonb_array_elements(p.test_cases) AS e(tc)
+    WHERE jsonb_typeof(tc) = 'object' AND NOT tc ? 'is_sample'
+  );
+
 CREATE TABLE IF NOT EXISTS rounds (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tournament_id UUID NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
@@ -102,6 +120,9 @@ CREATE TABLE IF NOT EXISTS round_participants (
   PRIMARY KEY (round_id, participant_id)
 );
 
+-- 30 s por envío fallido antes de resolver. Solo desempata a igual solved_at.
+ALTER TABLE round_participants ADD COLUMN IF NOT EXISTS penalty_seconds INTEGER NOT NULL DEFAULT 0;
+
 CREATE TABLE IF NOT EXISTS submissions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   round_id UUID NOT NULL REFERENCES rounds(id),
@@ -114,6 +135,9 @@ CREATE TABLE IF NOT EXISTS submissions (
   verdict TEXT NOT NULL DEFAULT 'queued',
   judge0_token TEXT
 );
+
+-- Detalle por caso: [{ "passed": bool, "status": text }], sin stdin ni expected.
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS case_results JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE INDEX IF NOT EXISTS rounds_active_idx ON rounds(status);
 CREATE INDEX IF NOT EXISTS submissions_participant_idx ON submissions(participant_id, submitted_at);

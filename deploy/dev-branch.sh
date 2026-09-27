@@ -7,10 +7,11 @@
 # arrancar en main para que nadie lo confunda con el stack real.
 #
 #   deploy/dev-branch.sh up          # backend en background + frontend en primer plano
+#   deploy/dev-branch.sh restart     # reiniciar todo (tras un git checkout/pull)
 #   deploy/dev-branch.sh bootstrap-db  # crear base y rol de desarrollo (sin sudo)
-#   deploy/dev-branch.sh status      # estado y URLs
+#   deploy/dev-branch.sh status      # estado y URLs, avisa si el proceso está vencido
 #   deploy/dev-branch.sh logs        # log del backend
-#   deploy/dev-branch.sh down        # detener el backend de desarrollo
+#   deploy/dev-branch.sh down        # detener el entorno de desarrollo
 #   deploy/dev-branch.sh reset-db    # borrar la base de desarrollo y su rol
 #
 # Documentación: LOCAL_CHANGES_CONFIG.md en la raíz del repositorio.
@@ -57,6 +58,12 @@ STATE_DIR=${RUN_IT_DEV_STATE_DIR:-/tmp/run-it-dev}
 BACKEND_PID_FILE="$STATE_DIR/backend.pid"
 BACKEND_LOG="$STATE_DIR/backend.log"
 DEV_ENV_FILE="$STATE_DIR/dev.env"
+FRONTEND_PID_FILE="$STATE_DIR/frontend.pid"
+BACKEND_HASH_FILE="$STATE_DIR/backend.hash"
+
+# Los archivos cuyo contenido define qué código está corriendo el backend.
+# Se hashean al arrancar para detectar después que el proceso quedó viejo.
+BACKEND_WATCHED_FILES=(index.js db.js queue.js session-store.js judge0-client.js schema.sql)
 
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mAVISO:\033[0m %s\n' "$*" >&2; }
@@ -69,6 +76,49 @@ conf_value() {
 }
 
 require_file() { [ -f "$1" ] || die "No se encontró $1"; }
+
+# ---------------------------------------------------------------------------
+# Detección de proceso vencido
+# ---------------------------------------------------------------------------
+# node --watch reinicia el proceso cuando un archivo cambia, pero se pierde los
+# eventos de inotify que dispara un "git checkout" o un "git pull", que
+# reemplazan los archivos en vez de modificarlos. El resultado es un backend
+# que responde /health con 200 pero ejecuta código de otra versión, y nada en
+# la interfaz lo delata: los códigos de acceso salían con el formato viejo sin
+# que ningún error apareciera.
+#
+# Se compara el hash de los archivos vigilados contra el que se guardó al
+# arrancar. Si difieren, el proceso está viejo aunque parezca sano.
+backend_code_hash() {
+  local name path
+  for name in "${BACKEND_WATCHED_FILES[@]}"; do
+    path="$REPO_ROOT/run-it-backend/$name"
+    [ -f "$path" ] || continue
+    printf '%s ' "$name"
+    sha256sum "$path" | cut -d' ' -f1
+  done | sha256sum | cut -d' ' -f1
+}
+
+record_backend_hash() {
+  backend_code_hash >"$BACKEND_HASH_FILE"
+}
+
+# Imprime un aviso si el proceso en ejecución no corresponde al código en disco.
+warn_if_stale() {
+  backend_running || return 0
+  [ -f "$BACKEND_HASH_FILE" ] || return 0
+  local current recorded
+  current=$(backend_code_hash)
+  recorded=$(cat "$BACKEND_HASH_FILE")
+  if [ "$current" != "$recorded" ]; then
+    warn "El backend de desarrollo está vencido: el código en disco cambió pero el
+  proceso no se reinició. node --watch no detecta los reemplazos de archivo
+  que hace git checkout, así que /health responde 200 con código viejo.
+  Ejecutá:  $0 restart"
+    return 0
+  fi
+  return 1
+}
 
 # ---------------------------------------------------------------------------
 # Contexto de rama
@@ -103,9 +153,23 @@ require_free_ports() {
   for pair in "$DEV_FRONTEND_PORT:frontend" "$DEV_BACKEND_PORT:backend"; do
     port=${pair%%:*}
     what=${pair##*:}
-    port_is_free "$port" || die "El puerto $port (dev $what) ya está ocupado.
+    if port_is_free "$port"; then
+      continue
+    fi
+    # Si el puerto lo tiene un proceso nuestro y además está vencido, el
+    # consejo útil es reiniciar, no "elegí otro puerto".
+    if backend_running || [ -f "$FRONTEND_PID_FILE" ]; then
+      if warn_if_stale; then
+        die "El puerto $port está ocupado por el entorno de desarrollo vencido.
+  Reiniciá con:  $0 restart"
+      fi
+      die "El puerto $port (dev $what) ya lo usa un entorno de desarrollo tuyo.
+  Reiniciá con:  $0 restart
+  O para dejar de perder tiempo:  $0 down"
+    fi
+    die "El puerto $port (dev $what) ya está ocupado por otro proceso.
   Comprueba con:  ss -lntp 'sport = :$port'
-  Si es otro trabajo de desarrollo, define otro puerto:
+  Si es otro trabajo de desarrollo, define otros puertos:
     RUN_IT_DEV_FRONTEND_PORT=... RUN_IT_DEV_BACKEND_PORT=... $0 up"
   done
 }
@@ -215,7 +279,34 @@ stop_backend() {
     done
     kill -9 "$pid" 2>/dev/null || true
   fi
-  rm -f "$BACKEND_PID_FILE"
+  rm -f "$BACKEND_PID_FILE" "$BACKEND_HASH_FILE"
+}
+
+# El frontend corre en primer plano dentro de "up", así que el script no lo
+# puede matar desde otra terminal sin un pidfile. Con él, "restart" y "down"
+# funcionan igual desde cualquier shell.
+stop_frontend() {
+  [ -f "$FRONTEND_PID_FILE" ] || return 0
+  local pid
+  pid=$(cat "$FRONTEND_PID_FILE" 2>/dev/null) || return 0
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || {
+    rm -f "$FRONTEND_PID_FILE"
+    return 0
+  }
+  info "Deteniendo el frontend de desarrollo (pid $pid)..."
+  # Se mata el grupo entero del proceso: npm lanza vite como hijo.
+  kill -TERM "-$(ps -o pgid= -p "$pid" | tr -d ' ')" 2>/dev/null || kill "$pid" 2>/dev/null || true
+  for _ in $(seq 1 20); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.25
+  done
+  kill -9 "$pid" 2>/dev/null || true
+  rm -f "$FRONTEND_PID_FILE"
+}
+
+stop_all() {
+  stop_frontend
+  stop_backend
 }
 
 wait_for_backend() {
@@ -268,6 +359,9 @@ cmd_up() {
   ) >"$BACKEND_LOG" 2>&1 &
   local pid=$!
   printf '%s\n' "$pid" >"$BACKEND_PID_FILE"
+  # Se guarda el hash recién leído del disco, para que "status" pueda detectar
+  # más adelante que el proceso quedó viejo.
+  record_backend_hash
 
   if ! wait_for_backend; then
     stop_backend
@@ -283,20 +377,39 @@ cmd_up() {
   # sobrescribe a los archivos .env (node.js:5697) y .env.local se carga
   # también en modo production (node.js:5661-5666), así que un archivo sí
   # podría contaminar el build de producción.
-  trap stop_backend EXIT INT TERM
+  trap stop_all EXIT INT TERM
   (
     cd -- "$REPO_ROOT/frontend"
-    VITE_API_URL="http://localhost:$DEV_BACKEND_PORT" \
+    # setsid para que npm quede en su propio grupo de procesos, y así
+    # stop_frontend pueda matarlo entero desde otra terminal.
+    exec setsid env VITE_API_URL="http://localhost:$DEV_BACKEND_PORT" \
       VITE_SOCKET_URL="http://localhost:$DEV_BACKEND_PORT" \
-      exec npm run dev -- --port "$DEV_FRONTEND_PORT" --host "$DEV_BIND"
-  )
+      npm run dev -- --port "$DEV_FRONTEND_PORT" --host "$DEV_BIND"
+  ) &
+  printf '%s\n' "$!" >"$FRONTEND_PID_FILE"
+  wait "$!"
 }
 
 cmd_down() {
-  stop_backend
-  info "Backend de desarrollo detenido."
+  stop_all
+  info "Entorno de desarrollo detenido."
   info "El Redis efímero sigue arriba (requiere sudo para pararlo):"
   info "  sudo docker compose -p runit-dev -f docker-compose.dev.yml down"
+}
+
+# Ciclo completo. Es la respuesta al problema de node --watch: después de un
+# git checkout, git pull o git merge, el proceso puede quedar viejo sin que
+# nada lo indique.
+cmd_restart() {
+  require_dev_branch
+  info "Reiniciando el entorno de desarrollo..."
+  stop_all
+  # Los sockets tardan un instante en liberarse.
+  for _ in $(seq 1 20); do
+    port_is_free "$DEV_FRONTEND_PORT" && port_is_free "$DEV_BACKEND_PORT" && break
+    sleep 0.25
+  done
+  cmd_up
 }
 
 cmd_status() {
@@ -318,6 +431,9 @@ cmd_status() {
   else
     warn "Proceso backend dev: no corre"
   fi
+  # Se avisa aunque todo lo de arriba parezca bien, porque el síntoma de un
+  # proceso vencido es precisamente que /health responde 200.
+  warn_if_stale || true
 }
 
 cmd_logs() {
@@ -375,6 +491,7 @@ cmd_reset_db() {
 case "${1:-up}" in
   up) cmd_up ;;
   down) cmd_down ;;
+  restart) cmd_restart ;;
   status) cmd_status ;;
   logs) shift; cmd_logs "${1:-50}" ;;
   bootstrap-db) cmd_bootstrap_db ;;
@@ -383,6 +500,6 @@ case "${1:-up}" in
     awk 'NR > 1 { if ($0 ~ /^#/) { sub(/^#[[:space:]]?/, ""); print } else exit }' "$0"
     ;;
   *)
-    die "Subcomando desconocido: $1 (usa up, down, status, logs, bootstrap-db o reset-db)"
+    die "Subcomando desconocido: $1 (usa up, down, restart, status, logs, bootstrap-db o reset-db)"
     ;;
 esac

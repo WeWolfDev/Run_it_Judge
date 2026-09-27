@@ -5,10 +5,11 @@ import {
   formatClock,
   MOCK_PARTICIPANTS,
   MOCK_ROUND,
+  SILK_COUNT,
   type Participant,
   type RoundStartedEvent,
 } from "@/lib/runit";
-import { useRoundTimer } from "@/hooks/use-round-timer";
+import { useRoundTimer, useServerClockOffset } from "@/hooks/use-round-timer";
 import { getActiveRound } from "@/lib/api";
 
 interface RaceTrackProps {
@@ -39,7 +40,8 @@ export function RaceTrack({
   const displayedRound = remoteRound || round;
   const activeRoundId =
     typeof displayedRound.round_id === "string" ? displayedRound.round_id : undefined;
-  const remaining = useRoundTimer(displayedRound.ends_at);
+  const serverOffsetMs = useServerClockOffset();
+  const remaining = useRoundTimer(displayedRound.ends_at, serverOffsetMs);
 
   useEffect(() => {
     getActiveRound()
@@ -65,7 +67,7 @@ export function RaceTrack({
               participant_id: participant.participant_id,
               name: participant.name,
               lane: index + 1,
-              silk: index % 6,
+              silk: index % SILK_COUNT,
               test_cases_passed: participant.best_pass_percentage === 100 ? 1 : 0,
               test_cases_total: 1,
               attempts: 0,

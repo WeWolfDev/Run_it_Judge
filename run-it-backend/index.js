@@ -124,7 +124,9 @@ const USABLE_ACCESS_CODE_SQL = `
 	  )
 	FOR UPDATE OF ac`;
 
-fastify.register(cors, { origin: allowedOrigins });
+// Date no es un header CORS-safelisted: sin exponerlo, el frontend en otro
+// origen (desarrollo) no puede leerlo para sincronizar el cronómetro.
+fastify.register(cors, { origin: allowedOrigins, exposedHeaders: ['Date'] });
 
 fastify.get('/health', async () => ({ status: 'ok' }));
 
@@ -276,16 +278,38 @@ fastify.get('/problems', async () => {
 	return result.rows;
 });
 
+// Deja cada caso con la forma { stdin, expected, is_sample }. is_sample solo es
+// true si el admin lo marcó explícitamente: un caso nunca se vuelve público por
+// omisión.
+function normalizeTestCases(testCases) {
+	return testCases.map((testCase) => ({
+		stdin: testCase?.stdin,
+		expected: testCase?.expected,
+		is_sample: testCase?.is_sample === true,
+	}))
+}
+
 fastify.post('/problems', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
-	const { name, statement, difficulty = 'easy', testCases = [] } = request.body || {};
-	if (!name || !statement || !Array.isArray(testCases)) {
-		return reply.code(400).send({ error: 'name, statement y testCases son obligatorios' });
+	const { name, statement, difficulty = 'easy', testCases } = request.body || {};
+	if (!name || !statement) {
+		return reply.code(400).send({ error: 'name y statement son obligatorios' });
+	}
+	if (!Array.isArray(testCases) || testCases.length === 0) {
+		return reply.code(400).send({ error: 'testCases debe ser una lista con al menos un caso' });
+	}
+	if (testCases.length > 100) {
+		return reply.code(400).send({ error: 'testCases admite como máximo 100 casos' });
+	}
+	const invalidIndex = testCases.findIndex((testCase) => typeof testCase?.stdin !== 'string'
+		|| typeof testCase?.expected !== 'string');
+	if (invalidIndex !== -1) {
+		return reply.code(400).send({ error: `El caso ${invalidIndex + 1} debe tener stdin y expected como texto` });
 	}
 	const result = await query(
 		`INSERT INTO problems (name, statement, difficulty, test_cases)
 		 VALUES ($1, $2, $3, $4::jsonb) RETURNING *`,
-		[name, statement, difficulty, JSON.stringify(testCases)],
+		[name, statement, difficulty, JSON.stringify(normalizeTestCases(testCases))],
 	);
 	return reply.code(201).send(result.rows[0]);
 });
@@ -307,7 +331,7 @@ fastify.put('/problems/:id', async (request, reply) => {
 	const result = await query(
 		`UPDATE problems SET name = $1, statement = $2, difficulty = $3, test_cases = $4::jsonb
 		 WHERE id = $5 RETURNING *`,
-		[name, statement, difficulty, JSON.stringify(testCases), request.params.id],
+		[name, statement, difficulty, JSON.stringify(normalizeTestCases(testCases)), request.params.id],
 	);
 	return result.rowCount ? result.rows[0] : reply.code(404).send({ error: 'Problema no encontrado' });
 });
@@ -496,11 +520,41 @@ fastify.post('/access-codes/:code/claim', async (request, reply) => {
 fastify.post('/rounds', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
 	const { tournamentId, roundNumber, problemId, capacity, timeLimitSeconds } = request.body || {};
-	const result = await query(
-		`INSERT INTO rounds (tournament_id, round_number, problem_id, capacity, time_limit_seconds)
-		 VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-		[tournamentId, roundNumber, problemId, capacity, timeLimitSeconds],
-	);
+	if (typeof tournamentId !== 'string' || !/^[0-9a-f-]{36}$/i.test(tournamentId)) {
+		return reply.code(400).send({ error: 'tournamentId no es válido' });
+	}
+	if (typeof problemId !== 'string' || !/^[0-9a-f-]{36}$/i.test(problemId)) {
+		return reply.code(400).send({ error: 'problemId no es válido' });
+	}
+	if (!Number.isInteger(roundNumber) || roundNumber < 1) {
+		return reply.code(400).send({ error: 'roundNumber debe ser un entero desde 1' });
+	}
+	if (!Number.isInteger(capacity) || capacity < 1) {
+		return reply.code(400).send({ error: 'capacity debe ser un entero positivo' });
+	}
+	if (!Number.isInteger(timeLimitSeconds) || timeLimitSeconds < 10 || timeLimitSeconds > 86400) {
+		return reply.code(400).send({ error: 'timeLimitSeconds debe estar entre 10 y 86400' });
+	}
+	let result;
+	try {
+		result = await query(
+			`INSERT INTO rounds (tournament_id, round_number, problem_id, capacity, time_limit_seconds)
+			 VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+			[tournamentId, roundNumber, problemId, capacity, timeLimitSeconds],
+		);
+	} catch (error) {
+		// UNIQUE (tournament_id, round_number). Sin esto Fastify lo convierte en
+		// un 500 crudo que no le dice nada al admin.
+		if (error.code === '23505') {
+			return reply.code(409).send({
+				error: `El torneo ya tiene una ronda ${roundNumber}. Usá la ronda siguiente o elegí otro número.`,
+			});
+		}
+		if (error.code === '23503') {
+			return reply.code(404).send({ error: 'El torneo o el problema no existe' });
+		}
+		throw error;
+	}
 	return reply.code(201).send(result.rows[0]);
 });
 
@@ -513,6 +567,140 @@ fastify.get('/tournaments/:id/rounds', async (request, reply) => {
 		[request.params.id],
 	);
 	return result.rows;
+});
+
+// Lee el estado de una ronda para saber si se puede generar la siguiente y con
+// quienes. Lo usa el panel para prellenar el formulario antes de crearla.
+async function nextRoundPreview(roundId) {
+	const roundResult = await query('SELECT * FROM rounds WHERE id = $1', [roundId]);
+	if (!roundResult.rowCount) return { available: false, reason: 'La ronda no existe' };
+	const round = roundResult.rows[0];
+
+	const tournament = await query('SELECT id, status FROM tournaments WHERE id = $1', [round.tournament_id]);
+	const tournamentStatus = tournament.rows[0]?.status;
+
+	// Quien quedó con final_status 'advanced' en esta ronda es el que juega la
+	// siguiente. closeRound (index.js:884) ya lo calculó.
+	const advancing = await query(
+		`SELECT rp.participant_id, rp.final_rank, rp.best_pass_percentage, p.display_name
+		 FROM round_participants rp
+		 JOIN participants p ON p.id = rp.participant_id
+		 WHERE rp.round_id = $1 AND rp.final_status = 'advanced'
+		 ORDER BY rp.final_rank`,
+		[roundId],
+	);
+
+	// La siguiente es la que sigue a esta, no la siguiente libre. Importa: con
+	// MAX(round_number)+1 el chequeo de "¿ya existe?" nunca encontraría nada,
+	// porque ese número por definición no existe, y un segundo POST crearía la
+	// ronda N+2 en lugar de rechazar.
+	const nextRoundNumber = Number(round.round_number) + 1;
+
+	const existing = await query(
+		'SELECT id, round_number, status FROM rounds WHERE tournament_id = $1 AND round_number = $2',
+		[round.tournament_id, nextRoundNumber],
+	);
+
+	const preview = {
+		nextRoundNumber,
+		tournamentId: round.tournament_id,
+		tournamentStatus,
+		advancingCount: advancing.rows.length,
+		advancing: advancing.rows.map((row) => ({
+			participant_id: row.participant_id,
+			display_name: row.display_name,
+			final_rank: row.final_rank,
+			best_pass_percentage: row.best_pass_percentage,
+		})),
+		existing: existing.rowCount
+			? { id: existing.rows[0].id, round_number: existing.rows[0].round_number, status: existing.rows[0].status }
+			: null,
+	};
+
+	if (round.status !== 'closed') {
+		return { ...preview, available: false, reason: 'La ronda todavía no está cerrada' };
+	}
+	if (tournamentStatus === 'finished') {
+		return { ...preview, available: false, reason: 'El torneo ya terminó' };
+	}
+	if (advancing.rows.length < 2) {
+		// Un solo clasificado significa que closeRound ya declaró ganador.
+		return { ...preview, available: false, reason: 'No hay suficientes clasificados para otra ronda' };
+	}
+	if (existing.rowCount) {
+		return { ...preview, available: false, reason: `La ronda ${nextRoundNumber} ya existe` };
+	}
+	return { ...preview, available: true };
+}
+
+fastify.get('/rounds/:id/next', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	return nextRoundPreview(request.params.id);
+});
+
+// Genera la ronda siguiente con los clasificados, ya inscriptos. Evita que el
+// admin tenga que contarlos a mano y se equivoque.
+fastify.post('/rounds/:id/next', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const { problemId, capacity, timeLimitSeconds } = request.body || {};
+
+	if (typeof problemId !== 'string' || !/^[0-9a-f-]{36}$/i.test(problemId)) {
+		return reply.code(400).send({ error: 'problemId no es válido' });
+	}
+	const seconds = Number(timeLimitSeconds);
+	if (!Number.isInteger(seconds) || seconds < 10 || seconds > 86400) {
+		return reply.code(400).send({ error: 'timeLimitSeconds debe estar entre 10 y 86400' });
+	}
+
+	const problem = await query('SELECT id FROM problems WHERE id = $1', [problemId]);
+	if (!problem.rowCount) return reply.code(404).send({ error: 'El problema no existe' });
+
+	const preview = await nextRoundPreview(request.params.id);
+	if (!preview.available) {
+		return reply.code(409).send({ error: preview.reason, preview });
+	}
+
+	// Por defecto clasifican todos los que avanzaron. El admin puede bajar el
+	// cupo para eliminar más, pero nunca subirlo: no hay más participantes en
+	// juego que los clasificados de esta ronda.
+	const requested = capacity === undefined || capacity === null ? null : Number(capacity);
+	if (requested !== null && (!Number.isInteger(requested) || requested < 1)) {
+		return reply.code(400).send({ error: 'capacity debe ser un entero positivo' });
+	}
+	if (requested !== null && requested > preview.advancingCount) {
+		return reply.code(400).send({
+			error: `El cupo no puede ser mayor que los ${preview.advancingCount} clasificados`,
+		});
+	}
+	const finalCapacity = requested === null ? preview.advancingCount : requested;
+
+	const created = await withTransaction(async (client) => {
+		const inserted = await client.query(
+			`INSERT INTO rounds (tournament_id, round_number, problem_id, capacity, time_limit_seconds)
+			 VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+			[preview.tournamentId, preview.nextRoundNumber, problemId, finalCapacity, seconds],
+		);
+		const nextRound = inserted.rows[0];
+		// Los clasificados entran ya en la ronda. Si se dejaran para que se
+		// unieran solos, un participante que no está presente bloquearía a todos.
+		await client.query(
+			`INSERT INTO round_participants (round_id, participant_id)
+			 SELECT $1, unnest($2::uuid[]) ON CONFLICT DO NOTHING`,
+			[nextRound.id, preview.advancing.map((entry) => entry.participant_id)],
+		);
+		const joined = await client.query(
+			'SELECT count(*)::int AS n FROM round_participants WHERE round_id = $1',
+			[nextRound.id],
+		);
+		return { round: nextRound, participants: joined.rows[0].n };
+	});
+
+	fastify.io?.emit('round:created', {
+		round_id: created.round.id,
+		round_number: created.round.round_number,
+		participants: created.participants,
+	});
+	return reply.code(201).send({ ...created, advancing: preview.advancing });
 });
 
 fastify.put('/rounds/:id', async (request, reply) => {
@@ -562,8 +750,17 @@ fastify.post('/rounds/:id/pause', async (request, reply) => {
 });
 
 fastify.get('/public/rounds/active', async () => {
+	// Endpoint sin sesión: de test_cases solo sale lo marcado como ejemplo, y
+	// proyectado a stdin/expected. El resto nunca deja la base.
 	const result = await query(
-		`SELECT r.*, p.name AS problem_name, p.statement, p.difficulty
+		`SELECT r.*, p.name AS problem_name, p.statement, p.difficulty,
+		        COALESCE((
+		          SELECT jsonb_agg(
+		                   jsonb_build_object('stdin', tc->'stdin', 'expected', tc->'expected')
+		                   ORDER BY ord)
+		          FROM jsonb_array_elements(p.test_cases) WITH ORDINALITY AS t(tc, ord)
+		          WHERE tc->'is_sample' = 'true'::jsonb
+		        ), '[]'::jsonb) AS samples
 		 FROM rounds r JOIN problems p ON p.id = r.problem_id
 		 WHERE r.status = 'active' ORDER BY r.started_at DESC LIMIT 1`,
 	);
@@ -602,9 +799,9 @@ fastify.post('/rounds/:id/submissions', async (request, reply) => {
 		typeof code !== 'string' ||
 		code.length === 0 ||
 		code.length > 100_000 ||
-		!['python', 'javascript'].includes(language)
+		!['python', 'c', 'cpp'].includes(language)
 	) {
-		return reply.code(400).send({ error: 'Envío inválido: use Python o JavaScript y hasta 100000 caracteres' });
+		return reply.code(400).send({ error: 'Envío inválido: use Python, C o C++ y hasta 100000 caracteres' });
 	}
 	const recent = submissionRate.get(request.user.id) || 0;
 	if (Date.now() - recent < 1000) return reply.code(429).send({ error: 'Espera antes de enviar otra solución' });
@@ -616,7 +813,7 @@ fastify.post('/rounds/:id/submissions', async (request, reply) => {
 	if (!round.rowCount) return reply.code(409).send({ error: 'La ronda no está activa' });
 	if (round.rows[0].paused) return reply.code(409).send({ error: 'La ronda está pausada' });
 	const participant = await query(
-		`SELECT p.id FROM participants p
+		`SELECT p.id, p.display_name FROM participants p
 		 JOIN round_participants rp ON rp.participant_id = p.id AND rp.round_id = $1
 		 WHERE p.id = $2 AND p.user_id = $3 AND p.tournament_id = $4 AND p.status = 'active'`,
 		[request.params.id, participantId, request.user.id, round.rows[0].tournament_id],
@@ -649,6 +846,7 @@ fastify.post('/rounds/:id/submissions', async (request, reply) => {
 		id: queued.id,
 		round_id: queued.round_id,
 		participant_id: queued.participant_id,
+		display_name: participant.rows[0].display_name,
 		language: queued.language,
 		submitted_at: queued.submitted_at,
 		verdict: queued.verdict,
@@ -659,9 +857,15 @@ fastify.post('/rounds/:id/submissions', async (request, reply) => {
 
 fastify.get('/rounds/:id/leaderboard', async (request) => {
 	const result = await query(
-		`SELECT rp.*, p.display_name FROM round_participants rp
+		`SELECT rp.*, p.display_name,
+		        EXTRACT(EPOCH FROM rp.solved_at - r.started_at
+		          + rp.penalty_seconds * interval '1 second')::int AS total_time_seconds
+		 FROM round_participants rp
 		 JOIN participants p ON p.id = rp.participant_id
-		 WHERE rp.round_id = $1 ORDER BY rp.final_rank NULLS LAST, rp.best_pass_percentage DESC`,
+		 JOIN rounds r ON r.id = rp.round_id
+		 WHERE rp.round_id = $1
+		 ORDER BY rp.final_rank NULLS LAST, (rp.solved_at IS NULL), rp.solved_at ASC NULLS LAST,
+		 rp.best_pass_percentage DESC, rp.penalty_seconds ASC`,
 		[request.params.id],
 	);
 	return result.rows;
@@ -671,12 +875,29 @@ fastify.get('/rounds/:id/submissions', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
 	const result = await query(
 		`SELECT s.id, s.participant_id, p.display_name, s.language, s.verdict,
-		        s.test_cases_passed, s.test_cases_total, s.submitted_at
+		        s.test_cases_passed, s.test_cases_total, s.case_results, s.submitted_at
 		 FROM submissions s JOIN participants p ON p.id = s.participant_id
 		 WHERE s.round_id = $1 ORDER BY s.submitted_at DESC LIMIT 200`,
 		[request.params.id],
 	);
 	return result.rows;
+});
+
+fastify.get('/queue/stats', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	try {
+		const counts = await submissionQueue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed');
+		return {
+			waiting: counts.waiting ?? 0,
+			active: counts.active ?? 0,
+			completed: counts.completed ?? 0,
+			failed: counts.failed ?? 0,
+			delayed: counts.delayed ?? 0,
+		};
+	} catch (error) {
+		request.log.error(error, 'Queue stats failed');
+		return reply.code(503).send({ error: 'La cola no está disponible' });
+	}
 });
 
 fastify.get('/tournaments/:id/leaderboard', async (request, reply) => {
@@ -685,7 +906,10 @@ fastify.get('/tournaments/:id/leaderboard', async (request, reply) => {
 		`SELECT p.id AS participant_id, p.display_name,
 			MAX(rp.final_rank) FILTER (WHERE rp.final_rank IS NOT NULL) AS final_rank,
 			MAX(rp.best_pass_percentage) AS best_pass_percentage,
-			SUM(rp.failed_attempts_count)::int AS failed_attempts_count
+			SUM(rp.failed_attempts_count)::int AS failed_attempts_count,
+			SUM(rp.penalty_seconds)::int AS penalty_seconds,
+			SUM(EXTRACT(EPOCH FROM rp.solved_at - r.started_at
+			  + rp.penalty_seconds * interval '1 second'))::int AS total_time_seconds
 		 FROM participants p JOIN round_participants rp ON rp.participant_id = p.id
 		 JOIN rounds r ON r.id = rp.round_id
 		 WHERE r.tournament_id = $1
@@ -732,13 +956,23 @@ async function start() {
 			return next(new Error('Sesión no disponible'));
 		}
 	});
-	const submissionWorker = startSubmissionWorker(async ({ submissionId, result, token }) => {
+	const loadTestCases = async ({ submissionId }) => {
+		const problem = await query(
+			`SELECT p.test_cases FROM submissions s
+			 JOIN rounds r ON r.id = s.round_id
+			 JOIN problems p ON p.id = r.problem_id
+			 WHERE s.id = $1 AND s.verdict = 'queued'`,
+			[submissionId],
+		);
+		if (!problem.rowCount) return null;
+		return Array.isArray(problem.rows[0].test_cases) ? problem.rows[0].test_cases : [];
+	};
+	const submissionWorker = startSubmissionWorker(loadTestCases, async ({ submissionId, testCases, results }) => {
 		const submissionRow = await query(
-			`SELECT s.round_id, s.participant_id, s.verdict, p.test_cases,
+			`SELECT s.round_id, s.participant_id, s.verdict,
 			        r.status AS round_status, r.ends_at, r.paused
 			 FROM submissions s
 			 JOIN rounds r ON r.id = s.round_id
-			 JOIN problems p ON p.id = r.problem_id
 			 WHERE s.id = $1`,
 			[submissionId],
 		);
@@ -750,29 +984,44 @@ async function start() {
 				[submissionId],
 			).then((updateResult) => updateResult.rows[0] || null);
 		}
-		const testCases = Array.isArray(submission.test_cases) ? submission.test_cases : [];
-		const expected = (testCases[0]?.expected ?? '').toString().trim();
-		const actual = result.stdout?.toString().trim() ?? '';
-		const passed = result.status?.id === 3 && expected !== '' && actual === expected ? 1 : 0;
-		const verdict = passed === 1
+		const caseResults = results.map(({ result, token }, index) => {
+			const expected = (testCases[index]?.expected ?? '').toString().trim();
+			const actual = result.stdout?.toString().trim() ?? '';
+			const passed = result.status?.id === 3 && actual === expected;
+			const status = passed
+				? 'accepted'
+				: (result.status?.id === 3 ? 'Wrong Answer' : (result.status?.description || 'rejected'));
+			return { passed, status, token };
+		});
+		const total = caseResults.length;
+		const passed = caseResults.filter((caseResult) => caseResult.passed).length;
+		const solved = total > 0 && passed === total;
+		// Accepted solo con todos los casos. Si no, el veredicto es el del primer caso fallido.
+		const verdict = solved
 			? 'accepted'
-			: (result.status?.description || 'rejected');
+			: (caseResults.find((caseResult) => !caseResult.passed)?.status || 'no_test_cases');
 		const updated = await query(
 			`UPDATE submissions SET verdict = $1, judge0_token = $2,
-				test_cases_passed = $3, test_cases_total = 1
-			 WHERE id = $4 AND verdict = 'queued' RETURNING *`,
-			[verdict, token, passed, submissionId],
+				test_cases_passed = $3, test_cases_total = $4, case_results = $5::jsonb
+			 WHERE id = $6 AND verdict = 'queued' RETURNING *`,
+			[verdict, results.at(-1)?.token ?? null, passed, total, JSON.stringify(caseResults), submissionId],
 		);
 		if (!updated.rowCount) return null;
 
 		const { round_id: roundId, participant_id: participantId } = submission;
+		// Un fallo solo cuenta mientras el participante no haya resuelto. En el SET,
+		// solved_at es el valor previo a este UPDATE, así que el contador y la
+		// penalización suben juntos en una sola sentencia.
 		await query(
 			`UPDATE round_participants
 			 SET best_pass_percentage = GREATEST(best_pass_percentage, $1),
 			     solved_at = CASE WHEN $2 THEN COALESCE(solved_at, now()) ELSE solved_at END,
-			     failed_attempts_count = failed_attempts_count + CASE WHEN $2 THEN 0 ELSE 1 END
+			     failed_attempts_count = failed_attempts_count
+			       + CASE WHEN NOT $2 AND solved_at IS NULL THEN 1 ELSE 0 END,
+			     penalty_seconds = penalty_seconds
+			       + CASE WHEN NOT $2 AND solved_at IS NULL THEN 30 ELSE 0 END
 			 WHERE round_id = $3 AND participant_id = $4`,
-			[passed * 100, passed === 1, roundId, participantId],
+			[total ? Math.round((passed * 10000) / total) / 100 : 0, solved, roundId, participantId],
 		);
 		const capacityResult = await query('SELECT capacity FROM rounds WHERE id = $1', [roundId]);
 		const solvedResult = await query(
@@ -786,8 +1035,10 @@ async function start() {
 		const progress = {
 			participant_id: submission.participant_id,
 			test_cases_passed: passed,
-			test_cases_total: 1,
-			solved: passed === 1,
+			test_cases_total: total,
+			// Sin tokens: participant:progress sale a todos los sockets, con o sin sesión.
+			case_results: caseResults.map((caseResult) => ({ passed: caseResult.passed, status: caseResult.status })),
+			solved,
 		};
 		fastify.io?.to(`round:${submission.round_id}`).emit('participant:progress', progress);
 		fastify.io?.emit('participant:progress', progress);
@@ -873,10 +1124,10 @@ async function closeRound(roundId) {
 
 		await client.query("UPDATE rounds SET status = 'closing' WHERE id = $1", [roundId]);
 		const ranking = await client.query(
-			`SELECT participant_id, best_pass_percentage, solved_at, failed_attempts_count
+			`SELECT participant_id, best_pass_percentage, solved_at, failed_attempts_count, penalty_seconds
 			 FROM round_participants WHERE round_id = $1
 			 ORDER BY (solved_at IS NULL), solved_at ASC NULLS LAST,
-			 best_pass_percentage DESC, failed_attempts_count ASC, participant_id`,
+			 best_pass_percentage DESC, penalty_seconds ASC, failed_attempts_count ASC, participant_id`,
 			[roundId],
 		);
 		const ranked = ranking.rows.map((row, index) => ({ ...row, rank: index + 1 }));

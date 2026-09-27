@@ -1,56 +1,72 @@
 import { useEffect, useState } from "react";
 import { formatClock, MOCK_ROUND } from "@/lib/runit";
-import { useRoundTimer } from "@/hooks/use-round-timer";
+import { useRoundTimer, useServerClockOffset } from "@/hooks/use-round-timer";
+import { CharacterCarousel } from "@/components/CharacterCarousel";
+import { ProblemStatement } from "@/components/ProblemStatement";
 import { getActiveRound, joinRound, submitRound } from "@/lib/api";
-import {
-  getSelectedCharacter,
-  getSession,
-  setSelectedCharacter as saveSelectedCharacter,
-} from "@/lib/session";
+import { getSession } from "@/lib/session";
 
-const STARTER = `def max_sliding_window(nums, k):
-    # tu solución aquí
-    return []
-`;
+// Las claves coinciden con LANGUAGE_IDS de judge0-client.js. "cpp", no "c++".
+// Sin JavaScript ni Java: el sandbox de Judge0 en este host no deja arrancar
+// ni a Node ni a la JVM (TLE seguro o error de VM).
+const LANGUAGES = {
+  python: { label: "Python 3", file: "solution.py" },
+  c: { label: "C", file: "solution.c" },
+  cpp: { label: "C++", file: "solution.cpp" },
+} as const;
 
-const CHARACTERS = [
-  { name: "Aurora", title: "La veloz", silk: 0 },
-  { name: "Nilo", title: "El estratega", silk: 1 },
-  { name: "Mango", title: "El constante", silk: 2 },
-  { name: "Sol", title: "La precisa", silk: 3 },
-  { name: "Pixel", title: "El veloz", silk: 4 },
-  { name: "Nova", title: "La resistente", silk: 5 },
-] as const;
+type Language = keyof typeof LANGUAGES;
 
-function HorseIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 64 64" className={className} aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M12 46c0-9 5-14 12-17l4-9c1-3 4-6 8-7l6-2 3 5-4 3 2 4c4 2 6 6 6 11l4 3-3 4-4-2c-1 4-4 7-8 9l1 8h-5l-1-7-8 1-2 6h-5l1-7-4-1-3 4-3-2z"
-      />
-    </svg>
-  );
-}
+// Se muestran como placeholder del textarea vacío, nunca como su valor: así el
+// participante no puede enviar la plantilla sin querer.
+const PLACEHOLDERS: Record<Language, string> = {
+  python: `import sys
+def main():
+    # Lee desde la entrada estándar (stdin)
+    # --- ESCRIBE TU LÓGICA AQUÍ ---
+    pass
+if __name__ == '__main__':
+    main()`,
+  c: `#include <stdio.h>
+int main() {
+    // --- ESCRIBE TU LÓGICA AQUÍ ---
+    return 0;
+}`,
+  cpp: `#include <iostream>
+using namespace std;
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(NULL);
+    // --- ESCRIBE TU LÓGICA AQUÍ ---
+    return 0;
+}`,
+};
+
+// Casos marcados como ejemplo por el admin. El servidor ya los proyecta a
+// stdin/expected: los demás casos nunca llegan al cliente.
+type SampleCase = { stdin: string; expected: string };
 
 export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_ROUND }) {
   const [activeRound, setActiveRound] = useState(round);
   const [statement, setStatement] = useState(
     "Dado un problema, resuelve la solución y envíala para evaluación.",
   );
+  const [samples, setSamples] = useState<SampleCase[]>([]);
   const [participantId, setParticipantId] = useState("");
   const displayedRound = activeRound;
-  const remaining = useRoundTimer(displayedRound.ends_at);
-  const [code, setCode] = useState(STARTER);
-  const [language, setLanguage] = useState("python");
+  const [code, setCode] = useState("");
+  const [language, setLanguage] = useState<Language>("python");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const serverOffsetMs = useServerClockOffset(setMessage);
+  const remaining = useRoundTimer(displayedRound.ends_at, serverOffsetMs);
   const username = getSession()?.username || "demo";
-  const [selectedCharacter, setSelectedCharacterState] = useState(() =>
-    getSelectedCharacter(username),
-  );
 
   const send = async () => {
+    if (!code.trim()) {
+      setMessage("Escribe tu solución antes de enviar.");
+      return;
+    }
     setSending(true);
     setMessage("");
     try {
@@ -73,6 +89,9 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
       .then((remote) => {
         if (!remote) return;
         setStatement(remote.statement);
+        // `samples` es aditivo en /public/rounds/active; el tipo de api.ts no lo declara.
+        const remoteSamples = (remote as { samples?: SampleCase[] }).samples;
+        setSamples(Array.isArray(remoteSamples) ? remoteSamples : []);
         setActiveRound({
           round_id: remote.id,
           ends_at: new Date(remote.ends_at).getTime(),
@@ -98,46 +117,9 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
       </header>
 
       <section className="rounded-xl border border-border bg-card p-5">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-widest text-muted-foreground">Tu corredor</p>
-            <h2 className="mt-1 text-lg font-semibold text-foreground">Elige tu personaje</h2>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {CHARACTERS[selectedCharacter]?.name ?? "Personaje"} seleccionado
-          </p>
-        </div>
-        <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
-          {CHARACTERS.map((character, index) => {
-            const selected = selectedCharacter === index;
-            return (
-              <button
-                key={character.name}
-                type="button"
-                aria-pressed={selected}
-                onClick={() => {
-                  saveSelectedCharacter(username, index);
-                  setSelectedCharacterState(index);
-                }}
-                className={`group rounded-lg border p-3 text-center transition-colors ${
-                  selected
-                    ? "border-primary bg-primary/10 ring-2 ring-primary/20"
-                    : "border-border bg-muted hover:border-primary/50"
-                }`}
-              >
-                <HorseIcon
-                  className={`mx-auto h-10 w-10 text-silk-${character.silk} transition-transform group-hover:-translate-y-1`}
-                />
-                <span className="mt-2 block text-xs font-semibold text-foreground">
-                  {character.name}
-                </span>
-                <span className="mt-0.5 block text-[10px] text-muted-foreground">
-                  {character.title}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+        <p className="text-xs uppercase tracking-widest text-muted-foreground">Tu corredor</p>
+        <h2 className="mt-1 text-lg font-semibold text-foreground">Elige tu personaje</h2>
+        <CharacterCarousel username={username} />
       </section>
 
       <section className="rounded-xl border border-border bg-card px-5 py-4">
@@ -145,8 +127,8 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
           Estado de la evaluación
         </p>
         <p className="mt-2 text-sm text-foreground">
-          Los casos de prueba son privados. El veredicto aparecerá después de que Judge0 procese tu
-          envío.
+          Solo los casos de ejemplo son visibles; el resto de los casos de prueba es privado. El
+          veredicto aparecerá después de que Judge0 procese tu envío.
         </p>
       </section>
 
@@ -154,27 +136,56 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
         <div className="space-y-5">
           <section className="rounded-xl border border-border bg-card p-5">
             <h2 className="text-sm font-semibold text-foreground">Enunciado</h2>
-            <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
-              {statement}
-            </p>
+            <ProblemStatement statement={statement} />
           </section>
+
+          {samples.length > 0 && (
+            <section className="rounded-xl border border-border bg-card p-5">
+              <h2 className="text-sm font-semibold text-foreground">Casos de ejemplo</h2>
+              <div className="mt-3 space-y-3">
+                {samples.map((sample, index) => (
+                  <div key={index} className="rounded-lg border border-border p-3">
+                    <p className="text-xs font-medium text-foreground">Ejemplo {index + 1}</p>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Entrada</p>
+                        <pre className="mt-1 overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs text-foreground">
+                          {sample.stdin}
+                        </pre>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Salida esperada</p>
+                        <pre className="mt-1 overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs text-foreground">
+                          {sample.expected}
+                        </pre>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
         </div>
 
         <section className="overflow-hidden rounded-xl border border-border bg-editor">
           <div className="flex items-center justify-between border-b border-editor-border px-4 py-2.5">
             <select
               value={language}
-              onChange={(event) => setLanguage(event.target.value)}
+              onChange={(event) => setLanguage(event.target.value as Language)}
               className="rounded-md border border-editor-border bg-editor px-2 py-1 font-mono text-xs text-editor-foreground outline-none"
             >
-              <option value="python">Python 3</option>
-              <option value="javascript">JavaScript</option>
+              {(Object.keys(LANGUAGES) as Language[]).map((key) => (
+                <option key={key} value={key}>
+                  {LANGUAGES[key].label}
+                </option>
+              ))}
             </select>
-            <span className="font-mono text-xs text-editor-muted">solution.py</span>
+            <span className="font-mono text-xs text-editor-muted">{LANGUAGES[language].file}</span>
           </div>
           <textarea
             value={code}
             onChange={(e) => setCode(e.target.value)}
+            placeholder={PLACEHOLDERS[language]}
             spellCheck={false}
             className="h-96 w-full resize-none bg-editor px-4 py-3 font-mono text-sm text-editor-foreground outline-none"
           />
