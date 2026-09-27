@@ -11,6 +11,7 @@ import { parseCodeforcesZip } from "@/lib/test-case-parser";
 import { ProblemStatement } from "@/components/ProblemStatement";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  apiUrl,
   closeRound,
   createNextRound,
   createProblem,
@@ -33,6 +34,47 @@ import {
   type NextRoundPreview,
 } from "@/lib/api";
 import { createSocketFeed } from "@/lib/runit";
+import { getSessionToken } from "@/lib/session";
+
+type QueueStats = { waiting: number; active: number; completed: number; failed: number };
+
+type SubmissionRow = {
+  id: string;
+  display_name: string;
+  language: string;
+  verdict: string;
+  test_cases_passed: number;
+  test_cases_total: number;
+  submitted_at: string;
+};
+
+// Lo emite POST /rounds/:id/submissions y el worker cuando un job falla.
+type SubmissionQueuedEvent = {
+  id: string;
+  round_id: string;
+  participant_id: string;
+  display_name?: string;
+  language?: string;
+  submitted_at?: string;
+  verdict: string;
+};
+
+async function fetchQueueStats(): Promise<QueueStats> {
+  const token = getSessionToken();
+  const response = await fetch(apiUrl("/queue/stats"), {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) throw new Error("No se pudo leer la cola");
+  return response.json() as Promise<QueueStats>;
+}
+
+// Tiempo = solved_at - started_at + penalización, calculado por el backend.
+function formatTotalTime(seconds: number | null | undefined, penalty: number | undefined) {
+  if (seconds == null) return "—";
+  const minutes = Math.floor(seconds / 60);
+  const rest = String(seconds % 60).padStart(2, "0");
+  return penalty ? `${minutes}:${rest} (+${penalty}s)` : `${minutes}:${rest}`;
+}
 
 const STATUS_LABEL: Record<Participant["status"], string> = {
   racing: "En curso",
@@ -135,19 +177,13 @@ export function AdminPanel({
       final_rank: number | null;
       best_pass_percentage: number;
       failed_attempts_count: number;
+      penalty_seconds?: number;
+      total_time_seconds?: number | null;
     }>
   >([]);
-  const [submissions, setSubmissions] = useState<
-    Array<{
-      id: string;
-      display_name: string;
-      language: string;
-      verdict: string;
-      test_cases_passed: number;
-      test_cases_total: number;
-      submitted_at: string;
-    }>
-  >([]);
+  const [submissions, setSubmissions] = useState<SubmissionRow[]>([]);
+  const [queueStats, setQueueStats] = useState<QueueStats | null>(null);
+  const [queueError, setQueueError] = useState(false);
   const [liveParticipants, setLiveParticipants] = useState<Participant[]>(participants);
   const [liveRound, setLiveRound] = useState(round);
   const displayedRound = liveRound;
@@ -189,6 +225,21 @@ export function AdminPanel({
   useEffect(() => {
     void refreshTournaments();
   }, [refreshTournaments]);
+
+  const refreshQueueStats = useMemo(
+    () => () =>
+      void fetchQueueStats()
+        .then((stats) => {
+          setQueueStats(stats);
+          setQueueError(false);
+        })
+        .catch(() => setQueueError(true)),
+    [],
+  );
+
+  useEffect(() => {
+    refreshQueueStats();
+  }, [refreshQueueStats]);
 
   useEffect(() => {
     void refreshCodes();
@@ -263,7 +314,43 @@ export function AdminPanel({
     if (!roundId.includes("-")) return;
     const feed = createSocketFeed(roundId);
     if (!feed) return;
+    // RunItEvents (runit.ts) no declara submission:queued; se tipa aquí.
+    const onAny = feed.on as unknown as (
+      event: string,
+      handler: (payload: unknown) => void,
+    ) => void;
+    onAny("submission:queued", (payload) => {
+      const event = payload as SubmissionQueuedEvent;
+      if (event.round_id !== roundId) return;
+      setSubmissions((current) => {
+        // El worker reemite el mismo id con verdict judge_error: se actualiza la fila.
+        if (current.some((row) => row.id === event.id)) {
+          return current.map((row) =>
+            row.id === event.id ? { ...row, verdict: event.verdict } : row,
+          );
+        }
+        const row: SubmissionRow = {
+          id: event.id,
+          display_name: event.display_name ?? event.participant_id.slice(0, 8),
+          language: event.language ?? "",
+          verdict: event.verdict,
+          test_cases_passed: 0,
+          test_cases_total: 0,
+          submitted_at: event.submitted_at ?? new Date().toISOString(),
+        };
+        return [row, ...current];
+      });
+      refreshQueueStats();
+    });
     feed.on("participant:progress", (progress) => {
+      // El veredicto y la penalización solo se conocen al terminar el job.
+      void getRoundSubmissions(roundId)
+        .then(setSubmissions)
+        .catch(() => undefined);
+      void getRoundLeaderboard(roundId)
+        .then(setLeaderboard)
+        .catch(() => undefined);
+      refreshQueueStats();
       setLiveParticipants((current) =>
         current.map((participant) =>
           participant.participant_id === progress.participant_id
@@ -281,7 +368,7 @@ export function AdminPanel({
     feed.on("round:paused", (roundState) => setPaused(Boolean(roundState.paused)));
     feed.on("round:closed", () => setMessage("La ronda se cerró"));
     return () => feed.disconnect();
-  }, [liveRound.round_id]);
+  }, [liveRound.round_id, refreshQueueStats]);
 
   const saveProblem = async () => {
     if (!problemName.trim() || !problemStatement.trim()) {
@@ -580,6 +667,31 @@ export function AdminPanel({
         </section>
 
         <section className="rounded-xl border border-border bg-card p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-foreground">Cola de evaluación</h3>
+            {queueError ? (
+              <span className="inline-flex rounded-full bg-danger-soft px-2.5 py-1 text-xs font-medium text-danger">
+                Cola no disponible
+              </span>
+            ) : queueStats && queueStats.waiting === 0 ? (
+              <span className="inline-flex rounded-full bg-success-soft px-2.5 py-1 text-xs font-medium text-success">
+                Sin espera
+              </span>
+            ) : queueStats ? (
+              <span className="inline-flex rounded-full bg-info-soft px-2.5 py-1 text-xs font-medium text-info">
+                {queueStats.waiting} en espera
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-4">
+            <Stat label="En espera" value={queueStats?.waiting ?? "—"} />
+            <Stat label="Ejecutando" value={queueStats?.active ?? "—"} />
+            <Stat label="Completados" value={queueStats?.completed ?? "—"} />
+            <Stat label="Fallidos" value={queueStats?.failed ?? "—"} />
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground">Ranking y resultados</h3>
           <div className="mt-4 overflow-x-auto">
             <table className="w-full text-sm">
@@ -589,6 +701,7 @@ export function AdminPanel({
                   <th className="pb-3">Participante</th>
                   <th className="pb-3">Avance</th>
                   <th className="pb-3">Fallos</th>
+                  <th className="pb-3">Tiempo</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -598,6 +711,9 @@ export function AdminPanel({
                     <td className="py-2 font-mono">{entry.display_name}</td>
                     <td className="py-2">{entry.best_pass_percentage}%</td>
                     <td className="py-2">{entry.failed_attempts_count}</td>
+                    <td className="py-2 font-mono tabular-nums">
+                      {formatTotalTime(entry.total_time_seconds, entry.penalty_seconds)}
+                    </td>
                   </tr>
                 ))}
               </tbody>

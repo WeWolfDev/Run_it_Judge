@@ -19,6 +19,9 @@ async function requestJson(url, options) {
 const LANGUAGE_IDS = {
   python: 71,
   javascript: 63,
+  // GCC 9.2.0 de la instancia local. No usar 48/49/52/53 (GCC 7.4/8.3) ni 75/76 (Clang).
+  c: 50,
+  cpp: 54,
 };
 
 async function createSubmission(sourceCode, language, stdin = '') {

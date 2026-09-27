@@ -102,6 +102,9 @@ CREATE TABLE IF NOT EXISTS round_participants (
   PRIMARY KEY (round_id, participant_id)
 );
 
+-- 30 s por envío fallido antes de resolver. Solo desempata a igual solved_at.
+ALTER TABLE round_participants ADD COLUMN IF NOT EXISTS penalty_seconds INTEGER NOT NULL DEFAULT 0;
+
 CREATE TABLE IF NOT EXISTS submissions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   round_id UUID NOT NULL REFERENCES rounds(id),

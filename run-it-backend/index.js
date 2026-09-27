@@ -777,9 +777,9 @@ fastify.post('/rounds/:id/submissions', async (request, reply) => {
 		typeof code !== 'string' ||
 		code.length === 0 ||
 		code.length > 100_000 ||
-		!['python', 'javascript'].includes(language)
+		!['python', 'javascript', 'c', 'cpp'].includes(language)
 	) {
-		return reply.code(400).send({ error: 'Envío inválido: use Python o JavaScript y hasta 100000 caracteres' });
+		return reply.code(400).send({ error: 'Envío inválido: use Python, JavaScript, C o C++ y hasta 100000 caracteres' });
 	}
 	const recent = submissionRate.get(request.user.id) || 0;
 	if (Date.now() - recent < 1000) return reply.code(429).send({ error: 'Espera antes de enviar otra solución' });
@@ -791,7 +791,7 @@ fastify.post('/rounds/:id/submissions', async (request, reply) => {
 	if (!round.rowCount) return reply.code(409).send({ error: 'La ronda no está activa' });
 	if (round.rows[0].paused) return reply.code(409).send({ error: 'La ronda está pausada' });
 	const participant = await query(
-		`SELECT p.id FROM participants p
+		`SELECT p.id, p.display_name FROM participants p
 		 JOIN round_participants rp ON rp.participant_id = p.id AND rp.round_id = $1
 		 WHERE p.id = $2 AND p.user_id = $3 AND p.tournament_id = $4 AND p.status = 'active'`,
 		[request.params.id, participantId, request.user.id, round.rows[0].tournament_id],
@@ -824,6 +824,7 @@ fastify.post('/rounds/:id/submissions', async (request, reply) => {
 		id: queued.id,
 		round_id: queued.round_id,
 		participant_id: queued.participant_id,
+		display_name: participant.rows[0].display_name,
 		language: queued.language,
 		submitted_at: queued.submitted_at,
 		verdict: queued.verdict,
@@ -834,9 +835,15 @@ fastify.post('/rounds/:id/submissions', async (request, reply) => {
 
 fastify.get('/rounds/:id/leaderboard', async (request) => {
 	const result = await query(
-		`SELECT rp.*, p.display_name FROM round_participants rp
+		`SELECT rp.*, p.display_name,
+		        EXTRACT(EPOCH FROM rp.solved_at - r.started_at
+		          + rp.penalty_seconds * interval '1 second')::int AS total_time_seconds
+		 FROM round_participants rp
 		 JOIN participants p ON p.id = rp.participant_id
-		 WHERE rp.round_id = $1 ORDER BY rp.final_rank NULLS LAST, rp.best_pass_percentage DESC`,
+		 JOIN rounds r ON r.id = rp.round_id
+		 WHERE rp.round_id = $1
+		 ORDER BY rp.final_rank NULLS LAST, (rp.solved_at IS NULL), rp.solved_at ASC NULLS LAST,
+		 rp.best_pass_percentage DESC, rp.penalty_seconds ASC`,
 		[request.params.id],
 	);
 	return result.rows;
@@ -854,13 +861,33 @@ fastify.get('/rounds/:id/submissions', async (request, reply) => {
 	return result.rows;
 });
 
+fastify.get('/queue/stats', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	try {
+		const counts = await submissionQueue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed');
+		return {
+			waiting: counts.waiting ?? 0,
+			active: counts.active ?? 0,
+			completed: counts.completed ?? 0,
+			failed: counts.failed ?? 0,
+			delayed: counts.delayed ?? 0,
+		};
+	} catch (error) {
+		request.log.error(error, 'Queue stats failed');
+		return reply.code(503).send({ error: 'La cola no está disponible' });
+	}
+});
+
 fastify.get('/tournaments/:id/leaderboard', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
 	const result = await query(
 		`SELECT p.id AS participant_id, p.display_name,
 			MAX(rp.final_rank) FILTER (WHERE rp.final_rank IS NOT NULL) AS final_rank,
 			MAX(rp.best_pass_percentage) AS best_pass_percentage,
-			SUM(rp.failed_attempts_count)::int AS failed_attempts_count
+			SUM(rp.failed_attempts_count)::int AS failed_attempts_count,
+			SUM(rp.penalty_seconds)::int AS penalty_seconds,
+			SUM(EXTRACT(EPOCH FROM rp.solved_at - r.started_at
+			  + rp.penalty_seconds * interval '1 second'))::int AS total_time_seconds
 		 FROM participants p JOIN round_participants rp ON rp.participant_id = p.id
 		 JOIN rounds r ON r.id = rp.round_id
 		 WHERE r.tournament_id = $1
@@ -960,11 +987,17 @@ async function start() {
 		if (!updated.rowCount) return null;
 
 		const { round_id: roundId, participant_id: participantId } = submission;
+		// Un fallo solo cuenta mientras el participante no haya resuelto. En el SET,
+		// solved_at es el valor previo a este UPDATE, así que el contador y la
+		// penalización suben juntos en una sola sentencia.
 		await query(
 			`UPDATE round_participants
 			 SET best_pass_percentage = GREATEST(best_pass_percentage, $1),
 			     solved_at = CASE WHEN $2 THEN COALESCE(solved_at, now()) ELSE solved_at END,
-			     failed_attempts_count = failed_attempts_count + CASE WHEN $2 THEN 0 ELSE 1 END
+			     failed_attempts_count = failed_attempts_count
+			       + CASE WHEN NOT $2 AND solved_at IS NULL THEN 1 ELSE 0 END,
+			     penalty_seconds = penalty_seconds
+			       + CASE WHEN NOT $2 AND solved_at IS NULL THEN 30 ELSE 0 END
 			 WHERE round_id = $3 AND participant_id = $4`,
 			[total ? Math.round((passed * 10000) / total) / 100 : 0, solved, roundId, participantId],
 		);
@@ -1068,10 +1101,10 @@ async function closeRound(roundId) {
 
 		await client.query("UPDATE rounds SET status = 'closing' WHERE id = $1", [roundId]);
 		const ranking = await client.query(
-			`SELECT participant_id, best_pass_percentage, solved_at, failed_attempts_count
+			`SELECT participant_id, best_pass_percentage, solved_at, failed_attempts_count, penalty_seconds
 			 FROM round_participants WHERE round_id = $1
 			 ORDER BY (solved_at IS NULL), solved_at ASC NULLS LAST,
-			 best_pass_percentage DESC, failed_attempts_count ASC, participant_id`,
+			 best_pass_percentage DESC, penalty_seconds ASC, failed_attempts_count ASC, participant_id`,
 			[roundId],
 		);
 		const ranked = ranking.rows.map((row, index) => ({ ...row, rank: index + 1 }));

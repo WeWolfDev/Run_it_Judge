@@ -9,10 +9,48 @@ import {
   setSelectedCharacter as saveSelectedCharacter,
 } from "@/lib/session";
 
-const STARTER = `def max_sliding_window(nums, k):
-    # tu solución aquí
-    return []
-`;
+// Las claves coinciden con LANGUAGE_IDS de judge0-client.js. "cpp", no "c++".
+const LANGUAGES = {
+  python: { label: "Python 3", file: "solution.py" },
+  javascript: { label: "JavaScript", file: "solution.js" },
+  c: { label: "C", file: "solution.c" },
+  cpp: { label: "C++", file: "solution.cpp" },
+} as const;
+
+type Language = keyof typeof LANGUAGES;
+
+// Se muestran como placeholder del textarea vacío, nunca como su valor: así el
+// participante no puede enviar la plantilla sin querer.
+const PLACEHOLDERS: Record<Language, string> = {
+  python: `import sys
+def main():
+    # Lee desde la entrada estándar (stdin)
+    # --- ESCRIBE TU LÓGICA AQUÍ ---
+    pass
+if __name__ == '__main__':
+    main()`,
+  javascript: `const fs = require('fs');
+function main() {
+    // Lee desde la entrada estándar (stdin)
+    const input = fs.readFileSync(0, 'utf-8').trim().split(/\\s+/);
+    if (input.length === 0 || input[0] === '') return;
+    // --- ESCRIBE TU LÓGICA AQUÍ ---
+}
+main();`,
+  c: `#include <stdio.h>
+int main() {
+    // --- ESCRIBE TU LÓGICA AQUÍ ---
+    return 0;
+}`,
+  cpp: `#include <iostream>
+using namespace std;
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(NULL);
+    // --- ESCRIBE TU LÓGICA AQUÍ ---
+    return 0;
+}`,
+};
 
 const CHARACTERS = [
   { name: "Aurora", title: "La veloz", silk: 0 },
@@ -42,8 +80,8 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
   const [participantId, setParticipantId] = useState("");
   const displayedRound = activeRound;
   const remaining = useRoundTimer(displayedRound.ends_at);
-  const [code, setCode] = useState(STARTER);
-  const [language, setLanguage] = useState("python");
+  const [code, setCode] = useState("");
+  const [language, setLanguage] = useState<Language>("python");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const username = getSession()?.username || "demo";
@@ -52,6 +90,10 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
   );
 
   const send = async () => {
+    if (!code.trim()) {
+      setMessage("Escribe tu solución antes de enviar.");
+      return;
+    }
     setSending(true);
     setMessage("");
     try {
@@ -163,17 +205,21 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
           <div className="flex items-center justify-between border-b border-editor-border px-4 py-2.5">
             <select
               value={language}
-              onChange={(event) => setLanguage(event.target.value)}
+              onChange={(event) => setLanguage(event.target.value as Language)}
               className="rounded-md border border-editor-border bg-editor px-2 py-1 font-mono text-xs text-editor-foreground outline-none"
             >
-              <option value="python">Python 3</option>
-              <option value="javascript">JavaScript</option>
+              {(Object.keys(LANGUAGES) as Language[]).map((key) => (
+                <option key={key} value={key}>
+                  {LANGUAGES[key].label}
+                </option>
+              ))}
             </select>
-            <span className="font-mono text-xs text-editor-muted">solution.py</span>
+            <span className="font-mono text-xs text-editor-muted">{LANGUAGES[language].file}</span>
           </div>
           <textarea
             value={code}
             onChange={(e) => setCode(e.target.value)}
+            placeholder={PLACEHOLDERS[language]}
             spellCheck={false}
             className="h-96 w-full resize-none bg-editor px-4 py-3 font-mono text-sm text-editor-foreground outline-none"
           />
