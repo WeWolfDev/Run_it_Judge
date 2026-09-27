@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createSocketFeed,
   formatClock,
-  SILK_COUNT,
   type Participant,
   type RoundStartedEvent,
 } from "@/lib/runit";
@@ -25,7 +24,8 @@ function toRunner(participant: ActiveRound["participants"][number], index: numbe
     participant_id: participant.participant_id,
     name: participant.name,
     lane: index + 1,
-    silk: index % SILK_COUNT,
+    // El personaje que eligió el participante; se guarda en participants.character.
+    silk: participant.character,
     test_cases_passed: Number(participant.best_pass_percentage),
     test_cases_total: 100,
     attempts: participant.failed_attempts_count,
@@ -109,27 +109,12 @@ export function RaceTrack({ round, participants, live = true }: RaceTrackProps) 
         ),
       );
     });
-    // Se muestra apenas se inscribe, sin esperar a que envíe código.
+    // Se muestra apenas se inscribe, sin esperar a que envíe código. El evento no
+    // trae el personaje: se relee la ronda para pintarlo con su color.
     feed.on("participant:joined", (e) => {
       if (e.round_id !== roundIdRef.current) return;
-      setRunners((prev) =>
-        prev.some((p) => p.participant_id === e.participant_id)
-          ? prev
-          : [
-              ...prev,
-              {
-                participant_id: e.participant_id,
-                name: e.name,
-                lane: prev.length + 1,
-                silk: prev.length % SILK_COUNT,
-                test_cases_passed: 0,
-                test_cases_total: 100,
-                attempts: 0,
-                solved: false,
-                status: "racing",
-              },
-            ],
-      );
+      if (runnersRef.current.some((p) => p.participant_id === e.participant_id)) return;
+      setReloadKey((key) => key + 1);
     });
     feed.on("round:started", (e) => {
       if (e.round_id !== roundIdRef.current) setReloadKey((key) => key + 1);

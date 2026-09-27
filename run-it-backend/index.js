@@ -90,6 +90,8 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:8080,ht
 const ACCESS_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const ACCESS_CODE_LENGTH = 6;
 const ACCESS_CODE_MAX_COUNT = 500;
+// Igual que CHARACTER_COUNT de frontend/src/lib/session.ts y silk-{0..9} de styles.css.
+const CHARACTER_COUNT = 10;
 
 function generateAccessCode() {
 	let code = '';
@@ -363,12 +365,18 @@ fastify.post('/rounds/:id/participants/join', async (request, reply) => {
 	const round = await query("SELECT * FROM rounds WHERE id = $1 AND status IN ('pending', 'active')", [request.params.id]);
 	if (!round.rowCount) return reply.code(409).send({ error: 'La ronda no está disponible' });
 	const displayName = request.body?.displayName || request.user.username;
+	// Fuera de rango se guarda 0 en vez de rechazar: un personaje mal formado no
+	// puede impedir la entrada a la ronda.
+	const requested = Number(request.body?.character);
+	const character = Number.isInteger(requested) && requested >= 0 && requested < CHARACTER_COUNT ? requested : 0;
+	// character no se actualiza en el conflicto: se fija en la primera
+	// inscripción al torneo y las rondas siguientes lo heredan.
 	const participant = await query(
-		`INSERT INTO participants (tournament_id, user_id, display_name)
-		 VALUES ($1, $2, $3)
+		`INSERT INTO participants (tournament_id, user_id, display_name, character)
+		 VALUES ($1, $2, $3, $4)
 		 ON CONFLICT (tournament_id, user_id) DO UPDATE SET display_name = EXCLUDED.display_name
 		 RETURNING *`,
-		[round.rows[0].tournament_id, request.user.id, displayName],
+		[round.rows[0].tournament_id, request.user.id, displayName, character],
 	);
 	// El upsert no toca status: un eliminado sigue eliminado. Sin este corte
 	// entraría a la ronda siguiente y closeRound lo rankearía contra los activos.
@@ -785,7 +793,7 @@ fastify.get('/public/rounds/active', async () => {
 	if (!result.rowCount) return null;
 	const round = result.rows[0];
 	const participants = await query(
-		`SELECT rp.participant_id, p.display_name AS name, rp.best_pass_percentage,
+		`SELECT rp.participant_id, p.display_name AS name, p.character, rp.best_pass_percentage,
 		        rp.solved_at, rp.failed_attempts_count
 		 FROM round_participants rp JOIN participants p ON p.id = rp.participant_id
 		 WHERE rp.round_id = $1 ORDER BY p.display_name`,

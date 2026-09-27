@@ -8,6 +8,9 @@ export interface Session {
 
 const SESSION_KEY = "run-it-session";
 const CHARACTER_KEY_PREFIX = "run-it-character:";
+// Clave aparte: el personaje guardado no alcanza para saber si ya eligió,
+// porque 0 (ausente) y 0 (eligió Aurora) son el mismo valor.
+const CHARACTER_CONFIRMED_KEY_PREFIX = "run-it-character-confirmed:";
 export const CHARACTER_COUNT = 10;
 
 export function getSession(): Session | null {
@@ -45,4 +48,14 @@ export function getSelectedCharacter(username: string) {
 
 export function setSelectedCharacter(username: string, character: number) {
   window.localStorage.setItem(`${CHARACTER_KEY_PREFIX}${username}`, String(character));
+}
+
+export function getCharacterConfirmed(username: string) {
+  if (typeof window === "undefined") return false;
+
+  return window.localStorage.getItem(`${CHARACTER_CONFIRMED_KEY_PREFIX}${username}`) === "1";
+}
+
+export function setCharacterConfirmed(username: string) {
+  window.localStorage.setItem(`${CHARACTER_CONFIRMED_KEY_PREFIX}${username}`, "1");
 }
