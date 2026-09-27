@@ -98,7 +98,9 @@ export function AdminPanel({
   const [problemName, setProblemName] = useState("");
   const [problemStatement, setProblemStatement] = useState("");
   const [problemDifficulty, setProblemDifficulty] = useState<"easy" | "medium" | "hard">("easy");
-  const [expectedOutput, setExpectedOutput] = useState("");
+  const [testCases, setTestCases] = useState<Array<{ stdin: string; expected: string }>>([
+    { stdin: "", expected: "" },
+  ]);
   const [savingProblem, setSavingProblem] = useState(false);
   const [problems, setProblems] = useState<Array<{ id: string; name: string; difficulty: string }>>(
     [],
@@ -269,8 +271,15 @@ export function AdminPanel({
   }, [liveRound.round_id]);
 
   const saveProblem = async () => {
-    if (!problemName.trim() || !problemStatement.trim() || !expectedOutput.trim()) {
-      setMessage("Completa el nombre, el enunciado y la salida esperada.");
+    if (!problemName.trim() || !problemStatement.trim()) {
+      setMessage("Completa el nombre y el enunciado.");
+      return;
+    }
+    const incomplete = testCases.findIndex(
+      (testCase) => !testCase.stdin.trim() || !testCase.expected.trim(),
+    );
+    if (incomplete !== -1) {
+      setMessage(`Completa la entrada y la salida esperada del caso ${incomplete + 1}.`);
       return;
     }
     setSavingProblem(true);
@@ -279,13 +288,13 @@ export function AdminPanel({
         name: problemName.trim(),
         statement: problemStatement.trim(),
         difficulty: problemDifficulty,
-        testCases: [{ stdin: "", expected: expectedOutput.trim() }],
+        testCases,
       });
       setProblems((current) => [created, ...current]);
       setSelectedProblem(created.id);
       setProblemName("");
       setProblemStatement("");
-      setExpectedOutput("");
+      setTestCases([{ stdin: "", expected: "" }]);
       setMessage(`Problema “${created.name}” creado y seleccionado.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo crear el problema");
@@ -532,7 +541,8 @@ export function AdminPanel({
         <section className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground">Crear problema</h3>
           <p className="mt-2 text-xs text-muted-foreground">
-            La versión actual evalúa el primer caso contra una salida esperada.
+            Cada caso define una entrada y su salida esperada. Solo se acepta la solución que pasa
+            todos los casos.
           </p>
           <form
             className="mt-4 space-y-3"
@@ -571,20 +581,70 @@ export function AdminPanel({
                 className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 outline-none focus:border-ring"
               >
                 <option value="easy">Fácil</option>
-                <option value="medium">Media</option>
+                <option value="medium">Intermedio</option>
                 <option value="hard">Difícil</option>
               </select>
             </label>
-            <label className="block text-sm">
-              <span className="text-muted-foreground">Salida esperada</span>
-              <input
-                value={expectedOutput}
-                onChange={(event) => setExpectedOutput(event.target.value)}
-                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:border-ring"
-                placeholder="Hola mundo"
-                maxLength={1000}
-              />
-            </label>
+            <div className="space-y-2 text-sm">
+              <span className="text-muted-foreground">Casos de prueba</span>
+              {testCases.map((testCase, index) => (
+                <div key={index} className="space-y-2 rounded-lg border border-border p-3">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-medium text-foreground">Caso {index + 1}</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setTestCases((current) => current.filter((_, i) => i !== index))
+                      }
+                      disabled={testCases.length === 1}
+                      className="text-muted-foreground transition-colors hover:text-destructive disabled:opacity-50"
+                    >
+                      Quitar
+                    </button>
+                  </div>
+                  <label className="block text-xs">
+                    <span className="text-muted-foreground">Entrada (stdin)</span>
+                    <textarea
+                      value={testCase.stdin}
+                      onChange={(event) =>
+                        setTestCases((current) =>
+                          current.map((item, i) =>
+                            i === index ? { ...item, stdin: event.target.value } : item,
+                          ),
+                        )
+                      }
+                      className="mt-1 min-h-12 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:border-ring"
+                      placeholder="Mundo"
+                      maxLength={1000}
+                    />
+                  </label>
+                  <label className="block text-xs">
+                    <span className="text-muted-foreground">Salida esperada</span>
+                    <textarea
+                      value={testCase.expected}
+                      onChange={(event) =>
+                        setTestCases((current) =>
+                          current.map((item, i) =>
+                            i === index ? { ...item, expected: event.target.value } : item,
+                          ),
+                        )
+                      }
+                      className="mt-1 min-h-12 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:border-ring"
+                      placeholder="Hola Mundo"
+                      maxLength={1000}
+                    />
+                  </label>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => setTestCases((current) => [...current, { stdin: "", expected: "" }])}
+                disabled={testCases.length >= 50}
+                className="w-full rounded-lg border border-dashed border-border px-4 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:opacity-50"
+              >
+                Agregar caso
+              </button>
+            </div>
             <button
               type="submit"
               disabled={savingProblem}

@@ -115,5 +115,8 @@ CREATE TABLE IF NOT EXISTS submissions (
   judge0_token TEXT
 );
 
+-- Detalle por caso: [{ "passed": bool, "status": text }], sin stdin ni expected.
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS case_results JSONB NOT NULL DEFAULT '[]'::jsonb;
+
 CREATE INDEX IF NOT EXISTS rounds_active_idx ON rounds(status);
 CREATE INDEX IF NOT EXISTS submissions_participant_idx ON submissions(participant_id, submitted_at);

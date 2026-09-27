@@ -229,6 +229,7 @@ export async function getRoundSubmissions(roundId: string) {
       verdict: string;
       test_cases_passed: number;
       test_cases_total: number;
+      case_results: Array<{ passed: boolean; status: string }>;
       submitted_at: string;
     }>
   >;

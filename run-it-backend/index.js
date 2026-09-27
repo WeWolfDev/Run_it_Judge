@@ -278,9 +278,20 @@ fastify.get('/problems', async () => {
 
 fastify.post('/problems', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
-	const { name, statement, difficulty = 'easy', testCases = [] } = request.body || {};
-	if (!name || !statement || !Array.isArray(testCases)) {
-		return reply.code(400).send({ error: 'name, statement y testCases son obligatorios' });
+	const { name, statement, difficulty = 'easy', testCases } = request.body || {};
+	if (!name || !statement) {
+		return reply.code(400).send({ error: 'name y statement son obligatorios' });
+	}
+	if (!Array.isArray(testCases) || testCases.length === 0) {
+		return reply.code(400).send({ error: 'testCases debe ser una lista con al menos un caso' });
+	}
+	if (testCases.length > 50) {
+		return reply.code(400).send({ error: 'testCases admite como máximo 50 casos' });
+	}
+	const invalidIndex = testCases.findIndex((testCase) => typeof testCase?.stdin !== 'string'
+		|| typeof testCase?.expected !== 'string');
+	if (invalidIndex !== -1) {
+		return reply.code(400).send({ error: `El caso ${invalidIndex + 1} debe tener stdin y expected como texto` });
 	}
 	const result = await query(
 		`INSERT INTO problems (name, statement, difficulty, test_cases)
@@ -835,7 +846,7 @@ fastify.get('/rounds/:id/submissions', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
 	const result = await query(
 		`SELECT s.id, s.participant_id, p.display_name, s.language, s.verdict,
-		        s.test_cases_passed, s.test_cases_total, s.submitted_at
+		        s.test_cases_passed, s.test_cases_total, s.case_results, s.submitted_at
 		 FROM submissions s JOIN participants p ON p.id = s.participant_id
 		 WHERE s.round_id = $1 ORDER BY s.submitted_at DESC LIMIT 200`,
 		[request.params.id],
@@ -896,13 +907,23 @@ async function start() {
 			return next(new Error('Sesión no disponible'));
 		}
 	});
-	const submissionWorker = startSubmissionWorker(async ({ submissionId, result, token }) => {
+	const loadTestCases = async ({ submissionId }) => {
+		const problem = await query(
+			`SELECT p.test_cases FROM submissions s
+			 JOIN rounds r ON r.id = s.round_id
+			 JOIN problems p ON p.id = r.problem_id
+			 WHERE s.id = $1 AND s.verdict = 'queued'`,
+			[submissionId],
+		);
+		if (!problem.rowCount) return null;
+		return Array.isArray(problem.rows[0].test_cases) ? problem.rows[0].test_cases : [];
+	};
+	const submissionWorker = startSubmissionWorker(loadTestCases, async ({ submissionId, testCases, results }) => {
 		const submissionRow = await query(
-			`SELECT s.round_id, s.participant_id, s.verdict, p.test_cases,
+			`SELECT s.round_id, s.participant_id, s.verdict,
 			        r.status AS round_status, r.ends_at, r.paused
 			 FROM submissions s
 			 JOIN rounds r ON r.id = s.round_id
-			 JOIN problems p ON p.id = r.problem_id
 			 WHERE s.id = $1`,
 			[submissionId],
 		);
@@ -914,18 +935,27 @@ async function start() {
 				[submissionId],
 			).then((updateResult) => updateResult.rows[0] || null);
 		}
-		const testCases = Array.isArray(submission.test_cases) ? submission.test_cases : [];
-		const expected = (testCases[0]?.expected ?? '').toString().trim();
-		const actual = result.stdout?.toString().trim() ?? '';
-		const passed = result.status?.id === 3 && expected !== '' && actual === expected ? 1 : 0;
-		const verdict = passed === 1
+		const caseResults = results.map(({ result }, index) => {
+			const expected = (testCases[index]?.expected ?? '').toString().trim();
+			const actual = result.stdout?.toString().trim() ?? '';
+			const passed = result.status?.id === 3 && actual === expected;
+			const status = passed
+				? 'accepted'
+				: (result.status?.id === 3 ? 'Wrong Answer' : (result.status?.description || 'rejected'));
+			return { passed, status };
+		});
+		const total = caseResults.length;
+		const passed = caseResults.filter((caseResult) => caseResult.passed).length;
+		const solved = total > 0 && passed === total;
+		// Accepted solo con todos los casos. Si no, el veredicto es el del primer caso fallido.
+		const verdict = solved
 			? 'accepted'
-			: (result.status?.description || 'rejected');
+			: (caseResults.find((caseResult) => !caseResult.passed)?.status || 'no_test_cases');
 		const updated = await query(
 			`UPDATE submissions SET verdict = $1, judge0_token = $2,
-				test_cases_passed = $3, test_cases_total = 1
-			 WHERE id = $4 AND verdict = 'queued' RETURNING *`,
-			[verdict, token, passed, submissionId],
+				test_cases_passed = $3, test_cases_total = $4, case_results = $5::jsonb
+			 WHERE id = $6 AND verdict = 'queued' RETURNING *`,
+			[verdict, results.at(-1)?.token ?? null, passed, total, JSON.stringify(caseResults), submissionId],
 		);
 		if (!updated.rowCount) return null;
 
@@ -936,7 +966,7 @@ async function start() {
 			     solved_at = CASE WHEN $2 THEN COALESCE(solved_at, now()) ELSE solved_at END,
 			     failed_attempts_count = failed_attempts_count + CASE WHEN $2 THEN 0 ELSE 1 END
 			 WHERE round_id = $3 AND participant_id = $4`,
-			[passed * 100, passed === 1, roundId, participantId],
+			[total ? Math.round((passed * 10000) / total) / 100 : 0, solved, roundId, participantId],
 		);
 		const capacityResult = await query('SELECT capacity FROM rounds WHERE id = $1', [roundId]);
 		const solvedResult = await query(
@@ -950,8 +980,9 @@ async function start() {
 		const progress = {
 			participant_id: submission.participant_id,
 			test_cases_passed: passed,
-			test_cases_total: 1,
-			solved: passed === 1,
+			test_cases_total: total,
+			case_results: caseResults,
+			solved,
 		};
 		fastify.io?.to(`round:${submission.round_id}`).emit('participant:progress', progress);
 		fastify.io?.emit('participant:progress', progress);
