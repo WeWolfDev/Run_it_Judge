@@ -42,10 +42,20 @@ async function createSubmission(sourceCode, language, stdin = '') {
   });
 }
 
+// GCC escribe comillas tipográficas en compile_output y Judge0 se niega a
+// devolverlas en texto plano (400 "cannot be converted to UTF-8").
+const BASE64_FIELDS = ['source_code', 'stdin', 'expected_output', 'stdout', 'stderr', 'compile_output', 'message'];
+
 async function getSubmission(token) {
-  return requestJson(
-    `${JUDGE0_URL}/submissions/${encodeURIComponent(token)}?base64_encoded=false`,
+  const submission = await requestJson(
+    `${JUDGE0_URL}/submissions/${encodeURIComponent(token)}?base64_encoded=true`,
   );
+  for (const field of BASE64_FIELDS) {
+    if (typeof submission[field] === 'string') {
+      submission[field] = Buffer.from(submission[field], 'base64').toString('utf8');
+    }
+  }
+  return submission;
 }
 
 async function waitForSubmission(token, options = {}) {
