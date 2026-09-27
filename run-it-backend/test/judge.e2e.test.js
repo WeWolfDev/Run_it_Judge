@@ -250,7 +250,8 @@ async function waitVerdict(submissionId, timeoutMs = VERDICT_TIMEOUT_MS) {
 
 async function roundParticipant(roundId, participantId) {
 	const { rows } = await state.db.query(
-		`SELECT rp.penalty_seconds, rp.failed_attempts_count, rp.solved_at, r.started_at
+		`SELECT rp.penalty_seconds, rp.failed_attempts_count, rp.solved_at,
+		        COALESCE(r.starts_at, r.started_at) AS started_at
 		 FROM round_participants rp JOIN rounds r ON r.id = rp.round_id
 		 WHERE rp.round_id = $1 AND rp.participant_id = $2`,
 		[roundId, participantId],
@@ -303,9 +304,15 @@ test('preparación: torneo, tres rondas y cinco participantes en run_it_dev', { 
 	state.participants.hundred = await enroll('cien', codes[3].code, [state.hundredRound.id]);
 	state.participants.penalty = await enroll('penal', codes[4].code, [state.penaltyRound.id]);
 
+	// POST /rounds/:id/start abre una cuenta regresiva: hasta starts_at el
+	// backend rechaza los envíos con 409. Mismo host, mismo reloj.
+	let startsAt = 0;
 	for (const roundId of state.rounds) {
-		await api('POST', `/rounds/${roundId}/start`, {}, state.adminToken);
+		const started = await api('POST', `/rounds/${roundId}/start`, {}, state.adminToken);
+		startsAt = Math.max(startsAt, Date.parse(started.starts_at ?? '') || 0);
 	}
+	const wait = startsAt - Date.now() + 250;
+	if (wait > 0) await sleep(wait);
 });
 
 for (const language of Object.keys(PROGRAMS)) {
@@ -396,8 +403,9 @@ test('penalización: WA, TLE, AC y un fallo posterior que no suma', { skip }, as
 
 	const leaderboard = await api('GET', `/rounds/${roundId}/leaderboard`);
 	const entry = leaderboard.find((item) => item.participant_id === participant.participantId);
+	// El tiempo corre desde el fin de la cuenta regresiva (starts_at).
 	const elapsed = (new Date(row.solved_at) - new Date(row.started_at)) / 1000;
-	t.diagnostic(`solved_at - started_at = ${elapsed.toFixed(3)} s; total_time_seconds = ${entry.total_time_seconds}`);
+	t.diagnostic(`solved_at - starts_at = ${elapsed.toFixed(3)} s; total_time_seconds = ${entry.total_time_seconds}`);
 	assert.equal(entry.total_time_seconds, Math.round(elapsed + 60));
 	assert.equal(entry.penalty_seconds, 60);
 
