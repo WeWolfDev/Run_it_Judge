@@ -59,6 +59,9 @@ const CODE_STATUS_CLASS: Record<AccessCode["status"], string> = {
   expired: "bg-muted text-muted-foreground",
 };
 
+// Valor de la option que abre el formulario inline. No es un nombre de torneo.
+const NEW_TOURNAMENT_OPTION = "__nuevo_torneo__";
+
 function formatExpiry(iso: string) {
   const minutes = Math.round((new Date(iso).getTime() - Date.now()) / 60000);
   if (minutes <= 0) return "vencido";
@@ -109,7 +112,12 @@ export function AdminPanel({
   const [problems, setProblems] = useState<Array<{ id: string; name: string; difficulty: string }>>(
     [],
   );
-  const [tournamentName, setTournamentName] = useState("Run It");
+  // Arranca vacío: el select muestra "Sin torneo seleccionado". Con un nombre
+  // por defecto, saveRound crearía un torneo que el select no refleja.
+  const [tournamentName, setTournamentName] = useState("");
+  const [creatingTournament, setCreatingTournament] = useState(false);
+  const [newTournamentName, setNewTournamentName] = useState("");
+  const [savingTournament, setSavingTournament] = useState(false);
   const [selectedProblem, setSelectedProblem] = useState("");
   const [roundNumber, setRoundNumber] = useState(1);
   const [capacity, setCapacity] = useState(4);
@@ -383,6 +391,44 @@ export function AdminPanel({
       setMessage(error instanceof Error ? error.message : "No se pudo crear la ronda");
     } finally {
       setSavingRound(false);
+    }
+  };
+
+  // Crea el torneo desde "Configurar ronda" y lo deja elegido en el select. Solo
+  // toca tournamentName: la resolución por nombre de saveRound sigue siendo la
+  // única fuente de verdad, y el resto del formulario se conserva.
+  const saveTournament = async () => {
+    const name = newTournamentName.trim();
+    if (!name) {
+      setMessage("Indica un nombre para el torneo.");
+      return;
+    }
+    const existing = tournaments.find((t) => t.name === name && t.status !== "finished");
+    if (existing) {
+      setTournamentName(existing.name);
+      setNewTournamentName("");
+      setCreatingTournament(false);
+      setMessage(`El torneo "${name}" ya existe. Quedó seleccionado.`);
+      return;
+    }
+    setSavingTournament(true);
+    try {
+      const created = await createTournament(name);
+      // Se agrega ya a la lista para que el select tenga la option antes de que
+      // vuelva el refresco.
+      setTournaments((current) => [
+        { id: created.id, name: created.name, status: "pending" },
+        ...current,
+      ]);
+      setTournamentName(created.name);
+      setNewTournamentName("");
+      setCreatingTournament(false);
+      setMessage(`Torneo "${created.name}" creado.`);
+      void refreshTournaments();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo crear el torneo");
+    } finally {
+      setSavingTournament(false);
     }
   };
 
@@ -999,12 +1045,76 @@ export function AdminPanel({
           <div className="mt-4 space-y-4">
             <label className="block text-sm">
               <span className="text-muted-foreground">Nombre del torneo</span>
-              <input
-                value={tournamentName}
-                onChange={(event) => setTournamentName(event.target.value)}
+              <select
+                value={creatingTournament ? NEW_TOURNAMENT_OPTION : tournamentName}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value === NEW_TOURNAMENT_OPTION) {
+                    // Sin torneo elegido mientras se crea: si el admin guarda la
+                    // ronda antes, saveRound pide el nombre en vez de usar el
+                    // anterior en silencio.
+                    setTournamentName("");
+                    setCreatingTournament(true);
+                    return;
+                  }
+                  setCreatingTournament(false);
+                  setTournamentName(value);
+                }}
                 className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
-              />
+              >
+                <option value="">
+                  {tournaments.length === 0
+                    ? "No hay torneos. Creá el primero para empezar."
+                    : "Sin torneo seleccionado"}
+                </option>
+                {tournaments.map((tournament) =>
+                  tournament.status === "finished" ? (
+                    <option key={tournament.id} value={`finished:${tournament.id}`} disabled>
+                      {tournament.name} (finalizado)
+                    </option>
+                  ) : (
+                    <option key={tournament.id} value={tournament.name}>
+                      {tournament.name}
+                    </option>
+                  ),
+                )}
+                <option value={NEW_TOURNAMENT_OPTION}>+ Crear nuevo torneo</option>
+              </select>
             </label>
+            {(creatingTournament || tournaments.length === 0) && (
+              <div className="space-y-2">
+                <input
+                  value={newTournamentName}
+                  onChange={(event) => setNewTournamentName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void saveTournament();
+                  }}
+                  placeholder="Nombre del nuevo torneo"
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={savingTournament}
+                    onClick={() => void saveTournament()}
+                    className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-opacity hover:opacity-70 disabled:opacity-50"
+                  >
+                    {savingTournament ? "Creando..." : "Crear"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={savingTournament}
+                    onClick={() => {
+                      setNewTournamentName("");
+                      setCreatingTournament(false);
+                    }}
+                    className="rounded-lg border border-danger px-3 py-1.5 text-xs font-medium text-danger transition-opacity hover:opacity-70 disabled:opacity-50"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
             <label className="block text-sm">
               <span className="text-muted-foreground">Problema</span>
               <select
