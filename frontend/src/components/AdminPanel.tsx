@@ -27,7 +27,15 @@ import {
   type AccessCode,
   type NextRoundPreview,
 } from "@/lib/api";
-import { createSocketFeed } from "@/lib/runit";
+import {
+  createSocketFeed,
+  formatTime,
+  LANGUAGE_LABEL,
+  mergeSubmissions,
+  upsertSubmission,
+  verdictLabel,
+  verdictTone,
+} from "@/lib/runit";
 import { getSessionToken } from "@/lib/session";
 
 // GET /tournaments/:id/rounds agrega los conteos; el tipo de api.ts no los declara.
@@ -55,16 +63,11 @@ type SubmissionRow = {
   submitted_at: string;
 };
 
-// Lo emite POST /rounds/:id/submissions y el worker cuando un job falla.
-type SubmissionQueuedEvent = {
-  id: string;
-  round_id: string;
-  participant_id: string;
-  display_name?: string;
-  language?: string;
-  submitted_at?: string;
-  verdict: string;
-};
+const VERDICT_TONE_CLASS = {
+  pending: "text-info",
+  success: "text-success",
+  danger: "text-danger",
+} as const;
 
 async function fetchQueueStats(): Promise<QueueStats> {
   const token = getSessionToken();
@@ -206,7 +209,13 @@ export function AdminPanel({
   const displayedRound = liveRound;
   const serverOffsetMs = useServerClockOffset(setMessage);
   const remaining = useRoundTimer(displayedRound?.ends_at ?? 0, serverOffsetMs);
+  const untilStart = useRoundTimer(displayedRound?.starts_at ?? 0, serverOffsetMs);
   const liveRoundId = displayedRound ? String(displayedRound.round_id) : "";
+  // Id de la última ronda que el servidor dio por cerrada. Se compara contra la
+  // mostrada: si el panel adopta otra ronda, deja de aplicar solo.
+  const [closedRoundId, setClosedRoundId] = useState("");
+  const roundClosed = liveRoundId !== "" && closedRoundId === liveRoundId;
+  const countingDown = !roundClosed && untilStart > 0;
 
   const filtered = useMemo(
     () => liveParticipants.filter((p) => p.name.toLowerCase().includes(query.toLowerCase())),
@@ -300,6 +309,7 @@ export function AdminPanel({
           setLiveRound({
             round_id: remote.id,
             ends_at: new Date(remote.ends_at).getTime(),
+            starts_at: remote.starts_at ? new Date(remote.starts_at).getTime() : 0,
             problem: remote.problem_name,
             capacity: remote.capacity,
           });
@@ -318,9 +328,6 @@ export function AdminPanel({
           );
           void getRoundLeaderboard(remote.id)
             .then(setLeaderboard)
-            .catch(() => undefined);
-          void getRoundSubmissions(remote.id)
-            .then(setSubmissions)
             .catch(() => undefined);
         })
         .catch(() => setMessage("No se pudo cargar la ronda activa.")),
@@ -365,42 +372,79 @@ export function AdminPanel({
 
   useEffect(() => {
     const roundId = socketRoundId ?? "";
+    let cancelled = false;
+    // La cola es de una sola ronda: al cambiar se vacía y se vuelve a sembrar.
+    setSubmissions([]);
+    // Siembra desde la base. Cubre lo enviado antes de abrir el panel y lo que
+    // se perdió con el socket caído: se llama en cada (re)conexión.
+    const seedSubmissions = () => {
+      if (!roundId) return;
+      void getRoundSubmissions(roundId)
+        .then((rows) => {
+          if (!cancelled) setSubmissions((current) => mergeSubmissions(current, rows));
+        })
+        .catch(() => {
+          if (!cancelled) setMessage("No se pudo cargar la cola de envíos.");
+        });
+    };
     // Sin ronda el socket igual se conecta, para enterarse de round:started.
     const feed = createSocketFeed(socketRoundId);
-    if (!feed) return;
-    // RunItEvents (runit.ts) no declara submission:queued; se tipa aquí.
-    const onAny = feed.on as unknown as (
-      event: string,
-      handler: (payload: unknown) => void,
-    ) => void;
-    onAny("submission:queued", (payload) => {
-      const event = payload as SubmissionQueuedEvent;
+    if (!feed) {
+      seedSubmissions();
+      return () => {
+        cancelled = true;
+      };
+    }
+    feed.on("feed:connected", seedSubmissions);
+    // submission:queued sale a todos los sockets, de cualquier ronda: el filtro
+    // evita mezclar la cola con la de otro torneo.
+    feed.on("submission:queued", (event) => {
+      // Sin ronda conocida, un envío en cola significa que hay una ronda activa
+      // que el panel no cargó: se adopta, y su cola se siembra al cambiar.
+      if (!roundId) {
+        loadActiveRound();
+        return;
+      }
       if (event.round_id !== roundId) return;
-      setSubmissions((current) => {
-        // El worker reemite el mismo id con verdict judge_error: se actualiza la fila.
-        if (current.some((row) => row.id === event.id)) {
-          return current.map((row) =>
-            row.id === event.id ? { ...row, verdict: event.verdict } : row,
-          );
-        }
-        const row: SubmissionRow = {
+      const { display_name: displayName, language, submitted_at: submittedAt } = event;
+      // El worker reemite judge_error sin nombre: solo actualiza una fila existente.
+      if (displayName && language && submittedAt) {
+        setSubmissions((current) =>
+          upsertSubmission(current, {
+            id: event.id,
+            display_name: displayName,
+            language,
+            verdict: event.verdict,
+            test_cases_passed: 0,
+            test_cases_total: 0,
+            submitted_at: submittedAt,
+          }),
+        );
+      } else {
+        setSubmissions((current) =>
+          current.map((row) => (row.id === event.id ? { ...row, verdict: event.verdict } : row)),
+        );
+      }
+      refreshQueueStats();
+    });
+    // El veredicto final, por id de envío.
+    feed.on("submission:judged", (event) => {
+      if (event.round_id !== roundId) return;
+      setSubmissions((current) =>
+        upsertSubmission(current, {
           id: event.id,
-          display_name: event.display_name ?? event.participant_id.slice(0, 8),
-          language: event.language ?? "",
+          display_name: event.display_name,
+          language: event.language,
           verdict: event.verdict,
-          test_cases_passed: 0,
-          test_cases_total: 0,
-          submitted_at: event.submitted_at ?? new Date().toISOString(),
-        };
-        return [row, ...current];
-      });
+          test_cases_passed: event.test_cases_passed,
+          test_cases_total: event.test_cases_total,
+          submitted_at: event.submitted_at,
+        }),
+      );
       refreshQueueStats();
     });
     feed.on("participant:progress", (progress) => {
-      // El veredicto y la penalización solo se conocen al terminar el job.
-      void getRoundSubmissions(roundId)
-        .then(setSubmissions)
-        .catch(() => undefined);
+      // La penalización y el orden solo se conocen al terminar el job.
       void getRoundLeaderboard(roundId)
         .then(setLeaderboard)
         .catch(() => undefined);
@@ -429,7 +473,11 @@ export function AdminPanel({
       if (started.round_id !== roundId) loadActiveRound();
     });
     feed.on("round:paused", (roundState) => setPaused(Boolean(roundState.paused)));
-    feed.on("round:closed", () => {
+    feed.on("round:closed", (event) => {
+      // Sale a todos los sockets: el cierre de otra ronda no es el de esta. Sin
+      // round_id (backend viejo) se asume la propia, como antes.
+      if (event.round_id && event.round_id !== roundId) return;
+      if (roundId) setClosedRoundId(roundId);
       setMessage("La ronda se cerró");
       setPaused(false);
       setClosedVersion((version) => version + 1);
@@ -438,7 +486,10 @@ export function AdminPanel({
         .then(setLeaderboard)
         .catch(() => undefined);
     });
-    return () => feed.disconnect();
+    return () => {
+      cancelled = true;
+      feed.disconnect();
+    };
   }, [socketRoundId, refreshQueueStats, loadActiveRound]);
 
   const saveProblem = async () => {
@@ -637,9 +688,25 @@ export function AdminPanel({
                 {displayedRound ? displayedRound.problem : "Sin ronda activa"}
               </h2>
             </div>
-            <p className="font-mono text-4xl font-semibold tabular-nums text-foreground">
-              {displayedRound ? formatClock(remaining) : "--:--"}
-            </p>
+            <div className="text-right">
+              <p className="font-mono text-4xl font-semibold tabular-nums text-foreground">
+                {!displayedRound
+                  ? "--:--"
+                  : roundClosed
+                    ? "Cerrada"
+                    : // Durante la cuenta regresiva, el tiempo completo de la ronda.
+                      formatClock(
+                        countingDown && displayedRound.starts_at
+                          ? displayedRound.ends_at - displayedRound.starts_at
+                          : remaining,
+                      )}
+              </p>
+              {countingDown && (
+                <p role="timer" className="mt-1 font-mono text-sm font-semibold text-info">
+                  Empieza en {formatClock(Math.ceil(untilStart / 1000) * 1000)}
+                </p>
+              )}
+            </div>
           </div>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
@@ -668,7 +735,10 @@ export function AdminPanel({
               disabled={!liveRoundId}
               onClick={() => {
                 void closeRound(liveRoundId)
-                  .then(() => setMessage("Ronda cerrada"))
+                  .then(() => {
+                    setClosedRoundId(liveRoundId);
+                    setMessage("Ronda cerrada");
+                  })
                   .catch((error) => setMessage(error.message));
               }}
               className="rounded-lg bg-danger px-4 py-2 text-sm font-medium text-danger-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
@@ -800,18 +870,50 @@ export function AdminPanel({
           </div>
           <div className="mt-5 border-t border-border pt-4">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Últimos envíos</p>
-            <ul className="mt-2 space-y-2 text-xs">
-              {submissions.slice(0, 8).map((submission) => (
-                <li key={submission.id} className="flex items-center justify-between gap-3">
-                  <span className="font-mono text-foreground">{submission.display_name}</span>
-                  <span className="text-muted-foreground">
-                    {submission.language} · {submission.verdict}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            {submissions.length > 0 && (
+              <div className="mt-2 max-h-80 overflow-auto">
+                <table className="w-full text-xs">
+                  <thead className="text-left text-muted-foreground">
+                    <tr>
+                      <th className="pb-2 font-medium">Hora</th>
+                      <th className="pb-2 font-medium">Participante</th>
+                      <th className="pb-2 font-medium">Lenguaje</th>
+                      <th className="pb-2 font-medium">Estado</th>
+                      <th className="pb-2 text-right font-medium">Casos</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {submissions.map((submission) => (
+                      <tr key={submission.id}>
+                        <td className="py-1.5 font-mono tabular-nums text-muted-foreground">
+                          {formatTime(submission.submitted_at)}
+                        </td>
+                        <td className="py-1.5 font-mono text-foreground">
+                          {submission.display_name}
+                        </td>
+                        <td className="py-1.5 text-muted-foreground">
+                          {LANGUAGE_LABEL[submission.language] ?? submission.language}
+                        </td>
+                        <td
+                          className={`py-1.5 font-medium ${VERDICT_TONE_CLASS[verdictTone(submission.verdict)]}`}
+                        >
+                          {verdictLabel(submission.verdict)}
+                        </td>
+                        <td className="py-1.5 text-right font-mono tabular-nums">
+                          {submission.test_cases_total
+                            ? `${submission.test_cases_passed}/${submission.test_cases_total}`
+                            : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
             {submissions.length === 0 && (
-              <p className="mt-2 text-xs text-muted-foreground">Aún no hay envíos.</p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {liveRoundId ? "Aún no hay envíos en esta ronda." : "No hay una ronda en curso."}
+              </p>
             )}
           </div>
         </section>
@@ -899,6 +1001,10 @@ export function AdminPanel({
             </button>
             <div className="space-y-2 text-sm">
               <span className="text-muted-foreground">Casos de prueba</span>
+              <p className="text-xs text-muted-foreground">
+                {[...testCases, ...hiddenCases].filter((testCase) => testCase.is_sample).length} de{" "}
+                {testCases.length + hiddenCases.length} marcados como ejemplo público.
+              </p>
               {testCases.map((testCase, index) => (
                 <div key={index} className="space-y-2 rounded-lg border border-border p-3">
                   <div className="flex items-center justify-between text-xs">

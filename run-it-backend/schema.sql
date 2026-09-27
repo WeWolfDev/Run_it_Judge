@@ -100,6 +100,11 @@ CREATE TABLE IF NOT EXISTS rounds (
 
 ALTER TABLE rounds ADD COLUMN IF NOT EXISTS paused BOOLEAN NOT NULL DEFAULT false;
 
+-- Fin de la cuenta regresiva previa a la ronda: hasta ese instante no se aceptan
+-- envíos. Las rondas anteriores a la columna quedan en NULL, que significa "sin
+-- cuenta regresiva", así que nadie queda bloqueado en una ronda ya en curso.
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS starts_at TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS participants (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tournament_id UUID NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,

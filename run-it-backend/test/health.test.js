@@ -12,7 +12,11 @@ test('health endpoint reports a live process', async () => {
   const response = await fastify.inject({ method: 'GET', url: '/health' });
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), { status: 'ok' });
+  const body = response.json();
+  assert.equal(body.status, 'ok');
+  // Reloj del servidor en ms, para sincronizar la cuenta regresiva.
+  assert.equal(typeof body.now, 'number');
+  assert.ok(Math.abs(body.now - Date.now()) < 5000);
 });
 
 test('protected endpoints reject anonymous requests', async () => {

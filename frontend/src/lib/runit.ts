@@ -25,6 +25,8 @@ export interface Participant {
 export interface RoundStartedEvent {
   round_id: number | string;
   ends_at: number; // timestamp del servidor (ms)
+  // Fin de la cuenta regresiva (ms); 0 o ausente si la ronda no tiene.
+  starts_at?: number;
   problem: string;
   capacity: number;
 }
@@ -41,6 +43,8 @@ export interface RoundClosingSoonEvent {
 }
 
 export interface RoundClosedEvent {
+  // Un backend anterior a este campo no lo manda.
+  round_id?: string;
   ranking: Array<{
     participant_id: string;
     final_rank: number;
@@ -55,10 +59,12 @@ export interface RoundPausedEvent {
 }
 
 // POST /rounds/:id/start. No trae el problema: para eso está el snapshot.
+// starts_at es el fin de la cuenta regresiva; un backend viejo no lo manda.
 export interface RoundStartedPayload {
   round_id: string;
   ends_at: string;
   capacity: number;
+  starts_at?: string | null;
 }
 
 export type RoundStatus = "pending" | "active" | "closing" | "closed";
@@ -70,6 +76,7 @@ export type RoundSnapshotEvent = {
   status: RoundStatus;
   paused: boolean;
   ends_at: string | null;
+  starts_at?: string | null;
   capacity: number;
   problem_name: string;
   statement: string;
@@ -85,6 +92,104 @@ export interface TournamentWinnerEvent {
   participant_id: string;
 }
 
+// POST /rounds/:id/submissions al crear el envío (verdict "queued") y el worker
+// cuando el job falla (verdict "judge_error", sin display_name ni language).
+export interface SubmissionQueuedEvent {
+  id: string;
+  round_id: string;
+  participant_id: string;
+  display_name?: string;
+  language?: string;
+  submitted_at?: string;
+  verdict: string;
+}
+
+// Veredicto final de un envío. Solo llega a la sala de la ronda.
+export interface SubmissionJudgedEvent {
+  id: string;
+  round_id: string;
+  participant_id: string;
+  display_name: string;
+  language: string;
+  verdict: string;
+  test_cases_passed: number;
+  test_cases_total: number;
+  submitted_at: string;
+}
+
+/**
+ * Nombre corto de cada `verdict` que escribe el backend. El worker guarda
+ * "accepted" y "Wrong Answer" propios, y para el resto el `status.description`
+ * de Judge0 tal cual; los últimos cinco son estados internos de Run It.
+ */
+export const VERDICT_LABEL: Record<string, string> = {
+  queued: "En cola",
+  // Judge0 1..13 (y 14), por su description.
+  "In Queue": "En cola",
+  Processing: "Procesando",
+  accepted: "Aceptado",
+  Accepted: "Aceptado",
+  "Wrong Answer": "Respuesta incorrecta",
+  "Time Limit Exceeded": "Tiempo excedido",
+  "Compilation Error": "Error de compilación",
+  "Runtime Error (SIGSEGV)": "Error de ejecución (SIGSEGV)",
+  "Runtime Error (SIGXFSZ)": "Error de ejecución (SIGXFSZ)",
+  "Runtime Error (SIGFPE)": "Error de ejecución (SIGFPE)",
+  "Runtime Error (SIGABRT)": "Error de ejecución (SIGABRT)",
+  "Runtime Error (NZEC)": "Error de ejecución (NZEC)",
+  "Runtime Error (Other)": "Error de ejecución",
+  "Internal Error": "Error interno del juez",
+  "Exec Format Error": "Error de formato ejecutable",
+  rejected: "Rechazado",
+  no_test_cases: "Sin casos de prueba",
+  round_unavailable: "Fuera de la ronda",
+  queue_error: "Error de cola",
+  judge_error: "Error del juez",
+};
+
+export function verdictLabel(verdict: string) {
+  return VERDICT_LABEL[verdict] ?? verdict;
+}
+
+export type VerdictTone = "pending" | "success" | "danger";
+
+export function verdictTone(verdict: string): VerdictTone {
+  if (verdict === "queued" || verdict === "In Queue" || verdict === "Processing") return "pending";
+  return verdict === "accepted" || verdict === "Accepted" ? "success" : "danger";
+}
+
+// Claves de LANGUAGE_IDS en judge0-client.js.
+export const LANGUAGE_LABEL: Record<string, string> = { python: "Python 3", c: "C", cpp: "C++" };
+
+type SubmissionLike = { id: string; verdict: string; submitted_at: string };
+
+/**
+ * Mezcla la lista que devolvió el servidor con la que ya está en pantalla. La
+ * respuesta puede ser anterior a un evento que llegó mientras viajaba: una fila
+ * que el servidor todavía da por "queued" conserva el veredicto ya recibido, y
+ * un envío que el servidor aún no incluía no se pierde.
+ */
+export function mergeSubmissions<T extends SubmissionLike>(current: T[], fetched: T[]): T[] {
+  const byId = new Map(current.map((row) => [row.id, row]));
+  const merged = fetched.map((row) => {
+    const known = byId.get(row.id);
+    byId.delete(row.id);
+    return known && row.verdict === "queued" && known.verdict !== "queued" ? known : row;
+  });
+  return [...byId.values(), ...merged].sort((a, b) => b.submitted_at.localeCompare(a.submitted_at));
+}
+
+/** Inserta o actualiza una fila por id, sin tocar las demás. */
+export function upsertSubmission<T extends SubmissionLike>(current: T[], row: T): T[] {
+  if (!current.some((item) => item.id === row.id)) return [row, ...current];
+  return current.map((item) => (item.id === row.id ? { ...item, ...row } : item));
+}
+
+/** Hora local HH:MM:SS de un timestamp del servidor. */
+export function formatTime(iso: string) {
+  return new Date(iso).toLocaleTimeString("es", { hour12: false });
+}
+
 export interface RunItEvents {
   "round:started": RoundStartedPayload;
   "round:snapshot": RoundSnapshotEvent;
@@ -94,6 +199,11 @@ export interface RunItEvents {
   "round:closed": RoundClosedEvent;
   "round:paused": RoundPausedEvent;
   "tournament:winner": TournamentWinnerEvent;
+  "submission:queued": SubmissionQueuedEvent;
+  "submission:judged": SubmissionJudgedEvent;
+  // Local, no lo emite el servidor: cada conexión y reconexión del socket. Lo
+  // que se perdió mientras estaba caído se recupera volviendo a pedirlo.
+  "feed:connected": undefined;
 }
 
 export interface RunItFeed {
@@ -119,6 +229,7 @@ export function createSocketFeed(roundId = import.meta.env["VITE_ROUND_ID"]): Ru
         socket?.emit("round:join", roundId);
         socket?.emit("round:snapshot", roundId);
       }
+      handlers.get("feed:connected")?.forEach((handler) => handler(undefined));
     });
     socket.onAny((event, payload) => {
       handlers.get(event)?.forEach((handler) => handler(payload));

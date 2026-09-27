@@ -1,9 +1,25 @@
 import { useEffect, useRef, useState } from "react";
-import { createSocketFeed, formatClock, type RoundStatus } from "@/lib/runit";
+import {
+  createSocketFeed,
+  formatClock,
+  formatTime,
+  mergeSubmissions,
+  upsertSubmission,
+  verdictLabel,
+  verdictTone,
+  type RoundStatus,
+} from "@/lib/runit";
 import { useRoundTimer, useServerClockOffset } from "@/hooks/use-round-timer";
 import { CharacterCarousel } from "@/components/CharacterCarousel";
 import { ProblemStatement } from "@/components/ProblemStatement";
-import { getActiveRound, getRoundLeaderboard, joinRound, submitRound } from "@/lib/api";
+import {
+  getActiveRound,
+  getMySubmissions,
+  getRoundLeaderboard,
+  joinRound,
+  submitRound,
+  type MySubmission,
+} from "@/lib/api";
 import {
   getCharacterConfirmed,
   getSelectedCharacter,
@@ -62,10 +78,22 @@ type RoundInfo = {
 
 // Estado vivo de la ronda. Lo siembra /public/rounds/active y desde ahí lo
 // actualizan solo el snapshot y los eventos del socket: es la única fuente de
-// verdad para el bloqueo del editor.
-type LiveRound = { status: RoundStatus; paused: boolean; endsAt: number };
+// verdad para el bloqueo del editor. startsAt es el fin de la cuenta regresiva
+// (timestamp del servidor); 0 si la ronda no tiene, como las anteriores a ella.
+type LiveRound = { status: RoundStatus; paused: boolean; endsAt: number; startsAt: number };
+
+const toMs = (iso: string | null | undefined) => (iso ? new Date(iso).getTime() : 0);
+
+const VERDICT_TONE_CLASS = {
+  pending: "text-info",
+  success: "text-success",
+  danger: "text-danger",
+} as const;
 
 type Standing = { participant_id: string; name: string; rank: number; advanced: boolean };
+
+// Posiciones mientras la ronda está abierta, en el orden del servidor.
+type LiveStanding = Awaited<ReturnType<typeof getRoundLeaderboard>>[number];
 
 type Load = "loading" | "none" | "error" | "ready";
 
@@ -82,11 +110,17 @@ export function ParticipantView() {
   const [language, setLanguage] = useState<Language>("python");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  // Se acumula: cada envío es una fila y los eventos solo actualizan la suya.
+  const [history, setHistory] = useState<MySubmission[]>([]);
+  const [liveStandings, setLiveStandings] = useState<LiveStanding[]>([]);
   // null hasta leer localStorage en el cliente: el SSR no sabe si ya eligió, y
   // renderizar cualquiera de las dos pantallas antes provocaría un salto visible.
   const [characterConfirmed, setConfirmedState] = useState<boolean | null>(null);
   const serverOffsetMs = useServerClockOffset(setMessage);
   const remaining = useRoundTimer(live?.endsAt ?? 0, serverOffsetMs);
+  // Mismo reloj corregido que el cronómetro: todos cuentan hacia el mismo
+  // instante del servidor aunque el reloj local esté corrido.
+  const untilStart = useRoundTimer(live?.startsAt ?? 0, serverOffsetMs);
   const username = getSession()?.username || "demo";
   const roundIdRef = useRef<string | null>(null);
   roundIdRef.current = round?.id ?? null;
@@ -134,6 +168,7 @@ export function ParticipantView() {
         status: "active",
         paused: Boolean(extra.paused),
         endsAt: new Date(remote.ends_at).getTime(),
+        startsAt: toMs(remote.starts_at),
       });
       setLoad("ready");
       // Sin personaje confirmado no se inscribe: lo hace confirmCharacter. Así el
@@ -161,21 +196,75 @@ export function ParticipantView() {
   // Sin ronda el socket igual se conecta, para enterarse de round:started. Con
   // inscripción se une a la sala de la ronda y pide el snapshot.
   useEffect(() => {
+    let cancelled = false;
+    setHistory([]);
+    setLiveStandings([]);
+    // Ids de la ronda en pantalla: participant:progress no trae la ronda y sale
+    // a todos los sockets, así que se ignora el de participantes ajenos.
+    let standingIds = new Set<string>();
+    let standingsTimer: ReturnType<typeof setTimeout> | undefined;
+    const loadStandings = () => {
+      if (!joinedRoundId) return;
+      void getRoundLeaderboard(joinedRoundId)
+        .then((rows) => {
+          if (cancelled) return;
+          standingIds = new Set(rows.map((row) => row.participant_id));
+          setLiveStandings(rows);
+        })
+        .catch(() => undefined);
+    };
+    // participant:progress llega dos veces por envío (sala y global): se agrupa.
+    const refreshStandings = () => {
+      clearTimeout(standingsTimer);
+      standingsTimer = setTimeout(loadStandings, 300);
+    };
+    // Historial desde la base, en cada (re)conexión: lo enviado antes de
+    // recargar y lo que se perdió con el socket caído vuelve a aparecer.
+    const seedHistory = () => {
+      if (!joinedRoundId) return;
+      void getMySubmissions(joinedRoundId)
+        .then((rows) => {
+          if (!cancelled) setHistory((current) => mergeSubmissions(current, rows));
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setMessage(error instanceof Error ? error.message : "No se pudo cargar tu historial");
+          }
+        });
+    };
     const feed = createSocketFeed(joinedRoundId);
-    if (!feed) return;
+    if (!feed) {
+      seedHistory();
+      return () => {
+        cancelled = true;
+      };
+    }
+    feed.on("feed:connected", () => {
+      seedHistory();
+      loadStandings();
+    });
+    feed.on("participant:joined", (event) => {
+      if (event.round_id === joinedRoundId) refreshStandings();
+    });
     feed.on("round:snapshot", (snapshot) => {
       if (!snapshot || snapshot.id !== joinedRoundId) return;
       setLive({
         status: snapshot.status,
         paused: Boolean(snapshot.paused),
         endsAt: snapshot.ends_at ? new Date(snapshot.ends_at).getTime() : 0,
+        startsAt: toMs(snapshot.starts_at),
       });
     });
     feed.on("round:started", (event) => {
       if (event.round_id === roundIdRef.current) {
         setLive(
           (current) =>
-            current && { ...current, status: "active", endsAt: new Date(event.ends_at).getTime() },
+            current && {
+              ...current,
+              status: "active",
+              endsAt: new Date(event.ends_at).getTime(),
+              startsAt: toMs(event.starts_at),
+            },
         );
         return;
       }
@@ -214,6 +303,7 @@ export function ParticipantView() {
         .catch(() => undefined);
     });
     feed.on("participant:progress", (event) => {
+      if (standingIds.has(event.participant_id)) refreshStandings();
       if (event.participant_id !== participantId) return;
       setMessage(
         event.solved
@@ -221,13 +311,34 @@ export function ParticipantView() {
           : `Resultado: ${event.test_cases_passed}/${event.test_cases_total} casos.`,
       );
     });
-    return () => feed.disconnect();
+    // La sala de la ronda recibe los veredictos de todos: solo cuenta el propio.
+    // participantId es el que devolvió el join, resuelto por el backend desde el token.
+    feed.on("submission:judged", (event) => {
+      if (event.participant_id !== participantId || event.round_id !== joinedRoundId) return;
+      setHistory((current) =>
+        upsertSubmission(current, {
+          id: event.id,
+          participant_id: event.participant_id,
+          language: event.language,
+          verdict: event.verdict,
+          test_cases_passed: event.test_cases_passed,
+          test_cases_total: event.test_cases_total,
+          submitted_at: event.submitted_at,
+        }),
+      );
+    });
+    return () => {
+      cancelled = true;
+      clearTimeout(standingsTimer);
+      feed.disconnect();
+    };
   }, [joinedRoundId, participantId, username]);
 
   const closed = live?.status === "closed" || live?.status === "closing";
   const paused = Boolean(live?.paused) && !closed;
+  const countingDown = live?.status === "active" && untilStart > 0;
   // Bloqueo real: deshabilita el textarea, no solo el botón. El texto se conserva.
-  const locked = !live || live.status !== "active" || live.paused || remaining <= 0;
+  const locked = !live || live.status !== "active" || live.paused || remaining <= 0 || countingDown;
   const inscribed = Boolean(participant && round && participant.roundId === round.id);
 
   // CharacterCarousel ya guardó el personaje en localStorage antes de llamar acá.
@@ -260,8 +371,19 @@ export function ParticipantView() {
     setSending(true);
     setMessage("");
     try {
-      const result = await submitRound(round.id, participant.id, code, language);
-      setMessage(`Submission en cola: ${result.id || result.verdict || "ok"}`);
+      const result = (await submitRound(round.id, participant.id, code, language)) as MySubmission;
+      setHistory((current) =>
+        upsertSubmission(current, {
+          id: result.id,
+          participant_id: result.participant_id,
+          language: result.language,
+          verdict: result.verdict,
+          test_cases_passed: 0,
+          test_cases_total: 0,
+          submitted_at: result.submitted_at,
+        }),
+      );
+      setMessage("Envío en cola. El veredicto aparece en tu historial.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo enviar");
     } finally {
@@ -326,9 +448,25 @@ export function ParticipantView() {
           <h1 className="mt-1 text-xl font-semibold text-foreground">{round.problem}</h1>
         </div>
         <p className="font-mono text-4xl font-semibold tabular-nums text-foreground">
-          {formatClock(remaining)}
+          {/* Durante la cuenta regresiva muestra el tiempo completo de la ronda. */}
+          {formatClock(countingDown && live ? live.endsAt - live.startsAt : remaining)}
         </p>
       </header>
+
+      {countingDown && (
+        <section
+          role="timer"
+          aria-live="assertive"
+          className="rounded-xl border border-info bg-info-soft px-5 py-8 text-center text-info"
+        >
+          <p className="text-sm font-semibold uppercase tracking-widest">La ronda empieza en</p>
+          <p className="mt-2 font-mono text-8xl font-bold tabular-nums">
+            {/* Redondeo hacia arriba: el 00:00 coincide con el desbloqueo. */}
+            {formatClock(Math.ceil(untilStart / 1000) * 1000)}
+          </p>
+          <p className="mt-2 text-sm">Puedes escribir en cuanto llegue a cero.</p>
+        </section>
+      )}
 
       {joinError && (
         <section
@@ -481,6 +619,75 @@ export function ParticipantView() {
           )}
         </section>
       </div>
+
+      {!closed && liveStandings.length > 0 && (
+        <section className="rounded-xl border border-border bg-card p-5">
+          <h2 className="text-sm font-semibold text-foreground">Posiciones</h2>
+          <ol className="mt-3 space-y-1 text-sm">
+            {liveStandings.map((entry, index) => (
+              <li
+                key={entry.participant_id}
+                className={`flex items-center justify-between rounded-lg px-3 py-1.5 ${
+                  entry.participant_id === participantId ? "bg-info-soft font-medium" : ""
+                }`}
+              >
+                <span className="font-mono">
+                  {index + 1}. {entry.display_name}
+                </span>
+                <span
+                  className={`font-mono tabular-nums ${entry.solved_at ? "text-success" : "text-muted-foreground"}`}
+                >
+                  {entry.solved_at
+                    ? `Resuelto · ${formatClock((entry.total_time_seconds ?? 0) * 1000)}`
+                    : `${Math.round(Number(entry.best_pass_percentage))}%`}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+
+      <section className="rounded-xl border border-border bg-card p-5">
+        <h2 className="text-sm font-semibold text-foreground">Tus envíos</h2>
+        {history.length === 0 ? (
+          <p className="mt-2 text-xs text-muted-foreground">Todavía no enviaste nada.</p>
+        ) : (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+                <tr>
+                  <th className="pb-2 font-medium">Hora</th>
+                  <th className="pb-2 font-medium">Lenguaje</th>
+                  <th className="pb-2 font-medium">Estado</th>
+                  <th className="pb-2 text-right font-medium">Casos</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {history.map((row) => (
+                  <tr key={row.id}>
+                    <td className="py-2 font-mono tabular-nums text-muted-foreground">
+                      {formatTime(row.submitted_at)}
+                    </td>
+                    <td className="py-2">
+                      {LANGUAGES[row.language as Language]?.label ?? row.language}
+                    </td>
+                    <td
+                      className={`py-2 font-medium ${VERDICT_TONE_CLASS[verdictTone(row.verdict)]}`}
+                    >
+                      {verdictLabel(row.verdict)}
+                    </td>
+                    <td className="py-2 text-right font-mono tabular-nums">
+                      {row.test_cases_total
+                        ? `${row.test_cases_passed}/${row.test_cases_total}`
+                        : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </div>
   );
 }

@@ -97,7 +97,7 @@ async function removeQueueJobs(submissionId) {
     connection: {
       host: process.env.REDIS_HOST || "127.0.0.1",
       port: Number(process.env.REDIS_PORT || 6380),
-      password: process.env.REDIS_PASSWORD,
+      password: process.env.REDIS_PASSWORD || undefined,
     },
   });
   try {
@@ -112,12 +112,13 @@ async function removeQueueJobs(submissionId) {
 
 async function main() {
   const environment = readEnvironment(secretsFile);
-  for (const key of ["DATABASE_URL", "REDIS_PASSWORD", "ADMIN_USERNAME", "ADMIN_ACCESS_CODE"]) {
+  // REDIS_PASSWORD es opcional: el Redis de desarrollo (:6381) no tiene.
+  for (const key of ["DATABASE_URL", "ADMIN_USERNAME", "ADMIN_ACCESS_CODE"]) {
     if (!environment[key]) throw new Error(`Falta ${key} en ${secretsFile}`);
   }
   process.env.REDIS_HOST = environment.REDIS_HOST || "127.0.0.1";
   process.env.REDIS_PORT = environment.REDIS_PORT || "6380";
-  process.env.REDIS_PASSWORD = environment.REDIS_PASSWORD;
+  if (environment.REDIS_PASSWORD) process.env.REDIS_PASSWORD = environment.REDIS_PASSWORD;
 
   const { Client } = require(path.join(repoRoot, "run-it-backend", "node_modules", "pg"));
   const database = new Client({
@@ -212,8 +213,9 @@ async function main() {
       method: "POST",
       body: { count: 1 },
     });
-    accessCode = generated.codes[0];
-    assert.match(accessCode, /^RUNIT-[0-9A-F]{16}$/);
+    // Cada código es una fila; el PIN es de 6 caracteres sin I, O, 0 ni 1.
+    accessCode = generated.codes[0].code;
+    assert.match(accessCode, /^[A-HJ-NP-Z2-9]{6}$/);
 
     const participant = await request("/auth/register", {
       method: "POST",
@@ -224,7 +226,10 @@ async function main() {
     assert.equal(participant.user.role, "participant");
 
     await request(`/tournaments/${tournamentId}/start`, { token: adminToken, method: "POST" });
-    await request(`/rounds/${roundId}/start`, { token: adminToken, method: "POST" });
+    const started = await request(`/rounds/${roundId}/start`, { token: adminToken, method: "POST" });
+    // Hasta starts_at el backend rechaza los envíos con 409 (cuenta regresiva).
+    const countdownMs = (Date.parse(started.starts_at ?? "") || 0) - Date.now() + 250;
+    if (countdownMs > 0) await new Promise((resolve) => setTimeout(resolve, countdownMs));
     const joined = await request(`/rounds/${roundId}/participants/join`, {
       token: participantToken,
       method: "POST",

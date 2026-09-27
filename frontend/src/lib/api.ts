@@ -211,6 +211,10 @@ export async function getRoundLeaderboard(roundId: string) {
       final_rank: number | null;
       best_pass_percentage: number;
       failed_attempts_count: number;
+      solved_at: string | null;
+      penalty_seconds: number;
+      // Desde el fin de la cuenta regresiva, con la penalización. null si no resolvió.
+      total_time_seconds: number | null;
     }>
   >;
 }
@@ -233,6 +237,27 @@ export async function getRoundSubmissions(roundId: string) {
       submitted_at: string;
     }>
   >;
+}
+
+export type MySubmission = {
+  id: string;
+  participant_id: string;
+  language: string;
+  verdict: string;
+  test_cases_passed: number;
+  test_cases_total: number;
+  submitted_at: string;
+};
+
+// Envíos propios en la ronda. El backend resuelve el participante desde el
+// token: no se manda ningún id.
+export async function getMySubmissions(roundId: string) {
+  const response = await fetch(`${API_URL}/rounds/${roundId}/submissions/mine`, {
+    headers: authHeaders(),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudo cargar tu historial");
+  return body as MySubmission[];
 }
 
 export function apiUrl(path: string) {
@@ -314,6 +339,8 @@ export async function getActiveRound() {
   return response.json() as Promise<{
     id: string;
     ends_at: string;
+    // null en las rondas anteriores a la cuenta regresiva.
+    starts_at: string | null;
     problem_name: string;
     statement: string;
     capacity: number;
