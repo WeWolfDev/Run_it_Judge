@@ -1,10 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  createMockFeed,
   createSocketFeed,
   formatClock,
-  MOCK_PARTICIPANTS,
-  MOCK_ROUND,
   SILK_COUNT,
   type Participant,
   type RoundStartedEvent,
@@ -13,10 +10,28 @@ import { useRoundTimer, useServerClockOffset } from "@/hooks/use-round-timer";
 import { getActiveRound } from "@/lib/api";
 
 interface RaceTrackProps {
+  /** Valores iniciales opcionales. Sin ellos la pista se carga del backend. */
   round?: RoundStartedEvent;
   participants?: Participant[];
-  /** Cuando es false no se conecta el feed mock (útil si el padre inyecta datos). */
+  /** Cuando es false no se conecta al socket (útil si el padre inyecta datos). */
   live?: boolean;
+}
+
+type ActiveRound = NonNullable<Awaited<ReturnType<typeof getActiveRound>>>;
+
+// El avance se guarda como porcentaje sobre 100, igual que en el panel admin.
+function toRunner(participant: ActiveRound["participants"][number], index: number): Participant {
+  return {
+    participant_id: participant.participant_id,
+    name: participant.name,
+    lane: index + 1,
+    silk: index % SILK_COUNT,
+    test_cases_passed: Number(participant.best_pass_percentage),
+    test_cases_total: 100,
+    attempts: participant.failed_attempts_count,
+    solved: Boolean(participant.solved_at),
+    status: participant.solved_at ? "solved" : "racing",
+  };
 }
 
 function HorseIcon({ className }: { className?: string }) {
@@ -30,61 +45,55 @@ function HorseIcon({ className }: { className?: string }) {
   );
 }
 
-export function RaceTrack({
-  round = MOCK_ROUND,
-  participants = MOCK_PARTICIPANTS,
-  live = true,
-}: RaceTrackProps) {
-  const [runners, setRunners] = useState<Participant[]>(participants);
-  const [remoteRound, setRemoteRound] = useState<RoundStartedEvent | null>(null);
-  const displayedRound = remoteRound || round;
-  const activeRoundId =
-    typeof displayedRound.round_id === "string" ? displayedRound.round_id : undefined;
+export function RaceTrack({ round, participants, live = true }: RaceTrackProps) {
+  const [load, setLoad] = useState<"loading" | "none" | "error" | "ready">(
+    round ? "ready" : "loading",
+  );
+  const [reloadKey, setReloadKey] = useState(0);
+  const [runners, setRunners] = useState<Participant[]>(participants ?? []);
+  const [displayedRound, setDisplayedRound] = useState<RoundStartedEvent | null>(round ?? null);
+  const [closed, setClosed] = useState(false);
+  const activeRoundId = displayedRound ? String(displayedRound.round_id) : undefined;
+  const roundIdRef = useRef(activeRoundId);
+  roundIdRef.current = activeRoundId;
+  const runnersRef = useRef(runners);
+  runnersRef.current = runners;
   const serverOffsetMs = useServerClockOffset();
-  const remaining = useRoundTimer(displayedRound.ends_at, serverOffsetMs);
+  const remaining = useRoundTimer(displayedRound?.ends_at ?? 0, serverOffsetMs);
 
   useEffect(() => {
+    let cancelled = false;
     getActiveRound()
       .then((active) => {
-        if (!active) return;
-        setRemoteRound({
+        if (cancelled) return;
+        if (!active) {
+          setDisplayedRound(null);
+          setRunners([]);
+          setLoad("none");
+          return;
+        }
+        setDisplayedRound({
           round_id: active.id,
           ends_at: new Date(active.ends_at).getTime(),
           problem: active.problem_name,
           capacity: active.capacity,
         });
-        setRunners(
-          active.participants.map(
-            (
-              participant: {
-                participant_id: string;
-                name: string;
-                best_pass_percentage: number;
-                solved_at: string | null;
-              },
-              index: number,
-            ) => ({
-              participant_id: participant.participant_id,
-              name: participant.name,
-              lane: index + 1,
-              silk: index % SILK_COUNT,
-              test_cases_passed: participant.best_pass_percentage === 100 ? 1 : 0,
-              test_cases_total: 1,
-              attempts: 0,
-              solved: Boolean(participant.solved_at),
-              status: participant.solved_at ? "solved" : "racing",
-            }),
-          ),
-        );
+        setRunners(active.participants.map(toRunner));
+        setClosed(false);
+        setLoad("ready");
       })
-      .catch(() => undefined);
-  }, []);
-
-  useEffect(() => setRunners(participants), [participants]);
+      .catch(() => {
+        if (!cancelled) setLoad("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey]);
 
   useEffect(() => {
     if (!live) return;
-    const feed = createSocketFeed(activeRoundId) ?? createMockFeed(participants);
+    const feed = createSocketFeed(activeRoundId);
+    if (!feed) return;
     feed.on("participant:progress", (e) => {
       setRunners((prev) =>
         prev.map((p) =>
@@ -100,11 +109,85 @@ export function RaceTrack({
         ),
       );
     });
+    // Se muestra apenas se inscribe, sin esperar a que envíe código.
+    feed.on("participant:joined", (e) => {
+      if (e.round_id !== roundIdRef.current) return;
+      setRunners((prev) =>
+        prev.some((p) => p.participant_id === e.participant_id)
+          ? prev
+          : [
+              ...prev,
+              {
+                participant_id: e.participant_id,
+                name: e.name,
+                lane: prev.length + 1,
+                silk: prev.length % SILK_COUNT,
+                test_cases_passed: 0,
+                test_cases_total: 100,
+                attempts: 0,
+                solved: false,
+                status: "racing",
+              },
+            ],
+      );
+    });
+    feed.on("round:started", (e) => {
+      if (e.round_id !== roundIdRef.current) setReloadKey((key) => key + 1);
+    });
+    feed.on("round:closed", (e) => {
+      const byId = new Map(e.ranking.map((entry) => [entry.participant_id, entry]));
+      // round:closed no trae el id de la ronda: se reconoce por sus participantes.
+      if (!runnersRef.current.some((p) => byId.has(p.participant_id))) return;
+      setClosed(true);
+      setRunners((prev) =>
+        prev.map((p) =>
+          byId.get(p.participant_id)?.final_status === "eliminated"
+            ? { ...p, status: "eliminated" }
+            : p,
+        ),
+      );
+    });
     return () => feed.disconnect();
-  }, [activeRoundId, live, participants]);
+  }, [activeRoundId, live]);
 
   const solvedCount = useMemo(() => runners.filter((r) => r.solved).length, [runners]);
   const closingSoon = remaining <= 60_000;
+
+  if (load !== "ready" || !displayedRound) {
+    return (
+      <section
+        className="rounded-xl border border-border bg-card px-5 py-8 text-center"
+        aria-busy={load === "loading"}
+      >
+        <h2 className="text-lg font-semibold text-foreground">
+          {load === "loading"
+            ? "Cargando la pista…"
+            : load === "error"
+              ? "No se pudo conectar con el servidor"
+              : "Todavía no hay una ronda activa"}
+        </h2>
+        {load !== "loading" && (
+          <>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {load === "error"
+                ? "La pista no muestra datos hasta recuperar la conexión."
+                : "La pista se actualiza sola cuando el organizador inicie una ronda."}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setLoad("loading");
+                setReloadKey((key) => key + 1);
+              }}
+              className="mt-4 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
+            >
+              {load === "error" ? "Reintentar" : "Recargar"}
+            </button>
+          </>
+        )}
+      </section>
+    );
+  }
 
   return (
     <section className="rounded-xl border border-border bg-card">
@@ -115,22 +198,27 @@ export function RaceTrack({
           </p>
           <h2 className="mt-1 text-lg font-semibold text-foreground">{displayedRound.problem}</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {solvedCount} de {round.capacity} cupos ocupados
+            {solvedCount} de {displayedRound.capacity} cupos ocupados
           </p>
         </div>
         <div className="text-right">
           <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
-            Tiempo restante
+            {closed ? "Ronda finalizada" : "Tiempo restante"}
           </p>
           <p
-            className={`font-mono text-4xl font-semibold tabular-nums ${closingSoon ? "text-danger" : "text-foreground"}`}
+            className={`font-mono text-4xl font-semibold tabular-nums ${closingSoon && !closed ? "text-danger" : "text-foreground"}`}
           >
-            {formatClock(remaining)}
+            {formatClock(closed ? 0 : remaining)}
           </p>
         </div>
       </header>
 
       <div className="divide-y divide-border">
+        {runners.length === 0 && (
+          <p className="px-5 py-6 text-center text-sm text-muted-foreground">
+            Todavía no entró ningún participante.
+          </p>
+        )}
         {runners.map((p) => {
           const pct =
             p.status === "eliminated" || p.status === "past"

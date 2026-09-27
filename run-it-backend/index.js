@@ -370,11 +370,25 @@ fastify.post('/rounds/:id/participants/join', async (request, reply) => {
 		 RETURNING *`,
 		[round.rows[0].tournament_id, request.user.id, displayName],
 	);
-	await query(
+	// El upsert no toca status: un eliminado sigue eliminado. Sin este corte
+	// entraría a la ronda siguiente y closeRound lo rankearía contra los activos.
+	if (participant.rows[0].status !== 'active') {
+		return reply.code(403).send({ error: 'Ya no participas en este torneo' });
+	}
+	const joined = await query(
 		`INSERT INTO round_participants (round_id, participant_id)
 		 VALUES ($1, $2) ON CONFLICT DO NOTHING`,
 		[request.params.id, participant.rows[0].id],
 	);
+	// Solo al inscribirse por primera vez: la pista y el ranking lo muestran sin
+	// esperar a que envíe código.
+	if (joined.rowCount) {
+		fastify.io?.emit('participant:joined', {
+			round_id: request.params.id,
+			participant_id: participant.rows[0].id,
+			name: participant.rows[0].display_name,
+		});
+	}
 	return participant.rows[0];
 });
 
@@ -561,7 +575,11 @@ fastify.post('/rounds', async (request, reply) => {
 fastify.get('/tournaments/:id/rounds', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
 	const result = await query(
-		`SELECT r.*, p.name AS problem_name
+		`SELECT r.*, p.name AS problem_name,
+		        (SELECT count(*)::int FROM round_participants rp
+		         WHERE rp.round_id = r.id) AS participants_count,
+		        (SELECT count(*)::int FROM round_participants rp
+		         WHERE rp.round_id = r.id AND rp.final_status = 'advanced') AS advanced_count
 		 FROM rounds r JOIN problems p ON p.id = r.problem_id
 		 WHERE r.tournament_id = $1 ORDER BY r.round_number`,
 		[request.params.id],
