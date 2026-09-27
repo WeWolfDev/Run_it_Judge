@@ -8,6 +8,7 @@ import {
 } from "@/lib/runit";
 import { useRoundTimer } from "@/hooks/use-round-timer";
 import { parseCodeforcesZip } from "@/lib/test-case-parser";
+import { ProblemStatement } from "@/components/ProblemStatement";
 import {
   closeRound,
   createNextRound,
@@ -604,6 +605,10 @@ export function AdminPanel({
                 placeholder="Imprime el saludo solicitado."
                 maxLength={4000}
               />
+              <p className="mt-2 text-xs text-muted-foreground">Vista previa</p>
+              <div className="mt-1 rounded-lg border border-border p-3">
+                <ProblemStatement statement={problemStatement} />
+              </div>
             </label>
             <label className="block text-sm">
               <span className="text-muted-foreground">Dificultad</span>

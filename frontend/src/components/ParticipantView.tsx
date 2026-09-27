@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { formatClock, MOCK_ROUND } from "@/lib/runit";
 import { useRoundTimer } from "@/hooks/use-round-timer";
+import { ProblemStatement } from "@/components/ProblemStatement";
 import { getActiveRound, joinRound, submitRound } from "@/lib/api";
 import {
   getSelectedCharacter,
@@ -154,9 +155,7 @@ export function ParticipantView({ round = MOCK_ROUND }: { round?: typeof MOCK_RO
         <div className="space-y-5">
           <section className="rounded-xl border border-border bg-card p-5">
             <h2 className="text-sm font-semibold text-foreground">Enunciado</h2>
-            <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
-              {statement}
-            </p>
+            <ProblemStatement statement={statement} />
           </section>
         </div>
 
