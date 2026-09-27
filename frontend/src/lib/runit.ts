@@ -15,7 +15,7 @@ export interface Participant {
   participant_id: string;
   name: string;
   lane: number;
-  silk: number; // 0..5 -> color de casaca
+  silk: number; // 0..SILK_COUNT-1 -> color de casaca
   test_cases_passed: number;
   test_cases_total: number;
   attempts: number;
@@ -179,7 +179,7 @@ export const MOCK_ROUNDS_PROGRESS = [
   { round: 5, entered: 4, advanced: null, state: "upcoming" as const },
 ];
 
-export const SILK_COUNT = 6;
+export const SILK_COUNT = 10;
 
 /** Feed simulado: emite `participant:progress` como lo haría el socket real. */
 export function createMockFeed(participants: Participant[]): RunItFeed {

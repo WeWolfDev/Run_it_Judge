@@ -8,7 +8,7 @@ export interface Session {
 
 const SESSION_KEY = "run-it-session";
 const CHARACTER_KEY_PREFIX = "run-it-character:";
-export const CHARACTER_COUNT = 6;
+export const CHARACTER_COUNT = 10;
 
 export function getSession(): Session | null {
   if (typeof window === "undefined") return null;

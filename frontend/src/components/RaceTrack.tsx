@@ -5,6 +5,7 @@ import {
   formatClock,
   MOCK_PARTICIPANTS,
   MOCK_ROUND,
+  SILK_COUNT,
   type Participant,
   type RoundStartedEvent,
 } from "@/lib/runit";
@@ -66,7 +67,7 @@ export function RaceTrack({
               participant_id: participant.participant_id,
               name: participant.name,
               lane: index + 1,
-              silk: index % 6,
+              silk: index % SILK_COUNT,
               test_cases_passed: participant.best_pass_percentage === 100 ? 1 : 0,
               test_cases_total: 1,
               attempts: 0,

@@ -4,6 +4,7 @@ import {
   MOCK_PARTICIPANTS,
   MOCK_ROUND,
   MOCK_ROUNDS_PROGRESS,
+  SILK_COUNT,
   type Participant,
 } from "@/lib/runit";
 import { useRoundTimer, useServerClockOffset } from "@/hooks/use-round-timer";
@@ -296,7 +297,7 @@ export function AdminPanel({
             participant_id: participant.participant_id,
             name: participant.name,
             lane: index + 1,
-            silk: index % 6,
+            silk: index % SILK_COUNT,
             test_cases_passed: Number(participant.best_pass_percentage),
             test_cases_total: 100,
             attempts: participant.failed_attempts_count,
