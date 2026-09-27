@@ -458,8 +458,14 @@ export function AdminPanel({
   };
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[7fr_3fr]">
-      <div className="space-y-5">
+    <Tabs defaultValue="control">
+      <TabsList>
+        <TabsTrigger value="control">Control de ronda</TabsTrigger>
+        <TabsTrigger value="rondas">Rondas</TabsTrigger>
+        <TabsTrigger value="acceso">Acceso</TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="control" className="space-y-5">
         <section className="rounded-xl border border-border bg-card p-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
@@ -617,629 +623,604 @@ export function AdminPanel({
             )}
           </div>
         </section>
-      </div>
+      </TabsContent>
 
-      <aside className="space-y-5">
-        <Tabs defaultValue="ronda">
-          <TabsList>
-            <TabsTrigger value="ronda">Ronda</TabsTrigger>
-            <TabsTrigger value="problema">Problema</TabsTrigger>
-            <TabsTrigger value="acceso">Acceso</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="ronda" className="space-y-5">
-            {nextRoundPreview && (
-              <section className="rounded-xl border border-border bg-card p-5">
-                <h3 className="text-sm font-semibold text-foreground">Ronda siguiente</h3>
-                {nextRoundPreview.available ? (
-                  <>
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      {nextRoundPreview.advancingCount} de {liveParticipants.length} participantes
-                      clasificaron a la ronda {nextRoundPreview.nextRoundNumber}. Ya están
-                      inscriptos.
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      {nextRoundPreview.advancing.map((entry) => (
-                        <span
-                          key={entry.participant_id}
-                          className="rounded-md bg-muted px-2 py-0.5 text-xs text-foreground"
-                        >
-                          {entry.final_rank}. {entry.display_name}
-                        </span>
-                      ))}
-                    </div>
-                    <div className="mt-4 space-y-3">
-                      <label className="block text-sm">
-                        <span className="text-muted-foreground">Problema</span>
-                        <select
-                          value={selectedProblem}
-                          onChange={(event) => setSelectedProblem(event.target.value)}
-                          className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
-                        >
-                          {problems.length === 0 && (
-                            <option value="">No hay problemas disponibles</option>
-                          )}
-                          {problems.map((problem) => (
-                            <option key={problem.id} value={problem.id}>
-                              {problem.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <div className="flex gap-2">
-                        <label className="block flex-1 text-sm">
-                          <span className="text-muted-foreground">
-                            Cupo (máx. {nextRoundPreview.advancingCount})
-                          </span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={nextRoundPreview.advancingCount}
-                            value={nextRoundCapacity}
-                            onChange={(event) => setNextRoundCapacity(Number(event.target.value))}
-                            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
-                          />
-                        </label>
-                        <label className="block flex-1 text-sm">
-                          <span className="text-muted-foreground">Tiempo límite (minutos)</span>
-                          <input
-                            type="number"
-                            min={1}
-                            value={timeLimitMinutes}
-                            onChange={(event) => setTimeLimitMinutes(Number(event.target.value))}
-                            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
-                          />
-                        </label>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void saveNextRound()}
-                        disabled={savingNextRound}
-                        className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-                      >
-                        {savingNextRound
-                          ? "Creando..."
-                          : `Crear ronda ${nextRoundPreview.nextRoundNumber}`}
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <p className="mt-2 text-xs text-muted-foreground">{nextRoundPreview.reason}</p>
-                )}
-              </section>
-            )}
-
-            <section className="rounded-xl border border-border bg-card p-5">
-              <h3 className="text-sm font-semibold text-foreground">Configurar ronda</h3>
-              <div className="mt-4 space-y-4">
-                <label className="block text-sm">
-                  <span className="text-muted-foreground">Nombre del torneo</span>
-                  <select
-                    value={creatingTournament ? NEW_TOURNAMENT_OPTION : tournamentName}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      if (value === NEW_TOURNAMENT_OPTION) {
-                        // Sin torneo elegido mientras se crea: si el admin guarda la
-                        // ronda antes, saveRound pide el nombre en vez de usar el
-                        // anterior en silencio.
-                        setTournamentName("");
-                        setCreatingTournament(true);
-                        return;
-                      }
-                      setCreatingTournament(false);
-                      setTournamentName(value);
-                    }}
-                    className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
-                  >
-                    <option value="">
-                      {tournaments.length === 0
-                        ? "No hay torneos. Creá el primero para empezar."
-                        : "Sin torneo seleccionado"}
-                    </option>
-                    {tournaments.map((tournament) =>
-                      tournament.status === "finished" ? (
-                        <option key={tournament.id} value={`finished:${tournament.id}`} disabled>
-                          {tournament.name} (finalizado)
-                        </option>
-                      ) : (
-                        <option key={tournament.id} value={tournament.name}>
-                          {tournament.name}
-                        </option>
-                      ),
-                    )}
-                    <option value={NEW_TOURNAMENT_OPTION}>+ Crear nuevo torneo</option>
-                  </select>
-                </label>
-                {(creatingTournament || tournaments.length === 0) && (
-                  <div className="space-y-2">
-                    <input
-                      value={newTournamentName}
-                      onChange={(event) => setNewTournamentName(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") void saveTournament();
-                      }}
-                      placeholder="Nombre del nuevo torneo"
-                      className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
-                    />
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        disabled={savingTournament}
-                        onClick={() => void saveTournament()}
-                        className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-opacity hover:opacity-70 disabled:opacity-50"
-                      >
-                        {savingTournament ? "Creando..." : "Crear"}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={savingTournament}
-                        onClick={() => {
-                          setNewTournamentName("");
-                          setCreatingTournament(false);
-                        }}
-                        className="rounded-lg border border-danger px-3 py-1.5 text-xs font-medium text-danger transition-opacity hover:opacity-70 disabled:opacity-50"
-                      >
-                        Cancelar
-                      </button>
-                    </div>
-                  </div>
-                )}
-                <label className="block text-sm">
-                  <span className="text-muted-foreground">Problema</span>
-                  <select
-                    value={selectedProblem}
-                    onChange={(event) => setSelectedProblem(event.target.value)}
-                    className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
-                  >
-                    {problems.length === 0 && (
-                      <option value="">No hay problemas disponibles</option>
-                    )}
-                    {problems.map((problem) => (
-                      <option key={problem.id} value={problem.id}>
-                        {problem.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block text-sm">
-                  <span className="text-muted-foreground">Número de ronda</span>
-                  <input
-                    type="number"
-                    min={1}
-                    value={roundNumber}
-                    onChange={(event) => setRoundNumber(Number(event.target.value))}
-                    className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
-                  />
-                </label>
-                <label className="block text-sm">
-                  <span className="text-muted-foreground">Cupo</span>
-                  <input
-                    type="number"
-                    min={1}
-                    value={capacity}
-                    onChange={(event) => setCapacity(Number(event.target.value))}
-                    className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
-                  />
-                </label>
-                <label className="block text-sm">
-                  <span className="text-muted-foreground">Tiempo límite (minutos)</span>
-                  <input
-                    type="number"
-                    min={1}
-                    value={timeLimitMinutes}
-                    onChange={(event) => setTimeLimitMinutes(Number(event.target.value))}
-                    className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={() => void saveRound()}
-                  disabled={savingRound}
-                  className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-                >
-                  {savingRound ? "Creando..." : "Crear ronda"}
-                </button>
-                {createdRoundId && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void startRound(createdRoundId)
-                        .then(() => setMessage("Ronda iniciada"))
-                        .catch((error) =>
-                          setMessage(
-                            error instanceof Error ? error.message : "No se pudo iniciar la ronda",
-                          ),
-                        )
-                    }
-                    className="w-full rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
-                  >
-                    Iniciar ronda creada
-                  </button>
-                )}
+      <TabsContent value="rondas" className="space-y-5">
+        <section className="rounded-xl border border-border bg-card p-5">
+          <h3 className="text-sm font-semibold text-foreground">Crear problema</h3>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Cada caso define una entrada y su salida esperada. Solo se acepta la solución que pasa
+            todos los casos.
+          </p>
+          <form
+            className="mt-4 space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveProblem();
+            }}
+          >
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Nombre</span>
+              <input
+                value={problemName}
+                onChange={(event) => setProblemName(event.target.value)}
+                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 outline-none focus:border-ring"
+                placeholder="Saludo"
+                maxLength={120}
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Enunciado</span>
+              <textarea
+                value={problemStatement}
+                onChange={(event) => setProblemStatement(event.target.value)}
+                className="mt-1 min-h-20 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 outline-none focus:border-ring"
+                placeholder="Imprime el saludo solicitado."
+                maxLength={4000}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">Vista previa</p>
+              <div className="mt-1 rounded-lg border border-border p-3">
+                <ProblemStatement statement={problemStatement} />
               </div>
-            </section>
-
-            <section className="rounded-xl border border-border bg-card p-5">
-              <h3 className="text-sm font-semibold text-foreground">Progreso del torneo</h3>
-              <ul className="mt-4 space-y-1">
-                {MOCK_ROUNDS_PROGRESS.map((r) => (
-                  <li
-                    key={r.round}
-                    className={`flex items-center justify-between rounded-lg px-3 py-2 text-sm ${
-                      r.state === "active"
-                        ? "bg-info-soft font-medium text-foreground"
-                        : r.state === "upcoming"
-                          ? "text-muted-foreground"
-                          : "text-foreground"
-                    }`}
-                  >
-                    <span>Ronda {r.round}</span>
-                    <span className="font-mono tabular-nums">
-                      {r.entered} → {r.advanced ?? "—"}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          </TabsContent>
-
-          <TabsContent value="problema">
-            <section className="rounded-xl border border-border bg-card p-5">
-              <h3 className="text-sm font-semibold text-foreground">Crear problema</h3>
-              <p className="mt-2 text-xs text-muted-foreground">
-                Cada caso define una entrada y su salida esperada. Solo se acepta la solución que
-                pasa todos los casos.
-              </p>
-              <form
-                className="mt-4 space-y-3"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void saveProblem();
-                }}
+            </label>
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Dificultad</span>
+              <select
+                value={problemDifficulty}
+                onChange={(event) =>
+                  setProblemDifficulty(event.target.value as "easy" | "medium" | "hard")
+                }
+                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 outline-none focus:border-ring"
               >
-                <label className="block text-sm">
-                  <span className="text-muted-foreground">Nombre</span>
-                  <input
-                    value={problemName}
-                    onChange={(event) => setProblemName(event.target.value)}
-                    className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 outline-none focus:border-ring"
-                    placeholder="Saludo"
-                    maxLength={120}
-                  />
-                </label>
-                <label className="block text-sm">
-                  <span className="text-muted-foreground">Enunciado</span>
-                  <textarea
-                    value={problemStatement}
-                    onChange={(event) => setProblemStatement(event.target.value)}
-                    className="mt-1 min-h-20 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 outline-none focus:border-ring"
-                    placeholder="Imprime el saludo solicitado."
-                    maxLength={4000}
-                  />
-                  <p className="mt-2 text-xs text-muted-foreground">Vista previa</p>
-                  <div className="mt-1 rounded-lg border border-border p-3">
-                    <ProblemStatement statement={problemStatement} />
-                  </div>
-                </label>
-                <label className="block text-sm">
-                  <span className="text-muted-foreground">Dificultad</span>
-                  <select
-                    value={problemDifficulty}
-                    onChange={(event) =>
-                      setProblemDifficulty(event.target.value as "easy" | "medium" | "hard")
-                    }
-                    className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 outline-none focus:border-ring"
-                  >
-                    <option value="easy">Fácil</option>
-                    <option value="medium">Intermedio</option>
-                    <option value="hard">Difícil</option>
-                  </select>
-                </label>
-                <label className="block text-sm">
-                  <span className="text-muted-foreground">Importar casos (.zip)</span>
-                  <input
-                    type="file"
-                    accept=".zip"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
-                      // Se limpia para poder volver a elegir el mismo archivo.
-                      event.target.value = "";
-                      if (file) void importTestCases(file);
-                    }}
-                    className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 outline-none focus:border-ring"
-                  />
-                </label>
-                {hiddenCases.length > 0 && (
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Hay {hiddenCases.length} casos ocultos además de los que se ven abajo. Se envían
-                    todos al crear el problema.
-                  </p>
-                )}
-                <button
-                  type="button"
-                  onClick={clearTestCases}
-                  disabled={savingProblem}
-                  className="rounded-lg border border-danger px-3 py-1.5 text-xs font-medium text-danger transition-opacity hover:opacity-70 disabled:opacity-50"
-                >
-                  Limpiar todos los casos
-                </button>
-                <div className="space-y-2 text-sm">
-                  <span className="text-muted-foreground">Casos de prueba</span>
-                  {testCases.map((testCase, index) => (
-                    <div key={index} className="space-y-2 rounded-lg border border-border p-3">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-medium text-foreground">Caso {index + 1}</span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setTestCases((current) => current.filter((_, i) => i !== index))
-                          }
-                          disabled={testCases.length === 1}
-                          className="text-muted-foreground transition-colors hover:text-destructive disabled:opacity-50"
-                        >
-                          Quitar
-                        </button>
-                      </div>
-                      <label className="block text-xs">
-                        <span className="text-muted-foreground">Entrada (stdin)</span>
-                        <textarea
-                          value={testCase.stdin}
-                          onChange={(event) =>
-                            setTestCases((current) =>
-                              current.map((item, i) =>
-                                i === index ? { ...item, stdin: event.target.value } : item,
-                              ),
-                            )
-                          }
-                          className="mt-1 min-h-12 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:border-ring"
-                          placeholder="Mundo"
-                          maxLength={1000}
-                        />
-                      </label>
-                      <label className="block text-xs">
-                        <span className="text-muted-foreground">Salida esperada</span>
-                        <textarea
-                          value={testCase.expected}
-                          onChange={(event) =>
-                            setTestCases((current) =>
-                              current.map((item, i) =>
-                                i === index ? { ...item, expected: event.target.value } : item,
-                              ),
-                            )
-                          }
-                          className="mt-1 min-h-12 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:border-ring"
-                          placeholder="Hola Mundo"
-                          maxLength={1000}
-                        />
-                      </label>
-                    </div>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setTestCases((current) => [...current, { stdin: "", expected: "" }])
-                    }
-                    disabled={testCases.length + hiddenCases.length >= 100}
-                    className="w-full rounded-lg border border-dashed border-border px-4 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:opacity-50"
-                  >
-                    Agregar caso
-                  </button>
-                </div>
-                <button
-                  type="submit"
-                  disabled={savingProblem}
-                  className="w-full rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-                >
-                  {savingProblem ? "Creando..." : "Crear y seleccionar"}
-                </button>
-              </form>
-            </section>
-          </TabsContent>
-
-          <TabsContent value="acceso">
-            <section className="rounded-xl border border-border bg-card p-5">
-              <h3 className="text-sm font-semibold text-foreground">Códigos de acceso</h3>
+                <option value="easy">Fácil</option>
+                <option value="medium">Intermedio</option>
+                <option value="hard">Difícil</option>
+              </select>
+            </label>
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Importar casos (.zip)</span>
+              <input
+                type="file"
+                accept=".zip"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  // Se limpia para poder volver a elegir el mismo archivo.
+                  event.target.value = "";
+                  if (file) void importTestCases(file);
+                }}
+                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 outline-none focus:border-ring"
+              />
+            </label>
+            {hiddenCases.length > 0 && (
               <p className="mt-2 text-xs text-muted-foreground">
-                Cada código se puede canjear una sola vez. Si lo asocias a un torneo, se invalida
-                solo cuando el torneo termina o cuando vence el plazo.
+                Hay {hiddenCases.length} casos ocultos además de los que se ven abajo. Se envían
+                todos al crear el problema.
               </p>
-
-              <div className="mt-4 space-y-3">
-                <label className="block text-xs">
-                  <span className="text-muted-foreground">Torneo (opcional)</span>
-                  <select
-                    value={codeTournamentId}
-                    onChange={(event) => setCodeTournamentId(event.target.value)}
-                    className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
-                  >
-                    <option value="">Sin torneo (código global)</option>
-                    {tournaments.map((tournament) => (
-                      <option
-                        key={tournament.id}
-                        value={tournament.id}
-                        disabled={tournament.status === "finished"}
-                      >
-                        {tournament.name}
-                        {tournament.status === "finished" ? " — finalizado" : ""}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <div className="flex gap-2">
-                  <label className="block flex-1 text-xs">
-                    <span className="text-muted-foreground">Cantidad</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={500}
-                      value={codeCount}
-                      onChange={(event) => setCodeCount(Number(event.target.value))}
-                      className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
-                      aria-label="Cantidad de códigos"
-                    />
-                  </label>
-                  <label className="block flex-1 text-xs">
-                    <span className="text-muted-foreground">Válidos por (minutos)</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={43200}
-                      value={codeTtlMinutes}
-                      onChange={(event) => setCodeTtlMinutes(Number(event.target.value))}
-                      className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
-                      aria-label="Minutos de validez"
-                    />
-                  </label>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={busyCodes}
-                  onClick={() => {
-                    setBusyCodes(true);
-                    void generateAccessCodes({
-                      count: codeCount,
-                      tournamentId: codeTournamentId || null,
-                      ttlMinutes: codeTtlMinutes || null,
-                    })
-                      .then((result) => {
-                        setGeneratedCodes(result.codes.map((item) => item.code));
-                        setMessage(`${result.codes.length} códigos generados`);
-                        return refreshCodes();
-                      })
-                      .catch((error) =>
-                        setMessage(
-                          error instanceof Error
-                            ? error.message
-                            : "No se pudieron generar los códigos",
-                        ),
-                      )
-                      .finally(() => setBusyCodes(false));
-                  }}
-                  className="w-full rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-                >
-                  {busyCodes ? "Generando..." : "Generar"}
-                </button>
-              </div>
-
-              {generatedCodes.length > 0 && (
-                <textarea
-                  readOnly
-                  value={generatedCodes.join("\n")}
-                  className="mt-3 h-32 w-full resize-none rounded-lg border border-input bg-background p-3 font-mono text-xs text-foreground outline-none"
-                  aria-label="Códigos generados"
-                />
-              )}
-
-              <div className="mt-4 flex items-center justify-between">
-                <h4 className="text-xs font-semibold text-foreground">Códigos emitidos</h4>
-                <button
-                  type="button"
-                  onClick={() => void refreshCodes()}
-                  className="text-xs text-primary hover:underline"
-                >
-                  Actualizar
-                </button>
-              </div>
-
-              {codes.length > 0 && (
-                <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-border">
-                  <table className="w-full text-left text-xs">
-                    <thead className="sticky top-0 bg-muted text-muted-foreground">
-                      <tr>
-                        <th className="px-2 py-1.5 font-medium">Código</th>
-                        <th className="px-2 py-1.5 font-medium">Estado</th>
-                        <th className="px-2 py-1.5 font-medium">Vence</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {codes.map((item) => (
-                        <tr key={item.id} className="border-t border-border">
-                          <td className="px-2 py-1.5 font-mono text-foreground">
-                            {item.code}
-                            {item.display_name ? (
-                              <span className="ml-1 font-sans text-muted-foreground">
-                                {item.display_name}
-                              </span>
-                            ) : null}
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <span className={CODE_STATUS_CLASS[item.status]}>
-                              {CODE_STATUS_LABEL[item.status]}
-                            </span>
-                          </td>
-                          <td className="px-2 py-1.5 text-muted-foreground">
-                            {item.expires_at ? formatExpiry(item.expires_at) : "—"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              {loadingCodes && <p className="mt-2 text-xs text-muted-foreground">Cargando…</p>}
-              {!loadingCodes && codes.length === 0 && (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Todavía no hay códigos emitidos.
-                </p>
-              )}
-
-              {codeTournamentId && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    disabled={busyCodes}
-                    onClick={() => {
-                      setBusyCodes(true);
-                      void revokeAccessCodes({ tournamentId: codeTournamentId })
-                        .then((result) => {
-                          setMessage(`${result.revoked} códigos revocados`);
-                          return refreshCodes();
-                        })
-                        .catch((error) =>
-                          setMessage(
-                            error instanceof Error ? error.message : "No se pudieron revocar",
+            )}
+            <button
+              type="button"
+              onClick={clearTestCases}
+              disabled={savingProblem}
+              className="rounded-lg border border-danger px-3 py-1.5 text-xs font-medium text-danger transition-opacity hover:opacity-70 disabled:opacity-50"
+            >
+              Limpiar todos los casos
+            </button>
+            <div className="space-y-2 text-sm">
+              <span className="text-muted-foreground">Casos de prueba</span>
+              {testCases.map((testCase, index) => (
+                <div key={index} className="space-y-2 rounded-lg border border-border p-3">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-medium text-foreground">Caso {index + 1}</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setTestCases((current) => current.filter((_, i) => i !== index))
+                      }
+                      disabled={testCases.length === 1}
+                      className="text-muted-foreground transition-colors hover:text-destructive disabled:opacity-50"
+                    >
+                      Quitar
+                    </button>
+                  </div>
+                  <label className="block text-xs">
+                    <span className="text-muted-foreground">Entrada (stdin)</span>
+                    <textarea
+                      value={testCase.stdin}
+                      onChange={(event) =>
+                        setTestCases((current) =>
+                          current.map((item, i) =>
+                            i === index ? { ...item, stdin: event.target.value } : item,
                           ),
                         )
-                        .finally(() => setBusyCodes(false));
-                    }}
+                      }
+                      className="mt-1 min-h-12 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:border-ring"
+                      placeholder="Mundo"
+                      maxLength={1000}
+                    />
+                  </label>
+                  <label className="block text-xs">
+                    <span className="text-muted-foreground">Salida esperada</span>
+                    <textarea
+                      value={testCase.expected}
+                      onChange={(event) =>
+                        setTestCases((current) =>
+                          current.map((item, i) =>
+                            i === index ? { ...item, expected: event.target.value } : item,
+                          ),
+                        )
+                      }
+                      className="mt-1 min-h-12 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:border-ring"
+                      placeholder="Hola Mundo"
+                      maxLength={1000}
+                    />
+                  </label>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => setTestCases((current) => [...current, { stdin: "", expected: "" }])}
+                disabled={testCases.length + hiddenCases.length >= 100}
+                className="w-full rounded-lg border border-dashed border-border px-4 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:opacity-50"
+              >
+                Agregar caso
+              </button>
+            </div>
+            <button
+              type="submit"
+              disabled={savingProblem}
+              className="w-full rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {savingProblem ? "Creando..." : "Crear y seleccionar"}
+            </button>
+          </form>
+        </section>
+
+        <section className="rounded-xl border border-border bg-card p-5">
+          <h3 className="text-sm font-semibold text-foreground">Configurar ronda</h3>
+          <div className="mt-4 space-y-4">
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Nombre del torneo</span>
+              <select
+                value={creatingTournament ? NEW_TOURNAMENT_OPTION : tournamentName}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value === NEW_TOURNAMENT_OPTION) {
+                    // Sin torneo elegido mientras se crea: si el admin guarda la
+                    // ronda antes, saveRound pide el nombre en vez de usar el
+                    // anterior en silencio.
+                    setTournamentName("");
+                    setCreatingTournament(true);
+                    return;
+                  }
+                  setCreatingTournament(false);
+                  setTournamentName(value);
+                }}
+                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+              >
+                <option value="">
+                  {tournaments.length === 0
+                    ? "No hay torneos. Creá el primero para empezar."
+                    : "Sin torneo seleccionado"}
+                </option>
+                {tournaments.map((tournament) =>
+                  tournament.status === "finished" ? (
+                    <option key={tournament.id} value={`finished:${tournament.id}`} disabled>
+                      {tournament.name} (finalizado)
+                    </option>
+                  ) : (
+                    <option key={tournament.id} value={tournament.name}>
+                      {tournament.name}
+                    </option>
+                  ),
+                )}
+                <option value={NEW_TOURNAMENT_OPTION}>+ Crear nuevo torneo</option>
+              </select>
+            </label>
+            {(creatingTournament || tournaments.length === 0) && (
+              <div className="space-y-2">
+                <input
+                  value={newTournamentName}
+                  onChange={(event) => setNewTournamentName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void saveTournament();
+                  }}
+                  placeholder="Nombre del nuevo torneo"
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={savingTournament}
+                    onClick={() => void saveTournament()}
                     className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-opacity hover:opacity-70 disabled:opacity-50"
                   >
-                    Revocar sin usar
+                    {savingTournament ? "Creando..." : "Crear"}
                   </button>
                   <button
                     type="button"
-                    disabled={busyCodes}
+                    disabled={savingTournament}
                     onClick={() => {
-                      setBusyCodes(true);
-                      void finishTournament(codeTournamentId)
-                        .then((result) => {
-                          setMessage(
-                            `Torneo finalizado y ${result.expiredAccessCodes} códigos invalidados`,
-                          );
-                          return Promise.all([refreshCodes(), refreshTournaments()]);
-                        })
-                        .catch((error) =>
-                          setMessage(
-                            error instanceof Error ? error.message : "No se pudo finalizar",
-                          ),
-                        )
-                        .finally(() => setBusyCodes(false));
+                      setNewTournamentName("");
+                      setCreatingTournament(false);
                     }}
                     className="rounded-lg border border-danger px-3 py-1.5 text-xs font-medium text-danger transition-opacity hover:opacity-70 disabled:opacity-50"
                   >
-                    Finalizar torneo e invalidar
+                    Cancelar
                   </button>
                 </div>
-              )}
+              </div>
+            )}
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Problema</span>
+              <select
+                value={selectedProblem}
+                onChange={(event) => setSelectedProblem(event.target.value)}
+                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+              >
+                {problems.length === 0 && <option value="">No hay problemas disponibles</option>}
+                {problems.map((problem) => (
+                  <option key={problem.id} value={problem.id}>
+                    {problem.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Número de ronda</span>
+              <input
+                type="number"
+                min={1}
+                value={roundNumber}
+                onChange={(event) => setRoundNumber(Number(event.target.value))}
+                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Cupo</span>
+              <input
+                type="number"
+                min={1}
+                value={capacity}
+                onChange={(event) => setCapacity(Number(event.target.value))}
+                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Tiempo límite (minutos)</span>
+              <input
+                type="number"
+                min={1}
+                value={timeLimitMinutes}
+                onChange={(event) => setTimeLimitMinutes(Number(event.target.value))}
+                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => void saveRound()}
+              disabled={savingRound}
+              className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {savingRound ? "Creando..." : "Crear ronda"}
+            </button>
+            {createdRoundId && (
+              <button
+                type="button"
+                onClick={() =>
+                  void startRound(createdRoundId)
+                    .then(() => setMessage("Ronda iniciada"))
+                    .catch((error) =>
+                      setMessage(
+                        error instanceof Error ? error.message : "No se pudo iniciar la ronda",
+                      ),
+                    )
+                }
+                className="w-full rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
+              >
+                Iniciar ronda creada
+              </button>
+            )}
+          </div>
+        </section>
 
-              {message && <p className="mt-2 text-xs text-muted-foreground">{message}</p>}
-            </section>
-          </TabsContent>
-        </Tabs>
-      </aside>
-    </div>
+        {nextRoundPreview && (
+          <section className="rounded-xl border border-border bg-card p-5">
+            <h3 className="text-sm font-semibold text-foreground">Ronda siguiente</h3>
+            {nextRoundPreview.available ? (
+              <>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {nextRoundPreview.advancingCount} de {liveParticipants.length} participantes
+                  clasificaron a la ronda {nextRoundPreview.nextRoundNumber}. Ya están inscriptos.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {nextRoundPreview.advancing.map((entry) => (
+                    <span
+                      key={entry.participant_id}
+                      className="rounded-md bg-muted px-2 py-0.5 text-xs text-foreground"
+                    >
+                      {entry.final_rank}. {entry.display_name}
+                    </span>
+                  ))}
+                </div>
+                <div className="mt-4 space-y-3">
+                  <label className="block text-sm">
+                    <span className="text-muted-foreground">Problema</span>
+                    <select
+                      value={selectedProblem}
+                      onChange={(event) => setSelectedProblem(event.target.value)}
+                      className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+                    >
+                      {problems.length === 0 && (
+                        <option value="">No hay problemas disponibles</option>
+                      )}
+                      {problems.map((problem) => (
+                        <option key={problem.id} value={problem.id}>
+                          {problem.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="flex gap-2">
+                    <label className="block flex-1 text-sm">
+                      <span className="text-muted-foreground">
+                        Cupo (máx. {nextRoundPreview.advancingCount})
+                      </span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={nextRoundPreview.advancingCount}
+                        value={nextRoundCapacity}
+                        onChange={(event) => setNextRoundCapacity(Number(event.target.value))}
+                        className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+                      />
+                    </label>
+                    <label className="block flex-1 text-sm">
+                      <span className="text-muted-foreground">Tiempo límite (minutos)</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={timeLimitMinutes}
+                        onChange={(event) => setTimeLimitMinutes(Number(event.target.value))}
+                        className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+                      />
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void saveNextRound()}
+                    disabled={savingNextRound}
+                    className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                  >
+                    {savingNextRound
+                      ? "Creando..."
+                      : `Crear ronda ${nextRoundPreview.nextRoundNumber}`}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="mt-2 text-xs text-muted-foreground">{nextRoundPreview.reason}</p>
+            )}
+          </section>
+        )}
+
+        <section className="rounded-xl border border-border bg-card p-5">
+          <h3 className="text-sm font-semibold text-foreground">Progreso del torneo</h3>
+          <ul className="mt-4 space-y-1">
+            {MOCK_ROUNDS_PROGRESS.map((r) => (
+              <li
+                key={r.round}
+                className={`flex items-center justify-between rounded-lg px-3 py-2 text-sm ${
+                  r.state === "active"
+                    ? "bg-info-soft font-medium text-foreground"
+                    : r.state === "upcoming"
+                      ? "text-muted-foreground"
+                      : "text-foreground"
+                }`}
+              >
+                <span>Ronda {r.round}</span>
+                <span className="font-mono tabular-nums">
+                  {r.entered} → {r.advanced ?? "—"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      </TabsContent>
+
+      <TabsContent value="acceso">
+        <section className="rounded-xl border border-border bg-card p-5">
+          <h3 className="text-sm font-semibold text-foreground">Códigos de acceso</h3>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Cada código se puede canjear una sola vez. Si lo asocias a un torneo, se invalida solo
+            cuando el torneo termina o cuando vence el plazo.
+          </p>
+
+          <div className="mt-4 space-y-3">
+            <label className="block text-xs">
+              <span className="text-muted-foreground">Torneo (opcional)</span>
+              <select
+                value={codeTournamentId}
+                onChange={(event) => setCodeTournamentId(event.target.value)}
+                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+              >
+                <option value="">Sin torneo (código global)</option>
+                {tournaments.map((tournament) => (
+                  <option
+                    key={tournament.id}
+                    value={tournament.id}
+                    disabled={tournament.status === "finished"}
+                  >
+                    {tournament.name}
+                    {tournament.status === "finished" ? " — finalizado" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="flex gap-2">
+              <label className="block flex-1 text-xs">
+                <span className="text-muted-foreground">Cantidad</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={500}
+                  value={codeCount}
+                  onChange={(event) => setCodeCount(Number(event.target.value))}
+                  className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+                  aria-label="Cantidad de códigos"
+                />
+              </label>
+              <label className="block flex-1 text-xs">
+                <span className="text-muted-foreground">Válidos por (minutos)</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={43200}
+                  value={codeTtlMinutes}
+                  onChange={(event) => setCodeTtlMinutes(Number(event.target.value))}
+                  className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+                  aria-label="Minutos de validez"
+                />
+              </label>
+            </div>
+
+            <button
+              type="button"
+              disabled={busyCodes}
+              onClick={() => {
+                setBusyCodes(true);
+                void generateAccessCodes({
+                  count: codeCount,
+                  tournamentId: codeTournamentId || null,
+                  ttlMinutes: codeTtlMinutes || null,
+                })
+                  .then((result) => {
+                    setGeneratedCodes(result.codes.map((item) => item.code));
+                    setMessage(`${result.codes.length} códigos generados`);
+                    return refreshCodes();
+                  })
+                  .catch((error) =>
+                    setMessage(
+                      error instanceof Error ? error.message : "No se pudieron generar los códigos",
+                    ),
+                  )
+                  .finally(() => setBusyCodes(false));
+              }}
+              className="w-full rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {busyCodes ? "Generando..." : "Generar"}
+            </button>
+          </div>
+
+          {generatedCodes.length > 0 && (
+            <textarea
+              readOnly
+              value={generatedCodes.join("\n")}
+              className="mt-3 h-32 w-full resize-none rounded-lg border border-input bg-background p-3 font-mono text-xs text-foreground outline-none"
+              aria-label="Códigos generados"
+            />
+          )}
+
+          <div className="mt-4 flex items-center justify-between">
+            <h4 className="text-xs font-semibold text-foreground">Códigos emitidos</h4>
+            <button
+              type="button"
+              onClick={() => void refreshCodes()}
+              className="text-xs text-primary hover:underline"
+            >
+              Actualizar
+            </button>
+          </div>
+
+          {codes.length > 0 && (
+            <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-border">
+              <table className="w-full text-left text-xs">
+                <thead className="sticky top-0 bg-muted text-muted-foreground">
+                  <tr>
+                    <th className="px-2 py-1.5 font-medium">Código</th>
+                    <th className="px-2 py-1.5 font-medium">Estado</th>
+                    <th className="px-2 py-1.5 font-medium">Vence</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {codes.map((item) => (
+                    <tr key={item.id} className="border-t border-border">
+                      <td className="px-2 py-1.5 font-mono text-foreground">
+                        {item.code}
+                        {item.display_name ? (
+                          <span className="ml-1 font-sans text-muted-foreground">
+                            {item.display_name}
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <span className={CODE_STATUS_CLASS[item.status]}>
+                          {CODE_STATUS_LABEL[item.status]}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5 text-muted-foreground">
+                        {item.expires_at ? formatExpiry(item.expires_at) : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {loadingCodes && <p className="mt-2 text-xs text-muted-foreground">Cargando…</p>}
+          {!loadingCodes && codes.length === 0 && (
+            <p className="mt-2 text-xs text-muted-foreground">Todavía no hay códigos emitidos.</p>
+          )}
+
+          {codeTournamentId && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={busyCodes}
+                onClick={() => {
+                  setBusyCodes(true);
+                  void revokeAccessCodes({ tournamentId: codeTournamentId })
+                    .then((result) => {
+                      setMessage(`${result.revoked} códigos revocados`);
+                      return refreshCodes();
+                    })
+                    .catch((error) =>
+                      setMessage(error instanceof Error ? error.message : "No se pudieron revocar"),
+                    )
+                    .finally(() => setBusyCodes(false));
+                }}
+                className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-opacity hover:opacity-70 disabled:opacity-50"
+              >
+                Revocar sin usar
+              </button>
+              <button
+                type="button"
+                disabled={busyCodes}
+                onClick={() => {
+                  setBusyCodes(true);
+                  void finishTournament(codeTournamentId)
+                    .then((result) => {
+                      setMessage(
+                        `Torneo finalizado y ${result.expiredAccessCodes} códigos invalidados`,
+                      );
+                      return Promise.all([refreshCodes(), refreshTournaments()]);
+                    })
+                    .catch((error) =>
+                      setMessage(error instanceof Error ? error.message : "No se pudo finalizar"),
+                    )
+                    .finally(() => setBusyCodes(false));
+                }}
+                className="rounded-lg border border-danger px-3 py-1.5 text-xs font-medium text-danger transition-opacity hover:opacity-70 disabled:opacity-50"
+              >
+                Finalizar torneo e invalidar
+              </button>
+            </div>
+          )}
+
+          {message && <p className="mt-2 text-xs text-muted-foreground">{message}</p>}
+        </section>
+      </TabsContent>
+    </Tabs>
   );
 }
 
