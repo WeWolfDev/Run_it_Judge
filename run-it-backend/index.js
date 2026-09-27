@@ -92,6 +92,8 @@ const ACCESS_CODE_LENGTH = 6;
 const ACCESS_CODE_MAX_COUNT = 500;
 // Igual que CHARACTER_COUNT de frontend/src/lib/session.ts y silk-{0..9} de styles.css.
 const CHARACTER_COUNT = 10;
+// Cuenta regresiva entre POST /rounds/:id/start y el primer envío aceptado.
+const ROUND_COUNTDOWN_SECONDS = 10;
 
 function generateAccessCode() {
 	let code = '';
@@ -130,7 +132,9 @@ const USABLE_ACCESS_CODE_SQL = `
 // origen (desarrollo) no puede leerlo para sincronizar el cronómetro.
 fastify.register(cors, { origin: allowedOrigins, exposedHeaders: ['Date'] });
 
-fastify.get('/health', async () => ({ status: 'ok' }));
+// now (ms) sincroniza el reloj de los clientes: el header Date solo tiene
+// resolución de un segundo y descuadraba la cuenta regresiva hasta 1 s.
+fastify.get('/health', async () => ({ status: 'ok', now: Date.now() }));
 
 fastify.get('/ready', async (request, reply) => {
 	try {
@@ -749,17 +753,22 @@ fastify.delete('/rounds/:id', async (request, reply) => {
 
 fastify.post('/rounds/:id/start', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
+	// La cuenta regresiva vive en la base, no en un setTimeout: sobrevive a un
+	// reinicio y todos los clientes cuentan hacia el mismo instante. El tiempo
+	// límite corre desde starts_at, así la espera no se descuenta de la ronda.
 	const result = await query(
 		`UPDATE rounds SET status = 'active', started_at = now(),
-			ends_at = now() + (time_limit_seconds * interval '1 second')
+			starts_at = now() + ($2::int * interval '1 second'),
+			ends_at = now() + (($2::int + time_limit_seconds) * interval '1 second')
 		 WHERE id = $1 AND status = 'pending' RETURNING *`,
-		[request.params.id],
+		[request.params.id, ROUND_COUNTDOWN_SECONDS],
 	);
 	if (!result.rowCount) return reply.code(409).send({ error: 'La ronda no puede iniciar' });
 	fastify.io?.emit('round:started', {
 		round_id: result.rows[0].id,
 		ends_at: result.rows[0].ends_at,
 		capacity: result.rows[0].capacity,
+		starts_at: result.rows[0].starts_at,
 	});
 	return result.rows[0];
 });
@@ -833,11 +842,14 @@ fastify.post('/rounds/:id/submissions', async (request, reply) => {
 	if (Date.now() - recent < 1000) return reply.code(429).send({ error: 'Espera antes de enviar otra solución' });
 	submissionRate.set(request.user.id, Date.now());
 	const round = await query(
-		"SELECT * FROM rounds WHERE id = $1 AND status = 'active' AND ends_at > now()",
+		"SELECT *, starts_at > now() AS counting_down FROM rounds WHERE id = $1 AND status = 'active' AND ends_at > now()",
 		[request.params.id],
 	);
 	if (!round.rowCount) return reply.code(409).send({ error: 'La ronda no está activa' });
 	if (round.rows[0].paused) return reply.code(409).send({ error: 'La ronda está pausada' });
+	// El editor deshabilitado es solo la mitad: sin este corte, un envío por API
+	// saldría antes que los demás. starts_at NULL (rondas viejas) da NULL y pasa.
+	if (round.rows[0].counting_down) return reply.code(409).send({ error: 'La ronda todavía no empezó' });
 	const participant = await query(
 		`SELECT p.id, p.display_name FROM participants p
 		 JOIN round_participants rp ON rp.participant_id = p.id AND rp.round_id = $1
@@ -882,9 +894,11 @@ fastify.post('/rounds/:id/submissions', async (request, reply) => {
 });
 
 fastify.get('/rounds/:id/leaderboard', async (request) => {
+	// El tiempo corre desde el fin de la cuenta regresiva. Las rondas sin
+	// starts_at (anteriores a la columna) siguen contando desde started_at.
 	const result = await query(
 		`SELECT rp.*, p.display_name,
-		        EXTRACT(EPOCH FROM rp.solved_at - r.started_at
+		        EXTRACT(EPOCH FROM rp.solved_at - COALESCE(r.starts_at, r.started_at)
 		          + rp.penalty_seconds * interval '1 second')::int AS total_time_seconds
 		 FROM round_participants rp
 		 JOIN participants p ON p.id = rp.participant_id
@@ -905,6 +919,23 @@ fastify.get('/rounds/:id/submissions', async (request, reply) => {
 		 FROM submissions s JOIN participants p ON p.id = s.participant_id
 		 WHERE s.round_id = $1 ORDER BY s.submitted_at DESC LIMIT 200`,
 		[request.params.id],
+	);
+	return result.rows;
+});
+
+// Historial del participante autenticado. El participante sale de la sesión
+// (p.user_id), nunca del body ni de la query: así nadie puede pedir los envíos
+// de otro. Sin case_results: traen los tokens de Judge0.
+fastify.get('/rounds/:id/submissions/mine', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'participant'))) return;
+	if (!/^[0-9a-f-]{36}$/i.test(request.params.id)) return reply.code(400).send({ error: 'Ronda inválida' });
+	const result = await query(
+		`SELECT s.id, s.participant_id, s.language, s.verdict,
+		        s.test_cases_passed, s.test_cases_total, s.submitted_at
+		 FROM submissions s JOIN participants p ON p.id = s.participant_id
+		 WHERE s.round_id = $1 AND p.user_id = $2
+		 ORDER BY s.submitted_at DESC LIMIT 200`,
+		[request.params.id, request.user.id],
 	);
 	return result.rows;
 });
@@ -934,7 +965,7 @@ fastify.get('/tournaments/:id/leaderboard', async (request, reply) => {
 			MAX(rp.best_pass_percentage) AS best_pass_percentage,
 			SUM(rp.failed_attempts_count)::int AS failed_attempts_count,
 			SUM(rp.penalty_seconds)::int AS penalty_seconds,
-			SUM(EXTRACT(EPOCH FROM rp.solved_at - r.started_at
+			SUM(EXTRACT(EPOCH FROM rp.solved_at - COALESCE(r.starts_at, r.started_at)
 			  + rp.penalty_seconds * interval '1 second'))::int AS total_time_seconds
 		 FROM participants p JOIN round_participants rp ON rp.participant_id = p.id
 		 JOIN rounds r ON r.id = rp.round_id
@@ -959,6 +990,24 @@ async function canAccessSocketRound(user, roundId) {
 		[roundId, user.id],
 	);
 	return participant.rowCount > 0;
+}
+
+// Veredicto final de un envío, para la cola del admin y el historial del
+// participante. Aditivo: submission:queued y participant:progress no cambian.
+// Solo a la sala de la ronda, que canAccessSocketRound ya restringe al admin y
+// a los inscriptos activos; no sale a los sockets sin sesión.
+function emitSubmissionJudged(row, displayName) {
+	fastify.io?.to(`round:${row.round_id}`).emit('submission:judged', {
+		id: row.id,
+		round_id: row.round_id,
+		participant_id: row.participant_id,
+		display_name: displayName,
+		language: row.language,
+		verdict: row.verdict,
+		test_cases_passed: row.test_cases_passed,
+		test_cases_total: row.test_cases_total,
+		submitted_at: row.submitted_at,
+	})
 }
 
 async function start() {
@@ -995,20 +1044,25 @@ async function start() {
 	};
 	const submissionWorker = startSubmissionWorker(loadTestCases, async ({ submissionId, testCases, results }) => {
 		const submissionRow = await query(
-			`SELECT s.round_id, s.participant_id, s.verdict,
+			`SELECT s.round_id, s.participant_id, s.verdict, pa.display_name,
 			        r.status AS round_status, r.ends_at, r.paused
 			 FROM submissions s
 			 JOIN rounds r ON r.id = s.round_id
+			 JOIN participants pa ON pa.id = s.participant_id
 			 WHERE s.id = $1`,
 			[submissionId],
 		);
 		if (!submissionRow.rowCount || submissionRow.rows[0].verdict !== 'queued') return null;
 		const submission = submissionRow.rows[0];
 		if (submission.round_status !== 'active' || submission.paused || new Date(submission.ends_at) <= new Date()) {
-			return query(
+			// Sin este evento la fila quedaba en "queued" para siempre: este camino
+			// no emite participant:progress.
+			const unavailable = await query(
 				"UPDATE submissions SET verdict = 'round_unavailable' WHERE id = $1 AND verdict = 'queued' RETURNING *",
 				[submissionId],
-			).then((updateResult) => updateResult.rows[0] || null);
+			);
+			if (unavailable.rowCount) emitSubmissionJudged(unavailable.rows[0], submission.display_name);
+			return unavailable.rows[0] || null;
 		}
 		const caseResults = results.map(({ result, token }, index) => {
 			const expected = (testCases[index]?.expected ?? '').toString().trim();
@@ -1068,6 +1122,7 @@ async function start() {
 		};
 		fastify.io?.to(`round:${submission.round_id}`).emit('participant:progress', progress);
 		fastify.io?.emit('participant:progress', progress);
+		emitSubmissionJudged(updated.rows[0], submission.display_name);
 		return updated.rows[0];
 	});
 	submissionWorker.on('error', (error) => {
@@ -1078,17 +1133,21 @@ async function start() {
 			fastify.log.error({ error, submissionId: job?.data?.submissionId }, 'Submission failed');
 			if (!job?.data?.submissionId) return;
 			const failed = await query(
-				`UPDATE submissions SET verdict = 'judge_error'
-				 WHERE id = $1 AND verdict = 'queued' RETURNING id, round_id, participant_id`,
+				`UPDATE submissions s SET verdict = 'judge_error'
+				 FROM participants pa
+				 WHERE s.id = $1 AND s.verdict = 'queued' AND pa.id = s.participant_id
+				 RETURNING s.*, pa.display_name`,
 				[job.data.submissionId],
 			);
 			if (failed.rowCount) {
+				// Se conserva para los clientes que solo escuchan submission:queued.
 				fastify.io?.emit('submission:queued', {
 					id: failed.rows[0].id,
 					round_id: failed.rows[0].round_id,
 					participant_id: failed.rows[0].participant_id,
 					verdict: 'judge_error',
 				});
+				emitSubmissionJudged(failed.rows[0], failed.rows[0].display_name);
 			}
 		})().catch((updateError) => fastify.log.error(updateError, 'Could not mark failed submission'));
 	});
@@ -1184,6 +1243,8 @@ async function closeRound(roundId) {
 			fastify.io?.emit('tournament:winner', { participant_id: advanced[0].participant_id });
 		}
 		fastify.io?.emit('round:closed', {
+			// Aditivo: sin el id, un cliente no sabe qué ronda se cerró.
+			round_id: roundId,
 			ranking: ranked.map((row) => ({
 				participant_id: row.participant_id,
 				final_rank: row.rank,
