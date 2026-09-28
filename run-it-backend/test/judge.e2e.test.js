@@ -153,6 +153,23 @@ const HUNDRED_PROGRAM = [
 
 const TLE_PROGRAM = 'while True:\n    pass\n';
 
+// Los casos corren en paralelo y terminan en otro orden: los impares duermen y
+// responden bien, los pares responden al instante y mal. Si results se armara
+// por orden de llegada, el patrón de aprobados saldría corrido.
+const ORDER_CASES = Array.from({ length: 6 }, (_, index) => ({
+	stdin: `${index + 1}\n`,
+	expected: String((index + 1) * 10),
+}));
+const ORDER_PROGRAM = [
+	'import time',
+	'n = int(input())',
+	'if n % 2 == 1:',
+	'    time.sleep(0.8)',
+	'    print(n * 10)',
+	'else:',
+	'    print(n * 10 + 1)',
+].join('\n');
+
 const state = {
 	nonce: crypto.randomBytes(3).toString('hex'),
 	rounds: [],
@@ -292,9 +309,10 @@ test('preparación: torneo, tres rondas y cinco participantes en run_it_dev', { 
 	state.verdictRound = await createRound(1, { name: 'suma', testCases: SUM_CASES }, 50);
 	state.hundredRound = await createRound(2, { name: 'cien casos', testCases: HUNDRED_CASES }, 50);
 	state.penaltyRound = await createRound(3, { name: 'suma un caso', testCases: SUM_CASES.slice(0, 1) }, 5);
+	state.orderRound = await createRound(4, { name: 'orden de casos', testCases: ORDER_CASES }, 50);
 
 	const { codes } = await api('POST', '/access-codes/generate', {
-		count: 5,
+		count: 6,
 		tournamentId: state.tournament.id,
 	}, state.adminToken);
 	state.participants = {};
@@ -303,6 +321,7 @@ test('preparación: torneo, tres rondas y cinco participantes en run_it_dev', { 
 	}
 	state.participants.hundred = await enroll('cien', codes[3].code, [state.hundredRound.id]);
 	state.participants.penalty = await enroll('penal', codes[4].code, [state.penaltyRound.id]);
+	state.participants.order = await enroll('orden', codes[5].code, [state.orderRound.id]);
 
 	// POST /rounds/:id/start abre una cuenta regresiva: hasta starts_at el
 	// backend rechaza los envíos con 409. Mismo host, mismo reloj.
@@ -373,6 +392,33 @@ test('100 casos con el 4 fallando: veredicto del primer fallo y conteo real', { 
 		assert.equal(judged.language_id, 71);
 		assert.equal(judged.status.id === 3, index !== 3, `caso ${index + 1}: ${judged.status.description}`);
 	}
+});
+
+test('orden de casos: cada resultado queda pegado al stdin que lo produjo', { skip }, async (t) => {
+	const submissionId = await submit(state.participants.order, state.orderRound.id, 'python', ORDER_PROGRAM);
+	const row = await waitVerdict(submissionId);
+	t.diagnostic(`veredicto: ${row.verdict} ${row.test_cases_passed}/${row.test_cases_total}`);
+
+	assert.equal(row.verdict, 'Wrong Answer');
+	assert.equal(row.test_cases_total, 6);
+	assert.equal(row.test_cases_passed, 3);
+	assert.deepEqual(row.case_results.map((caseResult) => caseResult.passed), [true, false, true, false, true, false]);
+
+	// La prueba fuerte: Judge0 dice qué stdin corrió cada token de case_results.
+	const finishedAt = [];
+	for (const [index, caseResult] of row.case_results.entries()) {
+		const response = await fetch(
+			`${JUDGE0_URL}/submissions/${caseResult.token}?base64_encoded=false&fields=stdin,stdout,finished_at`,
+		);
+		const judged = await response.json();
+		assert.equal(judged.stdin, ORDER_CASES[index].stdin, `caso ${index + 1}: stdin de otro caso`);
+		const expectedStdout = index % 2 === 0 ? ORDER_CASES[index].expected : String((index + 1) * 10 + 1);
+		assert.equal(judged.stdout.trim(), expectedStdout, `caso ${index + 1}: stdout de otro caso`);
+		finishedAt.push(Date.parse(judged.finished_at));
+	}
+	// Sin esto el test no probaría nada: los casos tienen que haber terminado desordenados.
+	t.diagnostic(`finished_at relativo: ${finishedAt.map((at) => at - Math.min(...finishedAt)).join(' ')}`);
+	assert.ok(finishedAt[1] < finishedAt[0], 'el caso 2 (rápido) tenía que terminar antes que el 1 (lento)');
 });
 
 // Último a propósito: el TLE ocupa un worker de Judge0 hasta que lo corta.

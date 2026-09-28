@@ -253,8 +253,11 @@ load_backend_env() {
   export ADMIN_ACCESS_CODE="$DEV_ADMIN_ACCESS_CODE"
   export RUN_IT_SEED_DEMO=true
   # Bajo a propósito: las submissions de desarrollo compiten por los slots del
-  # worker de Judge0 compartido con producción.
-  export SUBMISSION_CONCURRENCY=1
+  # worker de Judge0 compartido con producción. JUDGE0_MAX_IN_FLIGHT es el tope
+  # de casos en vuelo del proceso (producción usa 8); 2 alcanza para que los
+  # casos corran en paralelo. Los RUN_IT_DEV_* solo para reproducir producción.
+  export SUBMISSION_CONCURRENCY=${RUN_IT_DEV_SUBMISSION_CONCURRENCY:-1}
+  export JUDGE0_MAX_IN_FLIGHT=${RUN_IT_DEV_JUDGE0_MAX_IN_FLIGHT:-2}
 }
 
 # ---------------------------------------------------------------------------
