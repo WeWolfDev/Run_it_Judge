@@ -129,12 +129,83 @@ export async function getProblems() {
   return response.json() as Promise<Array<{ id: string; name: string; difficulty: string }>>;
 }
 
-export async function createProblem(input: {
+export type ProblemDifficulty = "easy" | "medium" | "hard";
+
+// is_sample viaja siempre: el backend guarda false si falta, y un caso que era
+// ejemplo dejaría de serlo sin aviso.
+export type ProblemTestCase = { stdin: string; expected: string; is_sample: boolean };
+
+export type ProblemInput = {
   name: string;
   statement: string;
-  difficulty: "easy" | "medium" | "hard";
-  testCases: Array<{ stdin: string; expected: string }>;
-}) {
+  difficulty: ProblemDifficulty;
+  testCases: ProblemTestCase[];
+};
+
+// GET /problems/:id/full, solo admin. Trae los casos completos y las rondas que
+// usan el problema.
+export type ProblemDetail = {
+  id: string;
+  name: string;
+  statement: string;
+  difficulty: ProblemDifficulty;
+  test_cases: ProblemTestCase[];
+  created_at: string;
+  rounds: Array<{
+    id: string;
+    round_number: number;
+    status: string;
+    tournament_name: string;
+  }>;
+};
+
+export async function getProblemDetail(problemId: string) {
+  const response = await fetch(`${API_URL}/problems/${problemId}/full`, {
+    headers: authHeaders(),
+  });
+  const body = await response.json();
+  // Fastify responde "Not Found" cuando la ruta no existe: el backend es anterior
+  // a este endpoint (deploy a medias), no que falte el problema.
+  if (response.status === 404 && body.error === "Not Found") {
+    throw new Error("El servidor todavía no tiene esta función. Recargá en unos minutos.");
+  }
+  if (!response.ok) throw new Error(body.error || "No se pudo cargar el problema");
+  return body as ProblemDetail;
+}
+
+export async function updateProblem(problemId: string, input: ProblemInput) {
+  const response = await fetch(`${API_URL}/problems/${problemId}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify(input),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudo guardar el problema");
+  return body as { id: string; name: string; difficulty: ProblemDifficulty };
+}
+
+export async function deleteProblem(problemId: string) {
+  const response = await fetch(`${API_URL}/problems/${problemId}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudo borrar el problema");
+  return body as { deleted: true };
+}
+
+// Solo borra rondas pendientes: el backend rechaza las que ya empezaron.
+export async function deleteRound(roundId: string) {
+  const response = await fetch(`${API_URL}/rounds/${roundId}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudo borrar la ronda");
+  return body as { deleted: true };
+}
+
+export async function createProblem(input: ProblemInput) {
   const response = await fetch(`${API_URL}/problems`, {
     method: "POST",
     headers: { "content-type": "application/json", ...authHeaders() },
@@ -142,7 +213,7 @@ export async function createProblem(input: {
   });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "No se pudo crear el problema");
-  return body as { id: string; name: string; difficulty: "easy" | "medium" | "hard" };
+  return body as { id: string; name: string; difficulty: ProblemDifficulty };
 }
 
 export async function createTournament(name: string) {
@@ -169,6 +240,11 @@ export async function getTournamentRounds(tournamentId: string) {
     capacity: number;
     problem_id: string;
     problem_name: string;
+    participants_count: number;
+    advanced_count: number;
+    // Motivo por el que una ronda pendiente no puede iniciar todavía; null si
+    // puede. Es el mismo texto que devuelve POST /rounds/:id/start.
+    start_blocked_reason: string | null;
   }>;
 }
 
@@ -209,6 +285,8 @@ export async function getRoundLeaderboard(roundId: string) {
       participant_id: string;
       display_name: string;
       final_rank: number | null;
+      // Lo escribe closeRound. null mientras la ronda está abierta.
+      final_status: "advanced" | "eliminated" | null;
       best_pass_percentage: number;
       failed_attempts_count: number;
       solved_at: string | null;
@@ -287,6 +365,8 @@ export type NextRoundPreview = {
   nextRoundNumber: number;
   tournamentId: string;
   tournamentStatus: string;
+  // Estado de la ronda consultada. Un backend anterior no lo manda.
+  roundStatus?: string;
   advancingCount: number;
   advancing: NextRoundAdvancing[];
   existing: { id: string; round_number: number; status: string } | null;

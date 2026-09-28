@@ -134,7 +134,9 @@ VITE_SOCKET_URL=/
 ## Flujo de una submission
 
 1. El participante inicia sesión y recibe un token.
-2. Se registra en la ronda mediante `/rounds/:id/participants/join`.
+2. Se registra en la ronda mediante `/rounds/:id/participants/join`. Solo en la
+   primera ronda del torneo; en las siguientes ya está inscripto si clasificó,
+   y si no, el join responde `403`.
 3. El frontend envía código a `/rounds/:id/submissions`.
 4. El backend valida rol, participante, ronda activa y rate limit.
 5. BullMQ encola la submission.
@@ -151,13 +153,20 @@ POST /auth/login
 POST /auth/register                    participante, consume un código de acceso
 GET  /problems
 POST /problems                         admin
+GET  /problems/:id/full                admin, con casos e is_sample
+PUT  /problems/:id                     admin, 409 si cambia casos con ronda en juego
+DELETE /problems/:id                   admin, 409 si una ronda lo usa
 POST /tournaments                      admin
 POST /tournaments/:id/start            admin
 POST /tournaments/:id/participants    admin
 POST /access-codes/generate            admin
 POST /access-codes/:code/claim         participant
-POST /rounds                           admin
-POST /rounds/:id/start                 admin
+POST /rounds                           admin, solo la primera ronda del torneo
+GET  /tournaments/:id/rounds           admin, con start_blocked_reason
+GET  /rounds/:id/next                  admin, vista previa de la siguiente
+POST /rounds/:id/next                  admin, crea la siguiente con los clasificados
+DELETE /rounds/:id                     admin, solo rondas pendientes
+POST /rounds/:id/start                 admin, en orden (ver CLAUDE.md)
 POST /rounds/:id/pause                 admin
 POST /rounds/:id/close                 admin
 POST /rounds/:id/participants/join     participant

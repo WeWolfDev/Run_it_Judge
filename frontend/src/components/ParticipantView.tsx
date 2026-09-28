@@ -242,6 +242,16 @@ export function ParticipantView() {
     feed.on("feed:connected", () => {
       seedHistory();
       loadStandings();
+      // round:started sale una sola vez: si el socket estaba caído en el corte
+      // entre rondas (laptop cerrada, red caída), se perdió, y la reconexión solo
+      // repide la ronda vieja. Se vuelve a preguntar cuál es la activa.
+      void getActiveRound()
+        .then((active) => {
+          if (!cancelled && active && active.id !== roundIdRef.current) {
+            setReloadKey((key) => key + 1);
+          }
+        })
+        .catch(() => undefined);
     });
     feed.on("participant:joined", (event) => {
       if (event.round_id === joinedRoundId) refreshStandings();

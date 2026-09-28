@@ -68,8 +68,33 @@ Un torneo tiene N rondas y termina cuando queda un solo clasificado.
 6. Cerrar la ronda                POST /rounds/:id/close
 7. Ver quién clasificó            GET  /rounds/:id/next
 8. Crear la ronda siguiente       POST /rounds/:id/next
-   → vuelve al paso 4 con la nueva ronda
+   → vuelve al paso 4 con la nueva ronda (sin el 5: ya están inscriptos)
 ```
+
+`POST /rounds` crea **solo la primera** ronda de un torneo: si ya tiene alguna,
+responde `409`. Las siguientes salen del paso 8, que inscribe a los
+clasificados; una creada a mano tendría el roster vacío.
+
+**Quién entra a una ronda.** En la primera ronda de un torneo el participante
+se inscribe solo (paso 5). En las siguientes solo entra quien está en el roster
+que armó el paso 8. El criterio es uno solo, `roundMember()` (roster +
+`participants.status = 'active'`), y lo usan el join HTTP y el socket
+(`canAccessSocketRound`). No separarlos: si uno deja pasar y el otro no, el
+participante entra a la ronda y no ve nada.
+
+**Cuándo inicia una ronda.** `POST /rounds/:id/start` solo pasa si la ronda
+está `pending`, el torneo no está `finished`, no hay rondas anteriores del
+torneo sin cerrar (`closing` cuenta como abierta) y, si no es la primera, tiene
+roster. Todo es condición del mismo `UPDATE`, así dos clics simultáneos no
+pasan los dos. El motivo del rechazo sale de `startBlockReason()`, el mismo
+texto que `GET /tournaments/:id/rounds` expone en `start_blocked_reason`.
+Crear una ronda no la inicia: el panel la inicia desde "Progreso del torneo".
+
+**Casos de un problema.** Se leen cuando corre el job, no cuando se envía.
+`PUT /problems/:id` rechaza con `409` un cambio de casos (incluido `is_sample`)
+mientras una ronda `active` o `closing` use el problema; nombre, enunciado y
+dificultad se pueden editar siempre. `GET /problems/:id/full` (admin) es el
+único endpoint que devuelve los casos.
 
 El paso 7 devuelve la vista previa: número de ronda, clasificados con su nombre
 y su ranking, y si se puede crear. El paso 8 los inscribe ya en la ronda nueva.
@@ -80,11 +105,10 @@ El número de la ronda siguiente es `round_number + 1` de la que se acaba de
 cerrar, **no** `MAX(round_number) + 1`. Con el `MAX` el chequeo de "¿ya existe?"
 es vacío, porque ese número por definición no existe.
 
-`rounds` tiene `UNIQUE (tournament_id, round_number)`. Para construir un torneo
-de varias rondas hay que reusar el mismo `tournament_id`: el panel reusa el
-torneo con el mismo nombre mientras no esté `finished`, y salta al siguiente
-número libre si el elegido ya existe. Un torneo `finished` no se reusa, así que
-un evento nuevo con el mismo nombre arranca uno nuevo.
+`rounds` tiene `UNIQUE (tournament_id, round_number)`. El panel reusa el torneo
+con el mismo nombre mientras no esté `finished`; si ya tiene rondas, crear otra
+desde "Configurar ronda" da el `409` de arriba. Un torneo `finished` no se
+reusa, así que un evento nuevo con el mismo nombre arranca uno nuevo.
 
 **Las rondas se cierran solas.** Hay un `setInterval` de 1 segundo que busca
 rondas `active` con `ends_at <= now()` y las cierra.
@@ -134,7 +158,9 @@ npm run lint             # eslint, debe dar 0 errores
 npm run format           # prettier --write .  (reescribe, usarlo con cuidado)
 
 cd ../run-it-backend
-npm test                 # node --test, 3 tests en test/health.test.js
+npm test                 # node --test; las suites *.e2e.test.js se saltean
+RUN_IT_JUDGE_E2E=1 node --test test/judge.e2e.test.js    # Judge0 real, backend dev
+RUN_IT_ROUNDS_E2E=1 node --test test/rounds.e2e.test.js  # rondas y problemas, backend dev
 ```
 
 `npm run lint` admite 6 warnings de `react-refresh/only-export-components` que
@@ -145,9 +171,10 @@ commitear.
 
 ### Producción
 
-Solo por el procedimiento de `MIGRACION_SERVIDOR_RUN_IT.md`. Resumen: backup,
+Solo por el procedimiento de `MIGRACION_SERVIDOR_RUN_IT.md` (sección 18 para
+actualizar). Resumen: backup, chequeo previo de solo lectura,
 `git checkout main && git pull`, `npm ci`, build con `VITE_API_URL=""`, y
-`systemctl restart` de uno en uno.
+`systemctl restart` de uno en uno: primero el backend, después el frontend.
 
 ```bash
 # El build de producción REQUIERE estos flags
@@ -169,7 +196,7 @@ frontend/            App TanStack Start
   src/routes/        Rutas: login, admin, participante, pista, reglas, __root
   src/components/    AdminPanel, RaceTrack, ParticipantView, ui/ (shadcn)
   src/lib/api.ts     Cliente HTTP. VITE_API_URL="" = mismo origen
-  src/lib/runit.ts   Tipos, mocks (MOCK_*) y cliente de Socket.io
+  src/lib/runit.ts   Tipos de eventos y cliente de Socket.io
   vite.config.ts     Wrapper de @lovable.dev/vite-tanstack-config
   .output/           Build SSR. Lo sirve systemd en :3002. NO versionado
 
@@ -339,8 +366,6 @@ Ordenados por impacto. No están resueltos.
 
 **Backend**
 
-- `index.js:918` usa solo `test_cases[0]` para el scoring. Un problema con 5 tests
-  cuenta 100% con uno solo.
 - `submissionRate` (`index.js:16`) es un `Map()` en memoria: se reinicia con el
   proceso y no escala a varias instancias. Migrar a Redis.
 - `GET /public/rounds/active` (`index.js:728`) expone `p.statement`. Con un solo
@@ -348,23 +373,23 @@ Ordenados por impacto. No están resueltos.
 - Falta el evento `round:closing_soon` que promete `frontend/README.md`.
 - `users.access_code` en texto plano. El dilema: hashearlo impide recuperar la
   lista que el organizador repartió.
-- No hay manejador global de errores de Fastify. Cada ruta debe capturar sus
-  propios errores de Postgres: sin eso un `23505` sale como un 500 crudo que no
-  le dice nada al cliente. Ver `POST /rounds` (`index.js:496`) como referencia.
+- El manejador global de errores solo traduce `22P02` (un id que no es UUID)
+  a `400`. Cada ruta sigue capturando sus propios errores de Postgres: sin eso
+  un `23505` sale como un 500 crudo. Ver `POST /rounds` como referencia.
 
 **Frontend**
 
-- `RaceTrack.tsx:33`, `AdminPanel.tsx:75` y `ParticipantView.tsx:36` usan mocks
-  como default. Si `getActiveRound()` falla, muestran datos falsos sin avisar.
-- `AdminPanel.tsx:798` renderiza `MOCK_ROUNDS_PROGRESS` sin llamada al backend.
+- `ParticipantView` carga el enunciado al montar: si el admin lo corrige con la
+  ronda en curso, el participante lo ve al recargar o reconectarse.
 - Sin estados de carga ni de error en las rutas.
 - 6 warnings de `react-refresh` degradan el HMR a full reload.
 
 **Transversal**
 
 - No hay CI. Por eso el formato acumuló 108 errores en varios commits.
-- 3 tests, todos triviales. Nada cubre auth, rondas, scoring ni códigos.
-- `index.js` son 1091 líneas de JavaScript sin tipar.
+- Los tests de rondas y del juez son e2e contra el backend dev y no corren en
+  `npm test`. Nada cubre auth ni códigos.
+- `index.js` son más de 1400 líneas de JavaScript sin tipar.
 - Sin métricas ni alertas. Judge0 caído se nota solo si alguien mira `/ready`.
 - Sin pruebas de carga. Con `COUNT=8` en `judge0.conf` no se sabe cuántos
   concurrentes aguanta.

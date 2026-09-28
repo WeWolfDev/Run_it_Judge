@@ -196,15 +196,19 @@ async function api(method, url, body, token) {
 	return json;
 }
 
-async function createRound(roundNumber, problem, capacity) {
+// Cada ronda es la primera de su propio torneo. Son escenarios independientes
+// que corren a la vez: en un mismo torneo, la ronda 2 no puede iniciar con la 1
+// abierta y solo admite a los clasificados de la 1.
+async function createRound(label, problem, capacity) {
 	const problemRow = await api('POST', '/problems', {
 		name: `e2e juez ${state.nonce} ${problem.name}`,
 		statement: problem.name,
 		testCases: problem.testCases,
 	}, state.adminToken);
+	const tournament = await api('POST', '/tournaments', { name: `e2e juez ${state.nonce} ${label}` }, state.adminToken);
 	const round = await api('POST', '/rounds', {
-		tournamentId: state.tournament.id,
-		roundNumber,
+		tournamentId: tournament.id,
+		roundNumber: 1,
 		problemId: problemRow.id,
 		capacity,
 		timeLimitSeconds: 3600,
@@ -306,10 +310,10 @@ test('preparación: torneo, tres rondas y cinco participantes en run_it_dev', { 
 	state.tournament = await api('POST', '/tournaments', { name: `e2e juez ${state.nonce}` }, state.adminToken);
 
 	// Capacidad alta en las rondas 1 y 3: que nadie la cierre por cupo a mitad de la prueba.
-	state.verdictRound = await createRound(1, { name: 'suma', testCases: SUM_CASES }, 50);
-	state.hundredRound = await createRound(2, { name: 'cien casos', testCases: HUNDRED_CASES }, 50);
-	state.penaltyRound = await createRound(3, { name: 'suma un caso', testCases: SUM_CASES.slice(0, 1) }, 5);
-	state.orderRound = await createRound(4, { name: 'orden de casos', testCases: ORDER_CASES }, 50);
+	state.verdictRound = await createRound('veredictos', { name: 'suma', testCases: SUM_CASES }, 50);
+	state.hundredRound = await createRound('cien', { name: 'cien casos', testCases: HUNDRED_CASES }, 50);
+	state.penaltyRound = await createRound('penal', { name: 'suma un caso', testCases: SUM_CASES.slice(0, 1) }, 5);
+	state.orderRound = await createRound('orden', { name: 'orden de casos', testCases: ORDER_CASES }, 50);
 
 	const { codes } = await api('POST', '/access-codes/generate', {
 		count: 6,

@@ -94,6 +94,20 @@ export function RaceTrack({ round, participants, live = true }: RaceTrackProps) 
     if (!live) return;
     const feed = createSocketFeed(activeRoundId);
     if (!feed) return;
+    let cancelled = false;
+    // round:started sale una sola vez: si el socket estaba caído cuando empezó
+    // otra ronda (proyector suspendido, red caída), la reconexión solo repide la
+    // vieja. Se vuelve a preguntar cuál es la activa. Sin ronda activa no se
+    // recarga: la pista conserva el resultado de la que cerró.
+    feed.on("feed:connected", () => {
+      void getActiveRound()
+        .then((active) => {
+          if (!cancelled && active && active.id !== roundIdRef.current) {
+            setReloadKey((key) => key + 1);
+          }
+        })
+        .catch(() => undefined);
+    });
     feed.on("participant:progress", (e) => {
       setRunners((prev) =>
         prev.map((p) =>
@@ -132,7 +146,10 @@ export function RaceTrack({ round, participants, live = true }: RaceTrackProps) 
         ),
       );
     });
-    return () => feed.disconnect();
+    return () => {
+      cancelled = true;
+      feed.disconnect();
+    };
   }, [activeRoundId, live]);
 
   const solvedCount = useMemo(() => runners.filter((r) => r.solved).length, [runners]);
