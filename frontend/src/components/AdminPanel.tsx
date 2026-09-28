@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { formatClock, type Participant, type RoundStartedEvent } from "@/lib/runit";
 import { useRoundTimer, useServerClockOffset } from "@/hooks/use-round-timer";
 import { parseCodeforcesZip } from "@/lib/test-case-parser";
@@ -11,10 +11,13 @@ import {
   createProblem,
   createRound,
   createTournament,
+  deleteProblem,
+  deleteRound,
   finishTournament,
   generateAccessCodes,
   getActiveRound,
   getNextRound,
+  getProblemDetail,
   getProblems,
   getRoundLeaderboard,
   getRoundSubmissions,
@@ -24,8 +27,11 @@ import {
   revokeAccessCodes,
   startRound,
   toggleRoundPause,
+  updateProblem,
   type AccessCode,
   type NextRoundPreview,
+  type ProblemDetail,
+  type ProblemTestCase,
 } from "@/lib/api";
 import {
   createSocketFeed,
@@ -38,11 +44,21 @@ import {
 } from "@/lib/runit";
 import { getSessionToken } from "@/lib/session";
 
-// GET /tournaments/:id/rounds agrega los conteos; el tipo de api.ts no los declara.
-type TournamentRoundProgress = Awaited<ReturnType<typeof getTournamentRounds>>[number] & {
-  participants_count: number;
-  advanced_count: number;
+type TournamentRoundProgress = Awaited<ReturnType<typeof getTournamentRounds>>[number];
+
+type RankingEntry = {
+  participant_id: string;
+  display_name: string;
+  final_rank: number | null;
+  final_status?: "advanced" | "eliminated" | null;
+  best_pass_percentage: number | string;
+  failed_attempts_count: number;
+  solved_at?: string | null;
+  penalty_seconds?: number;
+  total_time_seconds?: number | null;
 };
+
+const EMPTY_CASE: ProblemTestCase = { stdin: "", expected: "", is_sample: false };
 
 const ROUND_STATUS_LABEL: Record<string, string> = {
   pending: "Pendiente",
@@ -133,6 +149,76 @@ function Stat({ label, value }: { label: string; value: string | number }) {
   );
 }
 
+function formatPercentage(value: number | string) {
+  return `${Number(value).toLocaleString("es", { maximumFractionDigits: 2 })}%`;
+}
+
+/**
+ * Ranking de una ronda. "Resultado" solo existe cuando la ronda cerró:
+ * final_status lo escribe closeRound, y antes nadie está eliminado todavía.
+ * Con la ronda abierta solo tiene posición quien ya resolvió; el resto no
+ * recibe un número inventado.
+ */
+export function RoundRanking({ entries }: { entries: RankingEntry[] }) {
+  const closed = entries.some((entry) => entry.final_status);
+  if (entries.length === 0) {
+    return <p className="text-xs text-muted-foreground">Aún no hay ranking disponible.</p>;
+  }
+  return (
+    <table className="w-full text-sm">
+      <thead className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+        <tr>
+          <th className="pb-3">Pos.</th>
+          <th className="pb-3">Participante</th>
+          {closed && <th className="pb-3">Resultado</th>}
+          <th className="pb-3">Casos resueltos</th>
+          <th className="pb-3">Fallos</th>
+          <th className="pb-3">Tiempo</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-border">
+        {entries.map((entry, index) => {
+          // Abierta: el servidor ordena primero a los que resolvieron, por
+          // solved_at, así que su índice es su posición provisoria.
+          const position = closed ? entry.final_rank : entry.solved_at ? index + 1 : null;
+          return (
+            <tr key={entry.participant_id}>
+              <td className="py-2 font-mono">
+                {position ?? <span className="text-muted-foreground">Sin posición</span>}
+              </td>
+              <td className="py-2 font-mono">{entry.display_name}</td>
+              {closed && (
+                <td className="py-2">
+                  {entry.final_status === "advanced" ? (
+                    <span className="rounded-full bg-success-soft px-2.5 py-1 text-xs font-medium text-success">
+                      Clasificó
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-danger-soft px-2.5 py-1 text-xs font-medium text-danger">
+                      Eliminado
+                    </span>
+                  )}
+                </td>
+              )}
+              <td className="py-2 font-mono tabular-nums">
+                {formatPercentage(entry.best_pass_percentage)}
+              </td>
+              <td className="py-2">{entry.failed_attempts_count}</td>
+              <td className="py-2 font-mono tabular-nums">
+                {entry.solved_at === null ? (
+                  <span className="text-muted-foreground">No resolvió</span>
+                ) : (
+                  formatTotalTime(entry.total_time_seconds, entry.penalty_seconds)
+                )}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
 export function AdminPanel({
   participants,
   round,
@@ -157,15 +243,23 @@ export function AdminPanel({
   const [problemStatement, setProblemStatement] = useState("");
   const [problemDifficulty, setProblemDifficulty] = useState<"easy" | "medium" | "hard">("easy");
   // is_sample marca los casos que ve el participante. Por defecto todo es privado.
-  const [testCases, setTestCases] = useState<
-    Array<{ stdin: string; expected: string; is_sample: boolean }>
-  >([{ stdin: "", expected: "", is_sample: false }]);
+  const [testCases, setTestCases] = useState<ProblemTestCase[]>([EMPTY_CASE]);
   // Casos importados de un .zip que no se muestran en el editor, pero se envían.
   // Nunca son ejemplo: el admin no los ve, así que no puede decidir publicarlos.
-  const [hiddenCases, setHiddenCases] = useState<
-    Array<{ stdin: string; expected: string; is_sample: boolean }>
-  >([]);
+  const [hiddenCases, setHiddenCases] = useState<ProblemTestCase[]>([]);
   const [savingProblem, setSavingProblem] = useState(false);
+  // Problema en edición. null = el formulario crea uno nuevo.
+  const [editingProblem, setEditingProblem] = useState<ProblemDetail | null>(null);
+  const [loadingProblemId, setLoadingProblemId] = useState("");
+  // Segundo paso antes de guardar un problema que se queda sin ejemplos públicos.
+  const [confirmNoSamples, setConfirmNoSamples] = useState(false);
+  // Confirmación de borrado: detail trae las rondas que usan el problema.
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string;
+    name: string;
+    detail: ProblemDetail | null;
+  } | null>(null);
+  const [deletingProblem, setDeletingProblem] = useState(false);
   const [problems, setProblems] = useState<Array<{ id: string; name: string; difficulty: string }>>(
     [],
   );
@@ -181,20 +275,15 @@ export function AdminPanel({
   const [nextRoundPreview, setNextRoundPreview] = useState<NextRoundPreview | null>(null);
   const [nextRoundCapacity, setNextRoundCapacity] = useState(0);
   const [savingNextRound, setSavingNextRound] = useState(false);
+  const [showNextForm, setShowNextForm] = useState(false);
   const [timeLimitMinutes, setTimeLimitMinutes] = useState(10);
-  const [createdRoundId, setCreatedRoundId] = useState("");
   const [savingRound, setSavingRound] = useState(false);
-  const [leaderboard, setLeaderboard] = useState<
-    Array<{
-      participant_id: string;
-      display_name: string;
-      final_rank: number | null;
-      best_pass_percentage: number;
-      failed_attempts_count: number;
-      penalty_seconds?: number;
-      total_time_seconds?: number | null;
-    }>
-  >([]);
+  // Ronda que se está iniciando: deshabilita todos los "Iniciar" hasta que vuelva.
+  const [startingRoundId, setStartingRoundId] = useState("");
+  // Ronda pendiente con el "Borrar" abierto, y la que se está borrando.
+  const [confirmDeleteRoundId, setConfirmDeleteRoundId] = useState("");
+  const [deletingRoundId, setDeletingRoundId] = useState("");
+  const [leaderboard, setLeaderboard] = useState<RankingEntry[]>([]);
   const [submissions, setSubmissions] = useState<SubmissionRow[]>([]);
   const [queueStats, setQueueStats] = useState<QueueStats | null>(null);
   const [queueError, setQueueError] = useState(false);
@@ -272,31 +361,6 @@ export function AdminPanel({
     void refreshCodes();
   }, [refreshCodes]);
 
-  // La vista previa de la ronda siguiente se consulta siempre: si la ronda
-  // está cerrada y hay clasificados, aparece el botón. Es la única forma de que
-  // el panel ofrezca continuar el torneo sin que el admin cuente a mano.
-  useEffect(() => {
-    if (!liveRoundId || liveRoundId === "undefined" || liveRoundId === "null") {
-      setNextRoundPreview(null);
-      return;
-    }
-    let cancelled = false;
-    void getNextRound(liveRoundId)
-      .then((preview) => {
-        if (cancelled) return;
-        setNextRoundPreview(preview);
-        // El cupo por defecto es "clasifican todos". El admin puede bajarlo
-        // para eliminar más, nunca subirlo.
-        setNextRoundCapacity(preview.advancingCount);
-      })
-      .catch(() => {
-        if (!cancelled) setNextRoundPreview(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [liveRoundId, closedVersion]);
-
   const loadActiveRound = useMemo(
     () => () =>
       void getActiveRound()
@@ -358,7 +422,7 @@ export function AdminPanel({
         return;
       }
       void getTournamentRounds(progressTournamentId)
-        .then((rows) => setRoundsProgress(rows as TournamentRoundProgress[]))
+        .then(setRoundsProgress)
         .catch(() => setRoundsProgress([]));
     },
     [progressTournamentId],
@@ -367,6 +431,65 @@ export function AdminPanel({
   useEffect(() => {
     refreshRoundsProgress();
   }, [refreshRoundsProgress, closedVersion]);
+
+  // Rondas del torneo elegido en "Configurar ronda". Si ya tiene alguna, ese
+  // formulario no crea: la siguiente sale de "Avanzar", con los clasificados.
+  // null mientras no se sabe.
+  const formTournamentId =
+    tournaments.find((t) => t.name === tournamentName.trim() && t.status !== "finished")?.id ?? "";
+  const [formTournamentRounds, setFormTournamentRounds] = useState<number | null>(0);
+  const refreshFormTournamentRounds = useMemo(
+    () => () => {
+      if (!formTournamentId) {
+        setFormTournamentRounds(0);
+        return;
+      }
+      setFormTournamentRounds(null);
+      void getTournamentRounds(formTournamentId)
+        .then((rows) => setFormTournamentRounds(rows.length))
+        // Sin el dato no se bloquea: el backend igual rechaza con su motivo.
+        .catch(() => setFormTournamentRounds(0));
+    },
+    [formTournamentId],
+  );
+
+  useEffect(() => {
+    refreshFormTournamentRounds();
+  }, [refreshFormTournamentRounds, closedVersion]);
+
+  // El feed del socket no depende del torneo elegido: lee el refresco por ref
+  // para no reconectarse cada vez que cambia.
+  const refreshProgressRef = useRef(refreshRoundsProgress);
+  refreshProgressRef.current = refreshRoundsProgress;
+
+  // Se avanza desde la última ronda del torneo y solo cuando cerró: con la ronda
+  // en curso no hay a quién pasar. Sale del progreso y no de la ronda activa, así
+  // el botón sigue ahí aunque el admin recargue el panel después del cierre.
+  const lastRound = roundsProgress?.length ? roundsProgress[roundsProgress.length - 1] : null;
+  const advanceFromId = lastRound?.status === "closed" ? lastRound.id : "";
+
+  useEffect(() => {
+    setShowNextForm(false);
+    if (!advanceFromId) {
+      setNextRoundPreview(null);
+      return;
+    }
+    let cancelled = false;
+    void getNextRound(advanceFromId)
+      .then((preview) => {
+        if (cancelled) return;
+        setNextRoundPreview(preview);
+        // El cupo por defecto es "clasifican todos". El admin puede bajarlo
+        // para eliminar más, nunca subirlo.
+        setNextRoundCapacity(preview.advancingCount);
+      })
+      .catch(() => {
+        if (!cancelled) setNextRoundPreview(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [advanceFromId]);
 
   const socketRoundId = liveRound ? String(liveRound.round_id) : undefined;
 
@@ -395,7 +518,18 @@ export function AdminPanel({
         cancelled = true;
       };
     }
-    feed.on("feed:connected", seedSubmissions);
+    feed.on("feed:connected", () => {
+      seedSubmissions();
+      // Con el socket caído se pudo perder round:started de otra ronda (otro
+      // admin, otra pestaña): se vuelve a preguntar cuál es la activa.
+      void getActiveRound()
+        .then((active) => {
+          if (cancelled || !active || active.id === roundId) return;
+          loadActiveRound();
+          refreshProgressRef.current();
+        })
+        .catch(() => undefined);
+    });
     // submission:queued sale a todos los sockets, de cualquier ronda: el filtro
     // evita mezclar la cola con la de otro torneo.
     feed.on("submission:queued", (event) => {
@@ -471,6 +605,7 @@ export function AdminPanel({
     });
     feed.on("round:started", (started) => {
       if (started.round_id !== roundId) loadActiveRound();
+      refreshProgressRef.current();
     });
     feed.on("round:paused", (roundState) => setPaused(Boolean(roundState.paused)));
     feed.on("round:closed", (event) => {
@@ -492,12 +627,37 @@ export function AdminPanel({
     };
   }, [socketRoundId, refreshQueueStats, loadActiveRound]);
 
+  const allCases = [...testCases, ...hiddenCases];
+  const sampleCount = allCases.filter((testCase) => testCase.is_sample).length;
+  const originalSampleCount = editingProblem
+    ? editingProblem.test_cases.filter((testCase) => testCase.is_sample === true).length
+    : 0;
+
+  const resetProblemForm = () => {
+    setEditingProblem(null);
+    setConfirmNoSamples(false);
+    setProblemName("");
+    setProblemStatement("");
+    setProblemDifficulty("easy");
+    setTestCases([EMPTY_CASE]);
+    setHiddenCases([]);
+  };
+
+  // Relee la lista del servidor. La lista de problemas y los dos selectores de
+  // ronda leen de este mismo estado.
+  const refreshProblems = async (keepSelected: string) => {
+    const items = await getProblems();
+    setProblems(items);
+    setSelectedProblem(
+      items.some((item) => item.id === keepSelected) ? keepSelected : (items[0]?.id ?? ""),
+    );
+  };
+
   const saveProblem = async () => {
     if (!problemName.trim() || !problemStatement.trim()) {
       setMessage("Completa el nombre y el enunciado.");
       return;
     }
-    const allCases = [...testCases, ...hiddenCases];
     const incomplete = allCases.findIndex(
       (testCase) => !testCase.stdin.trim() || !testCase.expected.trim(),
     );
@@ -505,25 +665,124 @@ export function AdminPanel({
       setMessage(`Completa la entrada y la salida esperada del caso ${incomplete + 1}.`);
       return;
     }
+    // Quitar el último ejemplo público pide un segundo clic: el participante deja
+    // de ver ejemplos y nada más lo avisa.
+    if (editingProblem && sampleCount === 0 && originalSampleCount > 0 && !confirmNoSamples) {
+      setConfirmNoSamples(true);
+      return;
+    }
     setSavingProblem(true);
+    const input = {
+      name: problemName.trim(),
+      statement: problemStatement.trim(),
+      difficulty: problemDifficulty,
+      // El array completo, con is_sample en cada caso: el backend guarda false si
+      // falta.
+      testCases: allCases.map((testCase) => ({
+        stdin: testCase.stdin,
+        expected: testCase.expected,
+        is_sample: testCase.is_sample,
+      })),
+    };
     try {
-      const created = await createProblem({
-        name: problemName.trim(),
-        statement: problemStatement.trim(),
-        difficulty: problemDifficulty,
-        testCases: allCases,
+      let done: string;
+      let keepSelected = selectedProblem;
+      if (editingProblem) {
+        const saved = await updateProblem(editingProblem.id, input);
+        done = `Problema “${saved.name}” guardado. ${sampleCount} de ${allCases.length} casos son ejemplo público.`;
+      } else {
+        const created = await createProblem(input);
+        keepSelected = created.id;
+        done = `Problema “${created.name}” creado y seleccionado.`;
+      }
+      resetProblemForm();
+      // Ya se guardó: si falla releer la lista, se avisa sin decir que no se guardó.
+      await refreshProblems(keepSelected).catch(() => {
+        done += " No se pudo actualizar la lista; recargá la página.";
       });
-      setProblems((current) => [created, ...current]);
-      setSelectedProblem(created.id);
-      setProblemName("");
-      setProblemStatement("");
-      setTestCases([{ stdin: "", expected: "", is_sample: false }]);
-      setHiddenCases([]);
-      setMessage(`Problema “${created.name}” creado y seleccionado.`);
+      setMessage(done);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "No se pudo crear el problema");
+      setMessage(error instanceof Error ? error.message : "No se pudo guardar el problema");
     } finally {
       setSavingProblem(false);
+    }
+  };
+
+  // Prellena el formulario con el problema completo, is_sample incluido. Sin eso
+  // el guardado desmarcaría todos los ejemplos sin aviso.
+  const editProblem = async (problemId: string) => {
+    setLoadingProblemId(problemId);
+    try {
+      const detail = await getProblemDetail(problemId);
+      setEditingProblem(detail);
+      setConfirmNoSamples(false);
+      setDeleteTarget(null);
+      setProblemName(detail.name);
+      setProblemStatement(detail.statement);
+      setProblemDifficulty(detail.difficulty);
+      const cases = detail.test_cases.map((testCase) => ({
+        stdin: String(testCase.stdin ?? ""),
+        expected: String(testCase.expected ?? ""),
+        is_sample: testCase.is_sample === true,
+      }));
+      // Todos a la vista: un ejemplo oculto no se podría desmarcar.
+      setTestCases(cases.length ? cases : [EMPTY_CASE]);
+      setHiddenCases([]);
+      setMessage(`Editando “${detail.name}”.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo cargar el problema");
+    } finally {
+      setLoadingProblemId("");
+    }
+  };
+
+  const askDeleteProblem = async (problem: { id: string; name: string }) => {
+    setDeleteTarget({ id: problem.id, name: problem.name, detail: null });
+    try {
+      const detail = await getProblemDetail(problem.id);
+      setDeleteTarget((current) => (current?.id === problem.id ? { ...current, detail } : current));
+    } catch (error) {
+      setDeleteTarget(null);
+      setMessage(error instanceof Error ? error.message : "No se pudo consultar el problema");
+    }
+  };
+
+  const confirmDeleteProblem = async () => {
+    if (!deleteTarget) return;
+    setDeletingProblem(true);
+    try {
+      await deleteProblem(deleteTarget.id);
+      if (editingProblem?.id === deleteTarget.id) resetProblemForm();
+      setDeleteTarget(null);
+      let done = `Problema “${deleteTarget.name}” eliminado.`;
+      await refreshProblems(selectedProblem).catch(() => {
+        done += " No se pudo actualizar la lista; recargá la página.";
+      });
+      setMessage(done);
+    } catch (error) {
+      // El 409 trae el motivo del servidor: se muestra tal cual.
+      setMessage(error instanceof Error ? error.message : "No se pudo borrar el problema");
+    } finally {
+      setDeletingProblem(false);
+    }
+  };
+
+  // Libera el problema borrando una ronda que todavía no se jugó.
+  const removePendingRound = async (roundId: string, roundNumber: number) => {
+    if (!deleteTarget) return;
+    setDeletingProblem(true);
+    try {
+      await deleteRound(roundId);
+      setMessage(`Ronda ${roundNumber} pendiente borrada.`);
+      refreshRoundsProgress();
+      const detail = await getProblemDetail(deleteTarget.id);
+      setDeleteTarget((current) =>
+        current?.id === deleteTarget.id ? { ...current, detail } : current,
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo borrar la ronda");
+    } finally {
+      setDeletingProblem(false);
     }
   };
 
@@ -553,7 +812,7 @@ export function AdminPanel({
   };
 
   const clearTestCases = () => {
-    setTestCases([{ stdin: "", expected: "", is_sample: false }]);
+    setTestCases([EMPTY_CASE]);
     setHiddenCases([]);
   };
 
@@ -565,39 +824,26 @@ export function AdminPanel({
     }
     setSavingRound(true);
     try {
-      // Reusa el torneo con el mismo nombre mientras no esté finalizado. Antes
-      // cada llamada creaba un torneo nuevo, y con UNIQUE(tournament_id,
-      // round_number) eso hacía imposible armar un torneo de varias rondas desde
-      // este control.
+      // Reusa el torneo con el mismo nombre mientras no esté finalizado. Si ya
+      // tiene rondas, el backend rechaza con el motivo: las siguientes se crean
+      // con "Avanzar a la siguiente ronda", que inscribe a los clasificados.
       const existing = tournaments.find((t) => t.name === name && t.status !== "finished");
       const tournament = existing ?? (await createTournament(name));
-      const reused = Boolean(existing);
 
-      // Si el número ya está usado dentro del torneo, salta al siguiente libre
-      // en lugar de chocar contra el UNIQUE.
-      let targetRound = roundNumber;
-      if (reused) {
-        const rounds = await getTournamentRounds(tournament.id);
-        if (rounds.some((item) => item.round_number === roundNumber)) {
-          targetRound = Math.max(...rounds.map((item) => item.round_number)) + 1;
-          setRoundNumber(targetRound);
-        }
-      }
-
-      const created = await createRound(
+      // Crear no inicia: la ronda queda pendiente y se inicia desde "Progreso
+      // del torneo", donde se respeta el orden de las rondas.
+      await createRound(
         tournament.id,
-        targetRound,
+        roundNumber,
         selectedProblem,
         capacity,
         timeLimitMinutes * 60,
       );
-      setCreatedRoundId(created.id);
       void refreshTournaments();
       refreshRoundsProgress();
+      refreshFormTournamentRounds();
       setMessage(
-        reused
-          ? `Ronda ${targetRound} agregada a "${name}". Iníciala cuando estés listo.`
-          : `Torneo "${name}" y ronda ${targetRound} creados. Iníciala cuando estés listo.`,
+        `Ronda ${roundNumber} de "${name}" creada. Quedó pendiente: iniciala desde Progreso del torneo.`,
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo crear la ronda");
@@ -651,21 +897,54 @@ export function AdminPanel({
     }
     setSavingNextRound(true);
     try {
-      const created = await createNextRound(liveRoundId, {
+      const created = await createNextRound(advanceFromId, {
         problemId: selectedProblem,
         capacity: nextRoundCapacity || null,
         timeLimitSeconds: timeLimitMinutes * 60,
       });
-      setCreatedRoundId(created.round.id);
       setNextRoundPreview(null);
+      setShowNextForm(false);
       refreshRoundsProgress();
       setMessage(
-        `Ronda ${created.round.round_number} creada con ${created.participants} participantes. Iniciala cuando estés listo.`,
+        `Ronda ${created.round.round_number} creada con ${created.participants} participantes. Quedó pendiente: iniciala desde Progreso del torneo.`,
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo crear la ronda siguiente");
     } finally {
       setSavingNextRound(false);
+    }
+  };
+
+  // Solo rondas pendientes: el backend rechaza las que ya empezaron. Es la
+  // salida para una ronda creada con otro problema o sin participantes.
+  const removeRound = async (roundId: string, roundNumber: number) => {
+    setDeletingRoundId(roundId);
+    try {
+      await deleteRound(roundId);
+      setMessage(`Ronda ${roundNumber} borrada.`);
+      refreshFormTournamentRounds();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo borrar la ronda");
+    } finally {
+      setDeletingRoundId("");
+      setConfirmDeleteRoundId("");
+      refreshRoundsProgress();
+    }
+  };
+
+  // Solo hace el POST de inicio: el roster de la ronda ya lo armó quien la creó.
+  const beginRound = async (roundId: string) => {
+    setStartingRoundId(roundId);
+    try {
+      await startRound(roundId);
+      setMessage("Ronda iniciada");
+      loadActiveRound();
+    } catch (error) {
+      // El 409 nombra la ronda que falta cerrar.
+      setMessage(error instanceof Error ? error.message : "No se pudo iniciar la ronda");
+    } finally {
+      setStartingRoundId("");
+      refreshRoundsProgress();
     }
   };
 
@@ -840,33 +1119,7 @@ export function AdminPanel({
         <section className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground">Ranking y resultados</h3>
           <div className="mt-4 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <tr>
-                  <th className="pb-3">Pos.</th>
-                  <th className="pb-3">Participante</th>
-                  <th className="pb-3">Avance</th>
-                  <th className="pb-3">Fallos</th>
-                  <th className="pb-3">Tiempo</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {leaderboard.map((entry, index) => (
-                  <tr key={entry.participant_id}>
-                    <td className="py-2 font-mono">{entry.final_rank ?? index + 1}</td>
-                    <td className="py-2 font-mono">{entry.display_name}</td>
-                    <td className="py-2">{entry.best_pass_percentage}%</td>
-                    <td className="py-2">{entry.failed_attempts_count}</td>
-                    <td className="py-2 font-mono tabular-nums">
-                      {formatTotalTime(entry.total_time_seconds, entry.penalty_seconds)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {leaderboard.length === 0 && (
-              <p className="text-xs text-muted-foreground">Aún no hay ranking disponible.</p>
-            )}
+            <RoundRanking entries={leaderboard} />
           </div>
           <div className="mt-5 border-t border-border pt-4">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Últimos envíos</p>
@@ -920,12 +1173,29 @@ export function AdminPanel({
       </TabsContent>
 
       <TabsContent value="rondas" className="space-y-5">
+        {message && (
+          <p
+            role="status"
+            className="rounded-lg border border-border bg-card px-4 py-2 text-xs text-foreground"
+          >
+            {message}
+          </p>
+        )}
         <section className="rounded-xl border border-border bg-card p-5">
-          <h3 className="text-sm font-semibold text-foreground">Crear problema</h3>
+          <h3 className="text-sm font-semibold text-foreground">
+            {editingProblem ? `Editar problema “${editingProblem.name}”` : "Crear problema"}
+          </h3>
           <p className="mt-2 text-xs text-muted-foreground">
             Cada caso define una entrada y su salida esperada. Solo se acepta la solución que pasa
             todos los casos.
           </p>
+          {editingProblem?.rounds.some((r) => r.status === "active" || r.status === "closing") && (
+            <p className="mt-2 rounded-lg bg-info-soft px-3 py-2 text-xs text-info">
+              Hay una ronda en juego con este problema. Nombre, enunciado y dificultad se pueden
+              guardar ya; un cambio en los casos se rechaza hasta que la ronda cierre, porque
+              cambiaría el veredicto de los envíos que faltan juzgar.
+            </p>
+          )}
           <form
             className="mt-4 space-y-3"
             onSubmit={(event) => {
@@ -988,7 +1258,7 @@ export function AdminPanel({
             {hiddenCases.length > 0 && (
               <p className="mt-2 text-xs text-muted-foreground">
                 Hay {hiddenCases.length} casos ocultos además de los que se ven abajo. Se envían
-                todos al crear el problema.
+                todos al guardar el problema.
               </p>
             )}
             <button
@@ -1002,8 +1272,8 @@ export function AdminPanel({
             <div className="space-y-2 text-sm">
               <span className="text-muted-foreground">Casos de prueba</span>
               <p className="text-xs text-muted-foreground">
-                {[...testCases, ...hiddenCases].filter((testCase) => testCase.is_sample).length} de{" "}
-                {testCases.length + hiddenCases.length} marcados como ejemplo público.
+                {sampleCount} de {allCases.length} marcados como ejemplo público
+                {editingProblem ? ` (guardado: ${originalSampleCount})` : ""}.
               </p>
               {testCases.map((testCase, index) => (
                 <div key={index} className="space-y-2 rounded-lg border border-border p-3">
@@ -1083,18 +1353,185 @@ export function AdminPanel({
                 Agregar caso
               </button>
             </div>
-            <button
-              type="submit"
-              disabled={savingProblem}
-              className="w-full rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-            >
-              {savingProblem ? "Creando..." : "Crear y seleccionar"}
-            </button>
+            {sampleCount === 0 && (
+              <p role="status" className="text-xs text-danger">
+                Ningún caso es ejemplo público: el participante no va a ver ejemplos.
+              </p>
+            )}
+            {confirmNoSamples && sampleCount === 0 ? (
+              <div className="space-y-2 rounded-lg border border-danger bg-danger-soft p-3 text-xs text-danger">
+                <p>
+                  El problema tenía {originalSampleCount}{" "}
+                  {originalSampleCount === 1 ? "ejemplo público" : "ejemplos públicos"} y se va a
+                  guardar con 0.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="submit"
+                    disabled={savingProblem}
+                    className="rounded-lg bg-danger px-3 py-1.5 font-medium text-danger-foreground disabled:opacity-50"
+                  >
+                    {savingProblem ? "Guardando..." : "Guardar sin ejemplos"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmNoSamples(false)}
+                    className="rounded-lg border border-danger px-3 py-1.5 font-medium"
+                  >
+                    Volver
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  disabled={savingProblem}
+                  className="flex-1 rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                >
+                  {editingProblem
+                    ? savingProblem
+                      ? "Guardando..."
+                      : "Guardar cambios"
+                    : savingProblem
+                      ? "Creando..."
+                      : "Crear y seleccionar"}
+                </button>
+                {editingProblem && (
+                  <button
+                    type="button"
+                    disabled={savingProblem}
+                    onClick={() => {
+                      resetProblemForm();
+                      setMessage("Edición cancelada.");
+                    }}
+                    className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                  >
+                    Cancelar edición
+                  </button>
+                )}
+              </div>
+            )}
           </form>
         </section>
 
         <section className="rounded-xl border border-border bg-card p-5">
+          <h3 className="text-sm font-semibold text-foreground">Problemas</h3>
+          {problems.length === 0 ? (
+            <p className="mt-2 text-xs text-muted-foreground">Todavía no hay problemas.</p>
+          ) : (
+            <ul className="mt-3 divide-y divide-border text-sm">
+              {problems.map((problem) => (
+                <li key={problem.id} className="py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-foreground">
+                      {problem.name}
+                      {editingProblem?.id === problem.id && (
+                        <span className="ml-2 text-xs text-info">en edición</span>
+                      )}
+                    </span>
+                    <span className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={loadingProblemId !== "" || savingProblem}
+                        onClick={() => void editProblem(problem.id)}
+                        className="rounded-lg border border-border px-3 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                      >
+                        {loadingProblemId === problem.id ? "Cargando..." : "Editar"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={deletingProblem}
+                        onClick={() => void askDeleteProblem(problem)}
+                        className="rounded-lg border border-danger px-3 py-1 text-xs font-medium text-danger hover:opacity-70 disabled:opacity-50"
+                      >
+                        Eliminar
+                      </button>
+                    </span>
+                  </div>
+                  {deleteTarget?.id === problem.id && (
+                    <div
+                      role="alertdialog"
+                      aria-label={`Eliminar ${problem.name}`}
+                      className="mt-2 space-y-2 rounded-lg border border-danger bg-danger-soft p-3 text-xs text-danger"
+                    >
+                      {!deleteTarget.detail ? (
+                        <p>Consultando qué rondas usan este problema…</p>
+                      ) : deleteTarget.detail.rounds.length === 0 ? (
+                        <p>Ninguna ronda usa este problema: no hay historial que perder.</p>
+                      ) : (
+                        <>
+                          <p>
+                            {deleteTarget.detail.rounds.length === 1
+                              ? "Lo usa 1 ronda:"
+                              : `Lo usan ${deleteTarget.detail.rounds.length} rondas:`}
+                          </p>
+                          <ul className="list-disc pl-5">
+                            {deleteTarget.detail.rounds.map((r) => (
+                              <li key={r.id}>
+                                Ronda {r.round_number} de “{r.tournament_name}” ·{" "}
+                                {(ROUND_STATUS_LABEL[r.status] ?? r.status).toLowerCase()}
+                              </li>
+                            ))}
+                          </ul>
+                          {deleteTarget.detail.rounds.some((r) => r.status !== "pending") && (
+                            <p>
+                              Los envíos no guardan copia de los casos: borrar el problema dejaría
+                              las rondas jugadas sin forma de auditar qué se juzgó. El servidor no
+                              lo permite mientras alguna ronda lo use.
+                            </p>
+                          )}
+                          {deleteTarget.detail.rounds
+                            .filter((r) => r.status === "pending")
+                            .map((r) => (
+                              <p key={r.id} className="flex flex-wrap items-center gap-2">
+                                Primero hay que borrar la ronda {r.round_number} de “
+                                {r.tournament_name}”, que todavía no se jugó.
+                                <button
+                                  type="button"
+                                  disabled={deletingProblem}
+                                  onClick={() => void removePendingRound(r.id, r.round_number)}
+                                  className="rounded-lg border border-danger px-2 py-1 font-medium disabled:opacity-50"
+                                >
+                                  Borrar la ronda {r.round_number} pendiente
+                                </button>
+                              </p>
+                            ))}
+                        </>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={deletingProblem || !deleteTarget.detail}
+                          onClick={() => void confirmDeleteProblem()}
+                          className="rounded-lg bg-danger px-3 py-1.5 font-medium text-danger-foreground disabled:opacity-50"
+                        >
+                          {deletingProblem ? "Eliminando..." : "Eliminar problema"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={deletingProblem}
+                          onClick={() => setDeleteTarget(null)}
+                          className="rounded-lg border border-danger px-3 py-1.5 font-medium"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground">Configurar ronda</h3>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Crea la primera ronda de un torneo. Crear no la inicia: queda pendiente y se inicia
+            desde Progreso del torneo. Las rondas siguientes se crean con los clasificados, desde
+            ahí mismo.
+          </p>
           <div className="mt-4 space-y-4">
             <label className="block text-sm">
               <span className="text-muted-foreground">Nombre del torneo</span>
@@ -1216,114 +1653,21 @@ export function AdminPanel({
             <button
               type="button"
               onClick={() => void saveRound()}
-              disabled={savingRound}
+              disabled={savingRound || formTournamentRounds !== 0}
               className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {savingRound ? "Creando..." : "Crear ronda"}
             </button>
-            {createdRoundId && (
-              <button
-                type="button"
-                onClick={() =>
-                  void startRound(createdRoundId)
-                    .then(() => {
-                      setMessage("Ronda iniciada");
-                      loadActiveRound();
-                      refreshRoundsProgress();
-                    })
-                    .catch((error) =>
-                      setMessage(
-                        error instanceof Error ? error.message : "No se pudo iniciar la ronda",
-                      ),
-                    )
-                }
-                className="w-full rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
-              >
-                Iniciar ronda creada
-              </button>
+            {formTournamentRounds !== null && formTournamentRounds > 0 && (
+              <p role="status" className="text-xs text-muted-foreground">
+                “{tournamentName.trim()}” ya tiene{" "}
+                {formTournamentRounds === 1 ? "1 ronda" : `${formTournamentRounds} rondas`}. La
+                siguiente se crea con “Avanzar a la siguiente ronda” en Progreso del torneo, que
+                inscribe a los clasificados. Para un evento nuevo, elegí o creá otro torneo.
+              </p>
             )}
           </div>
         </section>
-
-        {nextRoundPreview && (
-          <section className="rounded-xl border border-border bg-card p-5">
-            <h3 className="text-sm font-semibold text-foreground">Ronda siguiente</h3>
-            {nextRoundPreview.available ? (
-              <>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {nextRoundPreview.advancingCount} de {liveParticipants.length} participantes
-                  clasificaron a la ronda {nextRoundPreview.nextRoundNumber}. Ya están inscriptos.
-                </p>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {nextRoundPreview.advancing.map((entry) => (
-                    <span
-                      key={entry.participant_id}
-                      className="rounded-md bg-muted px-2 py-0.5 text-xs text-foreground"
-                    >
-                      {entry.final_rank}. {entry.display_name}
-                    </span>
-                  ))}
-                </div>
-                <div className="mt-4 space-y-3">
-                  <label className="block text-sm">
-                    <span className="text-muted-foreground">Problema</span>
-                    <select
-                      value={selectedProblem}
-                      onChange={(event) => setSelectedProblem(event.target.value)}
-                      className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
-                    >
-                      {problems.length === 0 && (
-                        <option value="">No hay problemas disponibles</option>
-                      )}
-                      {problems.map((problem) => (
-                        <option key={problem.id} value={problem.id}>
-                          {problem.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="flex gap-2">
-                    <label className="block flex-1 text-sm">
-                      <span className="text-muted-foreground">
-                        Cupo (máx. {nextRoundPreview.advancingCount})
-                      </span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={nextRoundPreview.advancingCount}
-                        value={nextRoundCapacity}
-                        onChange={(event) => setNextRoundCapacity(Number(event.target.value))}
-                        className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
-                      />
-                    </label>
-                    <label className="block flex-1 text-sm">
-                      <span className="text-muted-foreground">Tiempo límite (minutos)</span>
-                      <input
-                        type="number"
-                        min={1}
-                        value={timeLimitMinutes}
-                        onChange={(event) => setTimeLimitMinutes(Number(event.target.value))}
-                        className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
-                      />
-                    </label>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void saveNextRound()}
-                    disabled={savingNextRound}
-                    className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-                  >
-                    {savingNextRound
-                      ? "Creando..."
-                      : `Crear ronda ${nextRoundPreview.nextRoundNumber}`}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <p className="mt-2 text-xs text-muted-foreground">{nextRoundPreview.reason}</p>
-            )}
-          </section>
-        )}
 
         <section className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground">Progreso del torneo</h3>
@@ -1340,7 +1684,7 @@ export function AdminPanel({
               {roundsProgress.map((r) => (
                 <li
                   key={r.id}
-                  className={`flex items-center justify-between rounded-lg px-3 py-2 text-sm ${
+                  className={`rounded-lg px-3 py-2 text-sm ${
                     r.status === "active"
                       ? "bg-info-soft font-medium text-foreground"
                       : r.status === "pending"
@@ -1348,15 +1692,171 @@ export function AdminPanel({
                         : "text-foreground"
                   }`}
                 >
-                  <span>
-                    Ronda {r.round_number} · {ROUND_STATUS_LABEL[r.status] ?? r.status}
-                  </span>
-                  <span className="font-mono tabular-nums">
-                    {r.participants_count} → {r.status === "closed" ? r.advanced_count : "—"}
-                  </span>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>
+                      Ronda {r.round_number} · {ROUND_STATUS_LABEL[r.status] ?? r.status}
+                    </span>
+                    <span className="flex items-center gap-3">
+                      <span className="font-mono tabular-nums">
+                        {r.participants_count} → {r.status === "closed" ? r.advanced_count : "—"}
+                      </span>
+                      {r.status === "pending" && (
+                        <button
+                          type="button"
+                          disabled={Boolean(r.start_blocked_reason) || startingRoundId !== ""}
+                          onClick={() => void beginRound(r.id)}
+                          className="rounded-lg bg-primary px-3 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                        >
+                          {startingRoundId === r.id ? "Iniciando..." : "Iniciar"}
+                        </button>
+                      )}
+                    </span>
+                  </div>
+                  {r.status === "pending" && r.start_blocked_reason && (
+                    <p className="mt-1 text-xs text-muted-foreground">{r.start_blocked_reason}</p>
+                  )}
+                  {r.status === "pending" &&
+                    (confirmDeleteRoundId === r.id ? (
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-danger">
+                        <span>
+                          ¿Borrar la ronda {r.round_number}? Todavía no se jugó
+                          {r.participants_count
+                            ? `; sus ${r.participants_count} inscriptos salen de ella`
+                            : ""}
+                          .
+                        </span>
+                        <button
+                          type="button"
+                          disabled={deletingRoundId !== ""}
+                          onClick={() => void removeRound(r.id, r.round_number)}
+                          className="rounded-lg bg-danger px-2 py-1 font-medium text-danger-foreground disabled:opacity-50"
+                        >
+                          {deletingRoundId === r.id ? "Borrando..." : "Borrar"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={deletingRoundId !== ""}
+                          onClick={() => setConfirmDeleteRoundId("")}
+                          className="rounded-lg border border-danger px-2 py-1 font-medium"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={startingRoundId !== "" || deletingRoundId !== ""}
+                        onClick={() => setConfirmDeleteRoundId(r.id)}
+                        className="mt-1 text-xs text-muted-foreground underline-offset-2 hover:text-danger hover:underline disabled:opacity-50"
+                      >
+                        Borrar ronda pendiente
+                      </button>
+                    ))}
                 </li>
               ))}
             </ul>
+          )}
+          {lastRound && advanceFromId && nextRoundPreview && (
+            <div className="mt-4 border-t border-border pt-4">
+              {nextRoundPreview.available ? (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    Clasificaron {nextRoundPreview.advancingCount} de {lastRound.participants_count}{" "}
+                    en la ronda {lastRound.round_number}:
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {nextRoundPreview.advancing.map((entry) => (
+                      <span
+                        key={entry.participant_id}
+                        className="rounded-md bg-muted px-2 py-0.5 text-xs text-foreground"
+                      >
+                        {entry.final_rank}. {entry.display_name}
+                      </span>
+                    ))}
+                  </div>
+                  {!showNextForm ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowNextForm(true)}
+                      className="mt-3 w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                    >
+                      Avanzar a la siguiente ronda
+                    </button>
+                  ) : (
+                    <div className="mt-4 space-y-3">
+                      <label className="block text-sm">
+                        <span className="text-muted-foreground">Problema</span>
+                        <select
+                          value={selectedProblem}
+                          onChange={(event) => setSelectedProblem(event.target.value)}
+                          className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+                        >
+                          {problems.length === 0 && (
+                            <option value="">No hay problemas disponibles</option>
+                          )}
+                          {problems.map((problem) => (
+                            <option key={problem.id} value={problem.id}>
+                              {problem.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="flex gap-2">
+                        <label className="block flex-1 text-sm">
+                          <span className="text-muted-foreground">
+                            Cupo (máx. {nextRoundPreview.advancingCount})
+                          </span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={nextRoundPreview.advancingCount}
+                            value={nextRoundCapacity}
+                            onChange={(event) => setNextRoundCapacity(Number(event.target.value))}
+                            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+                          />
+                        </label>
+                        <label className="block flex-1 text-sm">
+                          <span className="text-muted-foreground">Tiempo límite (minutos)</span>
+                          <input
+                            type="number"
+                            min={1}
+                            value={timeLimitMinutes}
+                            onChange={(event) => setTimeLimitMinutes(Number(event.target.value))}
+                            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+                          />
+                        </label>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Los clasificados quedan inscriptos al crearla. Se crea pendiente: después
+                        hay que iniciarla.
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void saveNextRound()}
+                          disabled={savingNextRound}
+                          className="flex-1 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                        >
+                          {savingNextRound
+                            ? "Creando..."
+                            : `Crear ronda ${nextRoundPreview.nextRoundNumber}`}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={savingNextRound}
+                          onClick={() => setShowNextForm(false)}
+                          className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">{nextRoundPreview.reason}</p>
+              )}
+            </div>
           )}
         </section>
       </TabsContent>
