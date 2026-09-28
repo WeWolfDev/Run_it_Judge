@@ -3,3 +3,4 @@ judge0.conf
 secrets
 node_modules/
 .DS_Store
+frontend/.output.next/
