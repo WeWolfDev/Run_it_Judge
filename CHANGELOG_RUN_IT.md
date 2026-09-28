@@ -1,5 +1,41 @@
 # Bitácora de Run It
 
+## 2026-09-27
+
+### Transición entre rondas
+
+- El participante que tenía el socket caído durante el corte entre rondas se
+  quedaba mirando la ronda anterior: `round:started` sale una sola vez. Ahora
+  `ParticipantView`, `RaceTrack` y el panel preguntan por la ronda activa en
+  cada (re)conexión.
+- Entrar a una ronda siguiente exige estar en su roster (los clasificados). Antes
+  se miraba solo `participants.status`, y alguien que nunca jugó la ronda
+  anterior entraba. El join HTTP y el socket usan el mismo criterio.
+- `POST /rounds/:id/start` exige que el torneo no haya terminado, que las rondas
+  anteriores estén cerradas y que una ronda siguiente tenga roster, dentro del
+  mismo `UPDATE`. `POST /rounds` solo crea la primera ronda de un torneo.
+- Panel: "Iniciar" y "Borrar ronda pendiente" por ronda en Progreso del torneo,
+  con el motivo del backend; "Avanzar a la siguiente ronda" solo con la última
+  ronda cerrada; crear una ronda ya no ofrece iniciarla ahí. El ranking muestra
+  "Clasificó"/"Eliminado" con la ronda cerrada y el porcentaje de casos en su
+  propia columna.
+
+### Problemas
+
+- Edición y borrado desde el panel. `GET /problems/:id/full` (admin) prellena el
+  formulario con `is_sample`; pasar a cero ejemplos pide confirmación.
+- `PUT /problems/:id` rechaza cambiar los casos con una ronda `active` o
+  `closing` que use el problema, y exige entre 1 y 100 casos de texto.
+
+### Robustez
+
+- Un id que no es UUID (`/rounds/abc/start`) responde `400` en vez de un 500:
+  manejador global solo para el error `22P02` de Postgres; el resto de los
+  errores sale igual que antes.
+- No se puede inscribir nadie en una ronda de un torneo terminado.
+- "Configurar ronda" avisa y no crea si el torneo elegido ya tiene rondas.
+- Procedimiento de actualización en `MIGRACION_SERVIDOR_RUN_IT.md` (sección 18).
+
 ## 2026-09-24
 
 ### Servidor Ubuntu y endurecimiento

@@ -537,3 +537,61 @@ Rollback preparado: si/no
 ```
 
 Resultado esperado: `https://runit.gelatina.lat` sirve la aplicacion y permite ejecutar una ronda completa de principio a fin.
+
+## 18. Actualizar producción a un commit nuevo
+
+Mismo servidor, sin migrar datos. El orden importa: el frontend nuevo puede
+llamar endpoints que el backend viejo todavía no tiene.
+
+1. Backup verificado antes de tocar nada:
+
+   ```bash
+   sudo systemctl start run-it-backup.service
+   ls -lt /var/backups/run-it | head -3
+   ```
+
+2. Chequeo previo, de solo lectura. Lista las rondas que las reglas de
+   transición dejan sin jugar: una ronda siguiente pendiente sin participantes, o
+   con una anterior sin cerrar. Si aparece alguna de un torneo **no**
+   terminado, avisar al organizador antes de desplegar: se destraba desde
+   "Progreso del torneo" con "Borrar ronda pendiente" y "Avanzar".
+
+   ```bash
+   sudo docker compose exec -T db psql -U judge0 -d run_it \
+     -c "SET default_transaction_read_only = on" -c "
+   SELECT t.name, t.status AS torneo, r.round_number, r.status
+   FROM rounds r JOIN tournaments t ON t.id = r.tournament_id
+   WHERE r.status = 'pending'
+     AND EXISTS (SELECT 1 FROM rounds p WHERE p.tournament_id = r.tournament_id
+                 AND p.round_number < r.round_number)
+     AND (NOT EXISTS (SELECT 1 FROM round_participants rp WHERE rp.round_id = r.id)
+          OR EXISTS (SELECT 1 FROM rounds p WHERE p.tournament_id = r.tournament_id
+                     AND p.round_number < r.round_number AND p.status <> 'closed'))
+   ORDER BY t.status, t.name, r.round_number;"
+   ```
+
+   No desplegar con una ronda `active`: reiniciar el backend en medio de una
+   ronda corta la conexión de todos los participantes.
+
+3. Código y dependencias, anotando el commit anterior para el rollback:
+
+   ```bash
+   cd /home/serverwewolf/ServerRunIt/Run_it_Judge
+   git rev-parse HEAD            # guardar: es el commit de rollback
+   git checkout main && git pull --ff-only origin main
+   (cd run-it-backend && npm ci --omit=dev)
+   (cd frontend && npm ci && npm run typecheck && VITE_API_URL="" VITE_SOCKET_URL="/" npm run build)
+   ```
+
+4. Reiniciar **primero el backend** y comprobarlo; después el frontend:
+
+   ```bash
+   sudo systemctl restart run-it-backend && curl -fsS http://127.0.0.1:3001/ready
+   sudo systemctl restart run-it-frontend
+   ```
+
+5. Validación: `sudo bash deploy/smoke-test.sh` y `sudo node deploy/e2e-test.cjs`.
+
+Rollback: `git checkout <commit anterior>`, repetir el paso 3 sin el
+`git pull` y el paso 4. Si el cambio no tocó `schema.sql`, la base no necesita
+volver atrás.
