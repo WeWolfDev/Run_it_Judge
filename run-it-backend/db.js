@@ -74,7 +74,7 @@ async function initDb() {
     await pool.query(
       `INSERT INTO users (username, access_code, role)
        VALUES ($1, $2, 'admin')
-       ON CONFLICT (username) DO NOTHING`,
+       ON CONFLICT (username) WHERE role = 'admin' DO NOTHING`,
       [adminUsername, process.env.ADMIN_ACCESS_CODE],
     );
   } else {
@@ -86,7 +86,7 @@ async function initDb() {
   await pool.query(`
     INSERT INTO users (username, access_code, role)
     VALUES ('demo', 'RUN-IT-2026', 'participant')
-    ON CONFLICT (username) DO NOTHING
+    ON CONFLICT (access_code) DO NOTHING
   `);
   await pool.query(`
     INSERT INTO problems (name, statement, test_cases)
@@ -108,7 +108,7 @@ async function initDb() {
   await pool.query(`
     INSERT INTO participants (tournament_id, user_id, display_name)
     SELECT '00000000-0000-0000-0000-000000000001', id, username
-    FROM users WHERE username = 'demo'
+    FROM users WHERE access_code = 'RUN-IT-2026'
     ON CONFLICT (tournament_id, user_id) DO NOTHING
   `);
   await pool.query(`

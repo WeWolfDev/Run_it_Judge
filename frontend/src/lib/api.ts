@@ -86,11 +86,71 @@ export async function listAccessCodes(tournamentId?: string | null) {
   return body as AccessCode[];
 }
 
+// Solo los torneos que no terminaron: alimenta todos los selectores del panel.
 export async function getTournaments() {
   const response = await fetch(`${API_URL}/tournaments`, { headers: authHeaders() });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "No se pudieron cargar los torneos");
   return body as Array<{ id: string; name: string; status: string }>;
+}
+
+export type FinishedTournament = {
+  id: string;
+  name: string;
+  status: "finished";
+  created_at: string;
+  rounds_count: number;
+  participants_count: number;
+  submissions_count: number;
+  // Usuarios que solo jugaron este torneo: al borrarlo quedan huérfanos.
+  orphaned_users_count: number;
+};
+
+// El historial: los terminados se piden explícitamente, nunca se mezclan con los
+// abiertos.
+export async function getFinishedTournaments() {
+  const response = await fetch(`${API_URL}/tournaments?status=finished`, {
+    headers: authHeaders(),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudo cargar el historial");
+  return body as FinishedTournament[];
+}
+
+export async function deleteTournament(tournamentId: string) {
+  const response = await fetch(`${API_URL}/tournaments/${tournamentId}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudo borrar el torneo");
+  return body as { deleted: true; rounds: number; participants: number; submissions: number };
+}
+
+export type OrphanUser = {
+  id: string;
+  username: string;
+  access_code: string;
+  created_at: string;
+};
+
+export async function getOrphanUsers() {
+  const response = await fetch(`${API_URL}/users/orphans`, { headers: authHeaders() });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudieron cargar los usuarios");
+  return body as OrphanUser[];
+}
+
+// Borra solo los ids revisados; el servidor vuelve a comprobar que sigan huérfanos.
+export async function deleteOrphanUsers(ids: string[]) {
+  const response = await fetch(`${API_URL}/users/orphans`, {
+    method: "DELETE",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ ids }),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudieron borrar los usuarios");
+  return body as { deleted: number; users: Array<{ id: string; username: string }> };
 }
 
 export async function revokeAccessCodes(input: { tournamentId?: string | null; codes?: string[] }) {
@@ -156,6 +216,7 @@ export type ProblemDetail = {
     round_number: number;
     status: string;
     tournament_name: string;
+    tournament_status: string;
   }>;
 };
 
@@ -191,7 +252,23 @@ export async function deleteProblem(problemId: string) {
   });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "No se pudo borrar el problema");
-  return body as { deleted: true };
+  // roundsKept: rondas de torneos terminados que quedan sin el vínculo, con el nombre.
+  return body as { deleted: true; roundsKept: number };
+}
+
+// Solo rondas pendientes. timeLimitSeconds va en segundos: el panel convierte.
+export async function updateRound(
+  roundId: string,
+  input: { problemId: string; capacity: number; timeLimitSeconds: number },
+) {
+  const response = await fetch(`${API_URL}/rounds/${roundId}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify(input),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudo guardar la ronda");
+  return body as { id: string; problem_id: string; capacity: number; time_limit_seconds: number };
 }
 
 // Solo borra rondas pendientes: el backend rechaza las que ya empezaron.
@@ -238,8 +315,11 @@ export async function getTournamentRounds(tournamentId: string) {
     round_number: number;
     status: string;
     capacity: number;
-    problem_id: string;
-    problem_name: string;
+    time_limit_seconds: number;
+    // null en una ronda de un torneo terminado cuyo problema se borró; problem_name
+    // conserva el nombre.
+    problem_id: string | null;
+    problem_name: string | null;
     participants_count: number;
     advanced_count: number;
     // Motivo por el que una ronda pendiente no puede iniciar todavía; null si

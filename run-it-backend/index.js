@@ -189,7 +189,14 @@ const USABLE_ACCESS_CODE_SQL = `
 
 // Date no es un header CORS-safelisted: sin exponerlo, el frontend en otro
 // origen (desarrollo) no puede leerlo para sincronizar el cronómetro.
-fastify.register(cors, { origin: allowedOrigins, exposedHeaders: ['Date'] });
+// methods explícito: @fastify/cors 11 solo permite GET, HEAD y POST por defecto,
+// y en desarrollo (frontend y backend en orígenes distintos) el navegador
+// bloqueaba todo PUT y DELETE del panel. En producción es el mismo origen.
+fastify.register(cors, {
+	origin: allowedOrigins,
+	methods: ['GET', 'HEAD', 'POST', 'PUT', 'DELETE'],
+	exposedHeaders: ['Date'],
+});
 
 // Un valor que Postgres no puede convertir (22P02: "abc" como uuid en /rounds/abc)
 // es un error del cliente, no un 500. Todo lo demás sigue al manejador por
@@ -266,6 +273,34 @@ fastify.post('/auth/register', async (request, reply) => {
 				error.code = 'ACCESS_CODE_UNAVAILABLE';
 				throw error;
 			}
+			// El nombre no identifica (username ya no es UNIQUE: la identidad es el
+			// código), pero el del admin sigue reservado para no confundirlo en el panel.
+			const reserved = await client.query(
+				"SELECT 1 FROM users WHERE role = 'admin' AND lower(username) = lower($1)",
+				[username],
+			);
+			if (reserved.rowCount) {
+				const error = new Error('Ese nombre está reservado. Elegí otro.');
+				error.code = 'USERNAME_TAKEN';
+				throw error;
+			}
+			// Dentro de un mismo torneo el nombre no se repite: en la pista, el
+			// ranking y la cola del admin dos "Ana" serían indistinguibles. El lock
+			// serializa dos altas simultáneas con el mismo nombre en el mismo torneo.
+			const { tournament_id: tournamentId } = codeResult.rows[0];
+			if (tournamentId) {
+				await client.query('SELECT pg_advisory_xact_lock(hashtext($1 || lower($2)))', [tournamentId, username]);
+				const taken = await client.query(
+					`SELECT 1 FROM access_codes
+					 WHERE tournament_id = $1 AND status = 'claimed' AND lower(display_name) = lower($2)`,
+					[tournamentId, username],
+				);
+				if (taken.rowCount) {
+					const error = new Error('Ya hay alguien con ese nombre en este torneo. Agregá una inicial o un apellido.');
+					error.code = 'USERNAME_TAKEN';
+					throw error;
+				}
+			}
 
 			const userResult = await client.query(
 				`INSERT INTO users (username, access_code, role)
@@ -287,8 +322,8 @@ fastify.post('/auth/register', async (request, reply) => {
 		await setSession(token, user);
 		return { token, user };
 	} catch (error) {
-		if (error.code === '23505') {
-			return reply.code(409).send({ error: 'El nombre de usuario ya está en uso' });
+		if (error.code === 'USERNAME_TAKEN') {
+			return reply.code(409).send({ error: error.message });
 		}
 		if (error.code === 'ACCESS_CODE_UNAVAILABLE') {
 			recordAuthFailure(request, username);
@@ -329,9 +364,32 @@ fastify.post('/tournaments', async (request, reply) => {
 	return reply.code(201).send(result.rows[0]);
 });
 
+// Por defecto solo los que no terminaron: es lo que alimenta todos los selectores
+// del panel (configurar ronda, progreso, ronda siguiente, códigos), y un torneo
+// terminado no admite rondas ni códigos. Los terminados se piden explícitamente
+// con ?status=finished, con los conteos que muestra la confirmación de borrado.
+// Mismo criterio que /public/rounds/active: status = 'finished'.
 fastify.get('/tournaments', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
-	const result = await query('SELECT * FROM tournaments ORDER BY created_at DESC');
+	const scope = request.query?.status;
+	if (scope === undefined) {
+		const result = await query("SELECT * FROM tournaments WHERE status <> 'finished' ORDER BY created_at DESC");
+		return result.rows;
+	}
+	if (scope !== 'finished') return reply.code(400).send({ error: 'status solo admite finished' });
+	const result = await query(
+		`SELECT t.*,
+		        (SELECT count(*)::int FROM rounds r WHERE r.tournament_id = t.id) AS rounds_count,
+		        (SELECT count(*)::int FROM participants p WHERE p.tournament_id = t.id) AS participants_count,
+		        (SELECT count(*)::int FROM submissions s JOIN rounds r ON r.id = s.round_id
+		         WHERE r.tournament_id = t.id) AS submissions_count,
+		        (SELECT count(*)::int FROM participants p
+		         WHERE p.tournament_id = t.id
+		           AND NOT EXISTS (SELECT 1 FROM participants other
+		                           WHERE other.user_id = p.user_id AND other.tournament_id <> t.id)
+		        ) AS orphaned_users_count
+		 FROM tournaments t WHERE t.status = 'finished' ORDER BY t.created_at DESC`,
+	);
 	return result.rows;
 });
 
@@ -343,10 +401,109 @@ fastify.put('/tournaments/:id', async (request, reply) => {
 	return result.rowCount ? result.rows[0] : reply.code(404).send({ error: 'Torneo no encontrado' });
 });
 
+// Borra un torneo con sus rondas, participantes, envíos y códigos. Solo si
+// terminó, o si nunca se jugó ninguna ronda (uno creado por error). Los usuarios
+// no se borran: users no cuelga de ningún torneo. Los que quedan sin torneo se
+// limpian aparte, revisándolos antes, desde /users/orphans.
 fastify.delete('/tournaments/:id', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
-	const result = await query('DELETE FROM tournaments WHERE id = $1 RETURNING id', [request.params.id]);
-	return result.rowCount ? { deleted: true } : reply.code(404).send({ error: 'Torneo no encontrado' });
+	const outcome = await withTransaction(async (client) => {
+		const tournament = await client.query(
+			'SELECT id, name, status FROM tournaments WHERE id = $1 FOR UPDATE',
+			[request.params.id],
+		);
+		if (!tournament.rowCount) return null;
+		const played = await client.query(
+			"SELECT count(*)::int AS n FROM rounds WHERE tournament_id = $1 AND status <> 'pending'",
+			[request.params.id],
+		);
+		if (tournament.rows[0].status !== 'finished' && played.rows[0].n > 0) {
+			return { blocked: tournament.rows[0].name };
+		}
+		// submissions no tiene ON DELETE CASCADE hacia rounds ni participants: sin
+		// este paso, el DELETE del torneo choca con la FK de cualquier ronda jugada.
+		const submissions = await client.query(
+			`DELETE FROM submissions s USING rounds r
+			 WHERE r.id = s.round_id AND r.tournament_id = $1`,
+			[request.params.id],
+		);
+		const counts = await client.query(
+			`SELECT (SELECT count(*)::int FROM rounds WHERE tournament_id = $1) AS rounds,
+			        (SELECT count(*)::int FROM participants WHERE tournament_id = $1) AS participants`,
+			[request.params.id],
+		);
+		await client.query('DELETE FROM tournaments WHERE id = $1', [request.params.id]);
+		return { ...counts.rows[0], submissions: submissions.rowCount };
+	});
+	if (!outcome) return reply.code(404).send({ error: 'Torneo no encontrado' });
+	if (outcome.blocked) {
+		return reply.code(409).send({
+			error: `"${outcome.blocked}" no terminó y ya se jugaron rondas. Finalizalo antes de borrarlo.`,
+		});
+	}
+	return { deleted: true, ...outcome };
+});
+
+// Un usuario huérfano es un participante que no está en ningún torneo: el suyo
+// se borró. Nunca el admin: role = 'participant' va en el WHERE de la lista y
+// del borrado, y además un trigger de schema.sql rechaza cualquier DELETE de un
+// admin. Se excluye a quien se registró con un código de un torneo que sigue
+// abierto, o hace menos de un día: todavía no entró a su primera ronda (el
+// registro es antes del inicio) y borrarlo lo dejaría con una sesión que no
+// puede inscribirse. Espera un alias u sobre users.
+const ORPHAN_USER_SQL = `
+	u.role = 'participant'
+	AND NOT EXISTS (SELECT 1 FROM participants p WHERE p.user_id = u.id)
+	AND NOT EXISTS (
+	  SELECT 1 FROM access_codes ac JOIN tournaments t ON t.id = ac.tournament_id
+	  WHERE ac.claimed_by_user_id = u.id AND t.status <> 'finished'
+	)
+	AND u.created_at < now() - interval '1 day'`;
+
+// La lista para revisar antes de borrar. El código se muestra porque el nombre
+// ya no identifica: puede haber varios "Juan".
+fastify.get('/users/orphans', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const result = await query(
+		`SELECT u.id, u.username, u.access_code, u.created_at
+		 FROM users u WHERE ${ORPHAN_USER_SQL}
+		 ORDER BY u.created_at, u.username LIMIT 1000`,
+	);
+	return result.rows;
+});
+
+// Borra solo los ids que el admin revisó, y de esos solo los que siguen siendo
+// huérfanos: el criterio se vuelve a evaluar con las filas bloqueadas. Nunca un
+// DELETE a ciegas de "todos los huérfanos".
+fastify.delete('/users/orphans', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const ids = request.body?.ids;
+	if (!Array.isArray(ids) || ids.length === 0 || ids.length > 1000
+		|| !ids.every((id) => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id))) {
+		return reply.code(400).send({ error: 'ids debe ser una lista de 1 a 1000 ids de usuario' });
+	}
+	const deleted = await withTransaction(async (client) => {
+		// FOR UPDATE choca con el KEY SHARE de la FK de participants: nadie se
+		// inscribe con uno de estos usuarios mientras se borra.
+		const doomed = await client.query(
+			`SELECT u.id FROM users u WHERE u.id = ANY($1::uuid[]) AND ${ORPHAN_USER_SQL} FOR UPDATE`,
+			[ids],
+		);
+		const doomedIds = doomed.rows.map((row) => row.id);
+		if (!doomedIds.length) return [];
+		// access_codes.claimed_by_user_id no tiene ON DELETE: el código queda
+		// canjeado y con su display_name, sin el vínculo al usuario.
+		await client.query(
+			'UPDATE access_codes SET claimed_by_user_id = NULL WHERE claimed_by_user_id = ANY($1::uuid[])',
+			[doomedIds],
+		);
+		const result = await client.query(
+			`DELETE FROM users u WHERE u.id = ANY($1::uuid[]) AND ${ORPHAN_USER_SQL} RETURNING u.id, u.username`,
+			[doomedIds],
+		);
+		return result.rows;
+	});
+	return { deleted: deleted.length, users: deleted };
 });
 
 fastify.get('/problems', async () => {
@@ -363,6 +520,24 @@ function normalizeTestCases(testCases) {
 		expected: testCase?.expected,
 		is_sample: testCase?.is_sample === true,
 	}))
+}
+
+// Validación de PUT /rounds/:id que no necesita la base. null = no cambia.
+function validateRoundEdit({ problemId, capacity, timeLimitSeconds }) {
+	if (problemId !== null && (typeof problemId !== 'string' || !/^[0-9a-f-]{36}$/i.test(problemId))) {
+		return 'problemId no es válido';
+	}
+	if (capacity !== null && (!Number.isInteger(capacity) || capacity < 1)) {
+		return 'capacity debe ser un entero positivo';
+	}
+	if (timeLimitSeconds !== null
+		&& (!Number.isInteger(timeLimitSeconds) || timeLimitSeconds < 10 || timeLimitSeconds > 86400)) {
+		return 'timeLimitSeconds debe estar entre 10 y 86400';
+	}
+	if (problemId === null && capacity === null && timeLimitSeconds === null) {
+		return 'Indicá al menos problemId, capacity o timeLimitSeconds';
+	}
+	return null
 }
 
 fastify.post('/problems', async (request, reply) => {
@@ -410,7 +585,7 @@ fastify.get('/problems/:id/full', async (request, reply) => {
 	);
 	if (!problem.rowCount) return reply.code(404).send({ error: 'Problema no encontrado' });
 	const rounds = await query(
-		`SELECT r.id, r.round_number, r.status, t.name AS tournament_name
+		`SELECT r.id, r.round_number, r.status, t.name AS tournament_name, t.status AS tournament_status
 		 FROM rounds r JOIN tournaments t ON t.id = r.tournament_id
 		 WHERE r.problem_id = $1 ORDER BY t.created_at, r.round_number`,
 		[request.params.id],
@@ -475,15 +650,48 @@ fastify.put('/problems/:id', async (request, reply) => {
 	return outcome.problem;
 });
 
+// Un problema se borra si ninguna ronda de un torneo sin terminar lo usa. Las
+// rondas de torneos terminados sobreviven: la FK es ON DELETE SET NULL, y antes
+// de borrar se copia el nombre a rounds.problem_name para que el historial diga
+// qué se jugó. Nunca CASCADE: se llevaría las rondas y sus envíos.
 fastify.delete('/problems/:id', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
-	try {
-		const result = await query('DELETE FROM problems WHERE id = $1 RETURNING id', [request.params.id]);
-		return result.rowCount ? { deleted: true } : reply.code(404).send({ error: 'Problema no encontrado' });
-	} catch (error) {
-		if (error.code === '23503') return reply.code(409).send({ error: 'El problema está siendo usado por una ronda' });
-		throw error;
+	const outcome = await withTransaction(async (client) => {
+		// FOR UPDATE choca con el KEY SHARE que toma la FK al crear o editar una
+		// ronda con este problema: nadie lo puede elegir mientras se decide.
+		const problem = await client.query('SELECT id, name FROM problems WHERE id = $1 FOR UPDATE', [request.params.id]);
+		if (!problem.rowCount) return null;
+		const blocking = await client.query(
+			`SELECT r.round_number, r.status, t.name AS tournament_name
+			 FROM rounds r JOIN tournaments t ON t.id = r.tournament_id
+			 WHERE r.problem_id = $1 AND t.status <> 'finished'
+			 ORDER BY t.created_at, r.round_number`,
+			[request.params.id],
+		);
+		if (blocking.rowCount) return { blocking: blocking.rows };
+		const kept = await client.query(
+			'UPDATE rounds SET problem_name = $2 WHERE problem_id = $1',
+			[request.params.id, problem.rows[0].name],
+		);
+		await client.query('DELETE FROM problems WHERE id = $1', [request.params.id]);
+		return { roundsKept: kept.rowCount };
+	});
+	if (!outcome) return reply.code(404).send({ error: 'Problema no encontrado' });
+	if (outcome.blocking) {
+		const list = outcome.blocking
+			.map((row) => `ronda ${row.round_number} de "${row.tournament_name}" (${ROUND_STATUS_TEXT[row.status] ?? row.status})`)
+			.join(', ');
+		// PUT /rounds/:id solo edita pendientes: una ronda ya jugada libera el
+		// problema recién cuando su torneo termina.
+		const hint = outcome.blocking.every((row) => row.status === 'pending')
+			? 'Cambiale el problema a esa ronda (Editar, en Progreso del torneo) y volvé a intentar.'
+			: 'Una ronda ya jugada lo libera cuando su torneo termine; una pendiente, cambiándole el problema.';
+		return reply.code(409).send({
+			error: `No se puede borrar: lo usa${outcome.blocking.length === 1 ? '' : 'n'} ${list}, de un torneo que no terminó. ${hint}`,
+			blocking: outcome.blocking,
+		});
 	}
+	return { deleted: true, roundsKept: outcome.roundsKept };
 });
 
 fastify.post('/tournaments/:id/participants', async (request, reply) => {
@@ -778,13 +986,13 @@ fastify.post('/rounds', async (request, reply) => {
 fastify.get('/tournaments/:id/rounds', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
 	const result = await query(
-		`SELECT r.*, p.name AS problem_name,
+		`SELECT r.*, COALESCE(p.name, r.problem_name) AS problem_name,
 		        (SELECT count(*)::int FROM round_participants rp
 		         WHERE rp.round_id = r.id) AS participants_count,
 		        (SELECT count(*)::int FROM round_participants rp
 		         WHERE rp.round_id = r.id AND rp.final_status = 'advanced') AS advanced_count,
 		        ${START_STATE_SQL}
-		 FROM rounds r JOIN problems p ON p.id = r.problem_id
+		 FROM rounds r LEFT JOIN problems p ON p.id = r.problem_id
 		 WHERE r.tournament_id = $1 ORDER BY r.round_number`,
 		[request.params.id],
 	);
@@ -940,16 +1148,53 @@ fastify.post('/rounds/:id/next', async (request, reply) => {
 	return reply.code(201).send({ ...created, advancing: preview.advancing });
 });
 
+// Edita una ronda que todavía no empezó. Los tres campos son opcionales; los
+// que faltan quedan como estaban. timeLimitSeconds va en segundos, igual que en
+// POST /rounds: el panel convierte desde minutos.
 fastify.put('/rounds/:id', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
-	const { problemId, capacity, timeLimitSeconds } = request.body || {};
-	const result = await query(
-		`UPDATE rounds SET problem_id = COALESCE($1, problem_id), capacity = COALESCE($2, capacity),
-		 time_limit_seconds = COALESCE($3, time_limit_seconds)
-		 WHERE id = $4 AND status = 'pending' RETURNING *`,
-		[problemId, capacity, timeLimitSeconds, request.params.id],
+	const { problemId = null, capacity = null, timeLimitSeconds = null } = request.body || {};
+	const error = validateRoundEdit({ problemId, capacity, timeLimitSeconds });
+	if (error) return reply.code(400).send({ error });
+	let result;
+	try {
+		// En una ronda siguiente el roster ya está armado: un cupo mayor que los
+		// inscriptos la deja sin eliminados, y nadie queda afuera por cupo. La
+		// primera ronda no tiene roster hasta que la gente entra, así que ahí no
+		// hay techo que comparar. Todo es condición del UPDATE, como en /start.
+		result = await query(
+			`UPDATE rounds r SET problem_id = COALESCE($1, r.problem_id),
+			        capacity = COALESCE($2, r.capacity),
+			        time_limit_seconds = COALESCE($3, r.time_limit_seconds)
+			 WHERE r.id = $4 AND r.status = 'pending'
+			   AND ($2::int IS NULL
+			     OR NOT EXISTS (SELECT 1 FROM rounds prev WHERE prev.tournament_id = r.tournament_id AND prev.round_number < r.round_number)
+			     OR $2::int <= (SELECT count(*) FROM round_participants rp WHERE rp.round_id = r.id))
+			 RETURNING *`,
+			[problemId, capacity, timeLimitSeconds, request.params.id],
+		);
+	} catch (error) {
+		if (error.code === '23503') return reply.code(404).send({ error: 'El problema no existe' });
+		throw error;
+	}
+	if (result.rowCount) return result.rows[0];
+	// Solo para explicar el rechazo: la decisión ya la tomó el UPDATE.
+	const why = await query(
+		`SELECT r.round_number, r.status,
+		        (SELECT count(*)::int FROM round_participants rp WHERE rp.round_id = r.id) AS enrolled
+		 FROM rounds r WHERE r.id = $1`,
+		[request.params.id],
 	);
-	return result.rowCount ? result.rows[0] : reply.code(409).send({ error: 'La ronda no existe o ya inició' });
+	if (!why.rowCount) return reply.code(404).send({ error: 'La ronda no existe' });
+	const row = why.rows[0];
+	if (row.status !== 'pending') {
+		return reply.code(409).send({
+			error: `La ronda ${row.round_number} ya no se puede editar: está ${ROUND_STATUS_TEXT[row.status] ?? row.status}`,
+		});
+	}
+	return reply.code(409).send({
+		error: `El cupo no puede ser mayor que los ${row.enrolled} inscriptos de la ronda ${row.round_number}`,
+	});
 });
 
 fastify.delete('/rounds/:id', async (request, reply) => {
@@ -1047,8 +1292,8 @@ fastify.post('/rounds/:id/close', async (request, reply) => {
 
 fastify.get('/rounds/:id/state', async (request) => {
 	const result = await query(
-		`SELECT r.*, p.name AS problem_name
-		 FROM rounds r JOIN problems p ON p.id = r.problem_id WHERE r.id = $1`,
+		`SELECT r.*, COALESCE(p.name, r.problem_name) AS problem_name
+		 FROM rounds r LEFT JOIN problems p ON p.id = r.problem_id WHERE r.id = $1`,
 		[request.params.id],
 	);
 	return result.rows[0] || null;
@@ -1401,8 +1646,8 @@ async function start() {
 					return;
 				}
 				const result = await query(
-					`SELECT r.*, p.name AS problem_name, p.statement, p.difficulty
-					 FROM rounds r JOIN problems p ON p.id = r.problem_id
+					`SELECT r.*, COALESCE(p.name, r.problem_name) AS problem_name, p.statement, p.difficulty
+					 FROM rounds r LEFT JOIN problems p ON p.id = r.problem_id
 					 WHERE r.id = $1`,
 					[roundId],
 				);
@@ -1485,4 +1730,7 @@ if (require.main === module) {
 	});
 }
 
-module.exports = { fastify, start, requireRole, sessions: memorySessions, closeRound, describeStartBlock, startBlockReason };
+module.exports = {
+	fastify, start, requireRole, sessions: memorySessions, closeRound, describeStartBlock, startBlockReason,
+	validateRoundEdit, ORPHAN_USER_SQL,
+};

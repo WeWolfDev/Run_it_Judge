@@ -380,7 +380,7 @@ test('/public/rounds/active publica solo los ejemplos, proyectados', { skip }, a
 	await ok('POST', `/rounds/${round.id}/close`, {}, state.adminToken);
 });
 
-test('borrar un problema: libre, en uso por una pendiente y en uso por una jugada', { skip }, async (t) => {
+test('borrar un problema: libre, en uso por una pendiente, por una jugada y con el torneo terminado', { skip }, async (t) => {
 	const unused = await createProblem('sin uso', [{ stdin: 'a', expected: 'a', is_sample: false }]);
 	await ok('DELETE', `/problems/${unused.id}`, undefined, state.adminToken);
 	const listed = await ok('GET', '/problems');
@@ -393,18 +393,29 @@ test('borrar un problema: libre, en uso por una pendiente y en uso por una jugad
 	const inUse = await api('DELETE', `/problems/${pending.id}`, undefined, state.adminToken);
 	t.diagnostic(`problema en uso -> ${inUse.status} ${inUse.body.error}`);
 	assert.equal(inUse.status, 409);
-	assert.equal(inUse.body.error, 'El problema está siendo usado por una ronda');
+	// El 409 nombra la ronda y el torneo que lo bloquean.
+	assert.match(inUse.body.error, /^No se puede borrar: lo usa ronda 1 de "e2e rondas \S+ borrado" \(pendiente\)/);
 	await ok('DELETE', `/rounds/${round.id}`, undefined, state.adminToken);
 	await ok('DELETE', `/problems/${pending.id}`, undefined, state.adminToken);
 
 	const played = await createProblem('jugado', [{ stdin: 'a', expected: 'a', is_sample: false }]);
-	const { round: closed } = await createTournamentWithRound('jugado', played.id, 1);
+	const { tournament: playedTournament, round: closed } = await createTournamentWithRound('jugado', played.id, 1);
 	await ok('POST', `/rounds/${closed.id}/start`, {}, state.adminToken);
 	await ok('POST', `/rounds/${closed.id}/close`, {}, state.adminToken);
 	const closedDelete = await api('DELETE', `/rounds/${closed.id}`, undefined, state.adminToken);
 	t.diagnostic(`borrar ronda cerrada -> ${closedDelete.status} ${closedDelete.body.error}`);
 	assert.equal(closedDelete.status, 409);
 	assert.equal((await api('DELETE', `/problems/${played.id}`, undefined, state.adminToken)).status, 409);
+
+	// Con el torneo terminado se borra, y la ronda sobrevive con el nombre.
+	await ok('POST', `/tournaments/${playedTournament.id}/finish`, {}, state.adminToken);
+	const deleted = await ok('DELETE', `/problems/${played.id}`, undefined, state.adminToken);
+	assert.equal(deleted.roundsKept, 1);
+	const kept = await ok('GET', `/tournaments/${playedTournament.id}/rounds`, undefined, state.adminToken);
+	assert.deepEqual(
+		kept.map((r) => [r.round_number, r.status, r.problem_id, r.problem_name]),
+		[[1, 'closed', null, played.name]],
+	);
 });
 
 test.after(async () => {
