@@ -11,12 +11,16 @@ import {
   createProblem,
   createRound,
   createTournament,
+  deleteOrphanUsers,
   deleteProblem,
   deleteRound,
+  deleteTournament,
   finishTournament,
   generateAccessCodes,
   getActiveRound,
+  getFinishedTournaments,
   getNextRound,
+  getOrphanUsers,
   getProblemDetail,
   getProblems,
   getRoundLeaderboard,
@@ -28,8 +32,11 @@ import {
   startRound,
   toggleRoundPause,
   updateProblem,
+  updateRound,
   type AccessCode,
+  type FinishedTournament,
   type NextRoundPreview,
+  type OrphanUser,
   type ProblemDetail,
   type ProblemTestCase,
 } from "@/lib/api";
@@ -283,6 +290,31 @@ export function AdminPanel({
   // Ronda pendiente con el "Borrar" abierto, y la que se está borrando.
   const [confirmDeleteRoundId, setConfirmDeleteRoundId] = useState("");
   const [deletingRoundId, setDeletingRoundId] = useState("");
+  // Ronda pendiente en edición. El tiempo se edita en minutos, como al crearla,
+  // y viaja en segundos.
+  const [roundEdit, setRoundEdit] = useState<{
+    id: string;
+    roundNumber: number;
+    problemId: string;
+    capacity: number;
+    minutes: number;
+    maxCapacity: number | null;
+  } | null>(null);
+  const [savingRoundEdit, setSavingRoundEdit] = useState(false);
+  // Historial: torneos terminados, pedidos aparte. null = todavía no se cargó.
+  const [finishedTournaments, setFinishedTournaments] = useState<FinishedTournament[] | null>(null);
+  const [confirmDeleteTournamentId, setConfirmDeleteTournamentId] = useState("");
+  const [deletingTournamentId, setDeletingTournamentId] = useState("");
+  // Usuarios huérfanos: primero se listan para revisar, después se borran.
+  const [orphanUsers, setOrphanUsers] = useState<OrphanUser[] | null>(null);
+  const [loadingOrphans, setLoadingOrphans] = useState(false);
+  const [confirmDeleteOrphans, setConfirmDeleteOrphans] = useState(false);
+  const [deletingOrphans, setDeletingOrphans] = useState(false);
+  // Rondas del torneo terminado que se está mirando en Historial.
+  const [historyRounds, setHistoryRounds] = useState<{
+    tournamentId: string;
+    rows: TournamentRoundProgress[] | null;
+  } | null>(null);
   const [leaderboard, setLeaderboard] = useState<RankingEntry[]>([]);
   const [submissions, setSubmissions] = useState<SubmissionRow[]>([]);
   const [queueStats, setQueueStats] = useState<QueueStats | null>(null);
@@ -341,6 +373,21 @@ export function AdminPanel({
   useEffect(() => {
     void refreshTournaments();
   }, [refreshTournaments]);
+
+  const refreshFinishedTournaments = useMemo(
+    () => async () => {
+      try {
+        setFinishedTournaments(await getFinishedTournaments());
+      } catch {
+        setFinishedTournaments([]);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    void refreshFinishedTournaments();
+  }, [refreshFinishedTournaments]);
 
   const refreshQueueStats = useMemo(
     () => () =>
@@ -431,6 +478,14 @@ export function AdminPanel({
   useEffect(() => {
     refreshRoundsProgress();
   }, [refreshRoundsProgress, closedVersion]);
+
+  // Cerrar la última ronda puede terminar el torneo: sale de los selectores y
+  // entra al historial.
+  useEffect(() => {
+    if (closedVersion === 0) return;
+    void refreshTournaments();
+    void refreshFinishedTournaments();
+  }, [closedVersion, refreshTournaments, refreshFinishedTournaments]);
 
   // Rondas del torneo elegido en "Configurar ronda". Si ya tiene alguna, ese
   // formulario no crea: la siguiente sale de "Avanzar", con los clasificados.
@@ -932,6 +987,125 @@ export function AdminPanel({
     }
   };
 
+  const openRoundEdit = (r: TournamentRoundProgress) => {
+    // Una ronda siguiente ya tiene el roster armado: el cupo no puede pasarlo. La
+    // primera se llena al iniciarse, así que ahí no hay techo.
+    const hasPrevious = (roundsProgress ?? []).some((o) => o.round_number < r.round_number);
+    setConfirmDeleteRoundId("");
+    setRoundEdit({
+      id: r.id,
+      roundNumber: r.round_number,
+      problemId: r.problem_id ?? problems[0]?.id ?? "",
+      capacity: r.capacity,
+      minutes: r.time_limit_seconds / 60,
+      maxCapacity: hasPrevious ? r.participants_count : null,
+    });
+  };
+
+  const saveRoundEdit = async () => {
+    if (!roundEdit) return;
+    const seconds = Math.round(roundEdit.minutes * 60);
+    if (!roundEdit.problemId) {
+      setMessage("Elegí un problema para la ronda.");
+      return;
+    }
+    if (!Number.isInteger(roundEdit.capacity) || roundEdit.capacity < 1) {
+      setMessage("El cupo tiene que ser un entero desde 1.");
+      return;
+    }
+    if (roundEdit.maxCapacity !== null && roundEdit.capacity > roundEdit.maxCapacity) {
+      setMessage(`El cupo no puede ser mayor que los ${roundEdit.maxCapacity} inscriptos.`);
+      return;
+    }
+    if (!(seconds >= 10 && seconds <= 86400)) {
+      setMessage("El tiempo límite tiene que estar entre 10 segundos y 24 horas.");
+      return;
+    }
+    setSavingRoundEdit(true);
+    try {
+      await updateRound(roundEdit.id, {
+        problemId: roundEdit.problemId,
+        capacity: roundEdit.capacity,
+        timeLimitSeconds: seconds,
+      });
+      setMessage(`Ronda ${roundEdit.roundNumber} guardada.`);
+      setRoundEdit(null);
+    } catch (error) {
+      // El 409 dice por qué: otro admin la inició, o el cupo pasa a los inscriptos.
+      setMessage(error instanceof Error ? error.message : "No se pudo guardar la ronda");
+    } finally {
+      setSavingRoundEdit(false);
+      refreshRoundsProgress();
+    }
+  };
+
+  const removeTournament = async (tournament: FinishedTournament) => {
+    setDeletingTournamentId(tournament.id);
+    try {
+      const result = await deleteTournament(tournament.id);
+      setMessage(
+        `Torneo “${tournament.name}” borrado: ${result.rounds} rondas, ${result.participants} participantes y ${result.submissions} envíos.`,
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo borrar el torneo");
+    } finally {
+      setDeletingTournamentId("");
+      setConfirmDeleteTournamentId("");
+      void refreshFinishedTournaments();
+      setOrphanUsers(null);
+    }
+  };
+
+  const toggleHistoryRounds = (tournamentId: string) => {
+    if (historyRounds?.tournamentId === tournamentId) {
+      setHistoryRounds(null);
+      return;
+    }
+    setHistoryRounds({ tournamentId, rows: null });
+    void getTournamentRounds(tournamentId)
+      .then((rows) =>
+        setHistoryRounds((current) =>
+          current?.tournamentId === tournamentId ? { tournamentId, rows } : current,
+        ),
+      )
+      .catch(() => {
+        setHistoryRounds(null);
+        setMessage("No se pudieron cargar las rondas del torneo.");
+      });
+  };
+
+  const loadOrphanUsers = async () => {
+    setLoadingOrphans(true);
+    setConfirmDeleteOrphans(false);
+    try {
+      setOrphanUsers(await getOrphanUsers());
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudieron cargar los usuarios");
+    } finally {
+      setLoadingOrphans(false);
+    }
+  };
+
+  const removeOrphanUsers = async () => {
+    if (!orphanUsers?.length) return;
+    setDeletingOrphans(true);
+    try {
+      // Solo los que el admin tiene a la vista, nunca "todos los huérfanos".
+      const result = await deleteOrphanUsers(orphanUsers.map((user) => user.id));
+      const skipped = orphanUsers.length - result.deleted;
+      setMessage(
+        `${result.deleted} usuarios borrados.` +
+          (skipped ? ` ${skipped} ya no eran huérfanos y se conservaron.` : ""),
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudieron borrar los usuarios");
+    } finally {
+      setDeletingOrphans(false);
+      setConfirmDeleteOrphans(false);
+      void loadOrphanUsers();
+    }
+  };
+
   // Solo hace el POST de inicio: el roster de la ronda ya lo armó quien la creó.
   const beginRound = async (roundId: string) => {
     setStartingRoundId(roundId);
@@ -954,6 +1128,7 @@ export function AdminPanel({
         <TabsTrigger value="control">Control de ronda</TabsTrigger>
         <TabsTrigger value="rondas">Rondas</TabsTrigger>
         <TabsTrigger value="acceso">Acceso</TabsTrigger>
+        <TabsTrigger value="historial">Historial</TabsTrigger>
       </TabsList>
 
       <TabsContent value="control" className="space-y-5">
@@ -1471,22 +1646,37 @@ export function AdminPanel({
                               <li key={r.id}>
                                 Ronda {r.round_number} de “{r.tournament_name}” ·{" "}
                                 {(ROUND_STATUS_LABEL[r.status] ?? r.status).toLowerCase()}
+                                {r.tournament_status === "finished" ? " · torneo terminado" : ""}
                               </li>
                             ))}
                           </ul>
-                          {deleteTarget.detail.rounds.some((r) => r.status !== "pending") && (
+                          {deleteTarget.detail.rounds.some(
+                            (r) => r.tournament_status === "finished",
+                          ) && (
                             <p>
-                              Los envíos no guardan copia de los casos: borrar el problema dejaría
-                              las rondas jugadas sin forma de auditar qué se juzgó. El servidor no
-                              lo permite mientras alguna ronda lo use.
+                              Las rondas de torneos terminados se conservan con su número, estado,
+                              participantes y envíos, y guardan el nombre del problema. Lo que se
+                              pierde es el enunciado y los casos: no se va a poder auditar qué se
+                              juzgó.
+                            </p>
+                          )}
+                          {deleteTarget.detail.rounds.some(
+                            (r) => r.tournament_status !== "finished" && r.status !== "pending",
+                          ) && (
+                            <p>
+                              Una ronda ya jugada de un torneo que sigue abierto bloquea el borrado
+                              hasta que el torneo termine.
                             </p>
                           )}
                           {deleteTarget.detail.rounds
-                            .filter((r) => r.status === "pending")
+                            .filter(
+                              (r) => r.status === "pending" && r.tournament_status !== "finished",
+                            )
                             .map((r) => (
                               <p key={r.id} className="flex flex-wrap items-center gap-2">
-                                Primero hay que borrar la ronda {r.round_number} de “
-                                {r.tournament_name}”, que todavía no se jugó.
+                                La ronda {r.round_number} de “{r.tournament_name}” todavía no se
+                                jugó: cambiale el problema con “Editar” en Progreso del torneo, o
+                                borrala.
                                 <button
                                   type="button"
                                   disabled={deletingProblem}
@@ -1557,17 +1747,12 @@ export function AdminPanel({
                     ? "No hay torneos. Creá el primero para empezar."
                     : "Sin torneo seleccionado"}
                 </option>
-                {tournaments.map((tournament) =>
-                  tournament.status === "finished" ? (
-                    <option key={tournament.id} value={`finished:${tournament.id}`} disabled>
-                      {tournament.name} (finalizado)
-                    </option>
-                  ) : (
-                    <option key={tournament.id} value={tournament.name}>
-                      {tournament.name}
-                    </option>
-                  ),
-                )}
+                {/* Solo torneos abiertos: los terminados están en Historial. */}
+                {tournaments.map((tournament) => (
+                  <option key={tournament.id} value={tournament.name}>
+                    {tournament.name}
+                  </option>
+                ))}
                 <option value={NEW_TOURNAMENT_OPTION}>+ Crear nuevo torneo</option>
               </select>
             </label>
@@ -1695,6 +1880,11 @@ export function AdminPanel({
                   <div className="flex items-center justify-between gap-3">
                     <span>
                       Ronda {r.round_number} · {ROUND_STATUS_LABEL[r.status] ?? r.status}
+                      {r.problem_name && (
+                        <span className="ml-1 text-xs text-muted-foreground">
+                          · {r.problem_name}
+                        </span>
+                      )}
                     </span>
                     <span className="flex items-center gap-3">
                       <span className="font-mono tabular-nums">
@@ -1715,7 +1905,85 @@ export function AdminPanel({
                   {r.status === "pending" && r.start_blocked_reason && (
                     <p className="mt-1 text-xs text-muted-foreground">{r.start_blocked_reason}</p>
                   )}
+                  {r.status === "pending" && roundEdit?.id === r.id && (
+                    <form
+                      className="mt-2 space-y-2 rounded-lg border border-border bg-background p-3 text-xs"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void saveRoundEdit();
+                      }}
+                    >
+                      <label className="block">
+                        <span className="text-muted-foreground">Problema</span>
+                        <select
+                          value={roundEdit.problemId}
+                          onChange={(event) =>
+                            setRoundEdit({ ...roundEdit, problemId: event.target.value })
+                          }
+                          className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+                        >
+                          {!roundEdit.problemId && <option value="">Elegí un problema</option>}
+                          {problems.map((problem) => (
+                            <option key={problem.id} value={problem.id}>
+                              {problem.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="flex gap-2">
+                        <label className="block flex-1">
+                          <span className="text-muted-foreground">
+                            Cupo
+                            {roundEdit.maxCapacity !== null
+                              ? ` (máx. ${roundEdit.maxCapacity} inscriptos)`
+                              : ""}
+                          </span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={roundEdit.maxCapacity ?? undefined}
+                            value={roundEdit.capacity}
+                            onChange={(event) =>
+                              setRoundEdit({ ...roundEdit, capacity: Number(event.target.value) })
+                            }
+                            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+                          />
+                        </label>
+                        <label className="block flex-1">
+                          <span className="text-muted-foreground">Tiempo límite (minutos)</span>
+                          <input
+                            type="number"
+                            min={1}
+                            step="any"
+                            value={roundEdit.minutes}
+                            onChange={(event) =>
+                              setRoundEdit({ ...roundEdit, minutes: Number(event.target.value) })
+                            }
+                            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+                          />
+                        </label>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="submit"
+                          disabled={savingRoundEdit}
+                          className="rounded-lg bg-primary px-3 py-1.5 font-medium text-primary-foreground disabled:opacity-50"
+                        >
+                          {savingRoundEdit ? "Guardando..." : "Guardar"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={savingRoundEdit}
+                          onClick={() => setRoundEdit(null)}
+                          className="rounded-lg border border-border px-3 py-1.5 font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </form>
+                  )}
                   {r.status === "pending" &&
+                    roundEdit?.id !== r.id &&
                     (confirmDeleteRoundId === r.id ? (
                       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-danger">
                         <span>
@@ -1743,14 +2011,24 @@ export function AdminPanel({
                         </button>
                       </div>
                     ) : (
-                      <button
-                        type="button"
-                        disabled={startingRoundId !== "" || deletingRoundId !== ""}
-                        onClick={() => setConfirmDeleteRoundId(r.id)}
-                        className="mt-1 text-xs text-muted-foreground underline-offset-2 hover:text-danger hover:underline disabled:opacity-50"
-                      >
-                        Borrar ronda pendiente
-                      </button>
+                      <span className="mt-1 flex gap-3">
+                        <button
+                          type="button"
+                          disabled={startingRoundId !== "" || deletingRoundId !== ""}
+                          onClick={() => openRoundEdit(r)}
+                          className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={startingRoundId !== "" || deletingRoundId !== ""}
+                          onClick={() => setConfirmDeleteRoundId(r.id)}
+                          className="text-xs text-muted-foreground underline-offset-2 hover:text-danger hover:underline disabled:opacity-50"
+                        >
+                          Borrar ronda pendiente
+                        </button>
+                      </span>
                     ))}
                 </li>
               ))}
@@ -1878,14 +2156,10 @@ export function AdminPanel({
                 className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
               >
                 <option value="">Sin torneo (código global)</option>
+                {/* Solo torneos abiertos: los terminados están en Historial. */}
                 {tournaments.map((tournament) => (
-                  <option
-                    key={tournament.id}
-                    value={tournament.id}
-                    disabled={tournament.status === "finished"}
-                  >
+                  <option key={tournament.id} value={tournament.id}>
                     {tournament.name}
-                    {tournament.status === "finished" ? " — finalizado" : ""}
                   </option>
                 ))}
               </select>
@@ -2035,9 +2309,11 @@ export function AdminPanel({
                   void finishTournament(codeTournamentId)
                     .then((result) => {
                       setMessage(
-                        `Torneo finalizado y ${result.expiredAccessCodes} códigos invalidados`,
+                        `Torneo finalizado y ${result.expiredAccessCodes} códigos invalidados. Pasó a Historial.`,
                       );
-                      return Promise.all([refreshCodes(), refreshTournaments()]);
+                      // Ya no está en el selector: se deja de filtrar por él.
+                      setCodeTournamentId("");
+                      return Promise.all([refreshTournaments(), refreshFinishedTournaments()]);
                     })
                     .catch((error) =>
                       setMessage(error instanceof Error ? error.message : "No se pudo finalizar"),
@@ -2052,6 +2328,233 @@ export function AdminPanel({
           )}
 
           {message && <p className="mt-2 text-xs text-muted-foreground">{message}</p>}
+        </section>
+      </TabsContent>
+
+      <TabsContent value="historial" className="space-y-5">
+        {message && (
+          <p
+            role="status"
+            className="rounded-lg border border-border bg-card px-4 py-2 text-xs text-foreground"
+          >
+            {message}
+          </p>
+        )}
+        <section className="rounded-xl border border-border bg-card p-5">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-foreground">Torneos terminados</h3>
+            <button
+              type="button"
+              onClick={() => void refreshFinishedTournaments()}
+              className="text-xs text-primary hover:underline"
+            >
+              Actualizar
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            No aparecen en los selectores de las otras pestañas. Se conservan hasta que los borres.
+          </p>
+          {finishedTournaments === null ? (
+            <p className="mt-4 text-sm text-muted-foreground">Cargando…</p>
+          ) : finishedTournaments.length === 0 ? (
+            <p className="mt-4 text-sm text-muted-foreground">Ningún torneo terminado.</p>
+          ) : (
+            <ul className="mt-4 divide-y divide-border text-sm">
+              {finishedTournaments.map((tournament) => (
+                <li key={tournament.id} className="py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-foreground">
+                      {tournament.name}
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {new Date(tournament.created_at).toLocaleDateString()} ·{" "}
+                        {tournament.rounds_count} rondas · {tournament.participants_count}{" "}
+                        participantes
+                      </span>
+                    </span>
+                    <span className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleHistoryRounds(tournament.id)}
+                        className="rounded-lg border border-border px-3 py-1 text-xs font-medium text-foreground hover:bg-muted"
+                      >
+                        {historyRounds?.tournamentId === tournament.id
+                          ? "Ocultar rondas"
+                          : "Ver rondas"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={deletingTournamentId !== ""}
+                        onClick={() => setConfirmDeleteTournamentId(tournament.id)}
+                        className="rounded-lg border border-danger px-3 py-1 text-xs font-medium text-danger hover:opacity-70 disabled:opacity-50"
+                      >
+                        Borrar
+                      </button>
+                    </span>
+                  </div>
+                  {historyRounds?.tournamentId === tournament.id && (
+                    <div className="mt-2 rounded-lg border border-border p-3 text-xs">
+                      {historyRounds.rows === null ? (
+                        <p className="text-muted-foreground">Cargando rondas…</p>
+                      ) : historyRounds.rows.length === 0 ? (
+                        <p className="text-muted-foreground">Sin rondas.</p>
+                      ) : (
+                        <ul className="space-y-1">
+                          {historyRounds.rows.map((r) => (
+                            <li key={r.id} className="flex justify-between gap-3">
+                              <span>
+                                Ronda {r.round_number} · {ROUND_STATUS_LABEL[r.status] ?? r.status}{" "}
+                                · {r.problem_name ?? "problema sin nombre"}
+                                {r.problem_id === null && r.problem_name && (
+                                  <span className="text-muted-foreground"> (problema borrado)</span>
+                                )}
+                              </span>
+                              <span className="font-mono tabular-nums">
+                                {r.participants_count} →{" "}
+                                {r.status === "closed" ? r.advanced_count : "—"}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                  {confirmDeleteTournamentId === tournament.id && (
+                    <div
+                      role="alertdialog"
+                      aria-label={`Borrar ${tournament.name}`}
+                      className="mt-2 space-y-2 rounded-lg border border-danger bg-danger-soft p-3 text-xs text-danger"
+                    >
+                      <p>
+                        Se borran para siempre {tournament.rounds_count} rondas,{" "}
+                        {tournament.participants_count} participantes,{" "}
+                        {tournament.submissions_count} envíos y los códigos de acceso de “
+                        {tournament.name}”. No se puede deshacer.
+                      </p>
+                      <p>
+                        Los usuarios no se borran.{" "}
+                        {tournament.orphaned_users_count > 0
+                          ? `${tournament.orphaned_users_count} de ellos no juegan otro torneo y quedan sin torneo: se pueden revisar y limpiar abajo.`
+                          : "Ninguno queda sin torneo."}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={deletingTournamentId !== ""}
+                          onClick={() => void removeTournament(tournament)}
+                          className="rounded-lg bg-danger px-3 py-1.5 font-medium text-danger-foreground disabled:opacity-50"
+                        >
+                          {deletingTournamentId === tournament.id
+                            ? "Borrando..."
+                            : "Borrar torneo definitivamente"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={deletingTournamentId !== ""}
+                          onClick={() => setConfirmDeleteTournamentId("")}
+                          className="rounded-lg border border-danger px-3 py-1.5 font-medium"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="rounded-xl border border-border bg-card p-5">
+          <h3 className="text-sm font-semibold text-foreground">Usuarios sin torneo</h3>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Participantes que no están en ningún torneo, registrados hace más de un día y sin un
+            código de un torneo abierto. El admin nunca aparece. Revisá la lista antes de borrar: el
+            código distingue a dos personas con el mismo nombre.
+          </p>
+          <button
+            type="button"
+            disabled={loadingOrphans || deletingOrphans}
+            onClick={() => void loadOrphanUsers()}
+            className="mt-3 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
+          >
+            {loadingOrphans
+              ? "Buscando..."
+              : orphanUsers === null
+                ? "Buscar usuarios sin torneo"
+                : "Volver a buscar"}
+          </button>
+          {orphanUsers !== null && orphanUsers.length === 0 && (
+            <p className="mt-3 text-sm text-muted-foreground">No hay usuarios sin torneo.</p>
+          )}
+          {orphanUsers !== null && orphanUsers.length > 0 && (
+            <>
+              <div className="mt-3 max-h-56 overflow-y-auto rounded-lg border border-border">
+                <table className="w-full text-left text-xs">
+                  <thead className="sticky top-0 bg-muted text-muted-foreground">
+                    <tr>
+                      <th className="px-2 py-1.5 font-medium">Nombre</th>
+                      <th className="px-2 py-1.5 font-medium">Código</th>
+                      <th className="px-2 py-1.5 font-medium">Registrado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orphanUsers.map((user) => (
+                      <tr key={user.id} className="border-t border-border">
+                        <td className="px-2 py-1.5 text-foreground">{user.username}</td>
+                        <td className="px-2 py-1.5 font-mono text-foreground">
+                          {user.access_code}
+                        </td>
+                        <td className="px-2 py-1.5 text-muted-foreground">
+                          {new Date(user.created_at).toLocaleDateString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {confirmDeleteOrphans ? (
+                <div
+                  role="alertdialog"
+                  aria-label="Borrar usuarios sin torneo"
+                  className="mt-3 space-y-2 rounded-lg border border-danger bg-danger-soft p-3 text-xs text-danger"
+                >
+                  <p>
+                    Se borran para siempre los {orphanUsers.length} usuarios de la lista. Con su
+                    código ya no pueden iniciar sesión. Sus códigos quedan como canjeados. No se
+                    puede deshacer.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={deletingOrphans}
+                      onClick={() => void removeOrphanUsers()}
+                      className="rounded-lg bg-danger px-3 py-1.5 font-medium text-danger-foreground disabled:opacity-50"
+                    >
+                      {deletingOrphans
+                        ? "Borrando..."
+                        : `Borrar ${orphanUsers.length} usuarios definitivamente`}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deletingOrphans}
+                      onClick={() => setConfirmDeleteOrphans(false)}
+                      className="rounded-lg border border-danger px-3 py-1.5 font-medium"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteOrphans(true)}
+                  className="mt-3 rounded-lg border border-danger px-3 py-1.5 text-xs font-medium text-danger hover:opacity-70"
+                >
+                  Borrar estos {orphanUsers.length} usuarios
+                </button>
+              )}
+            </>
+          )}
         </section>
       </TabsContent>
     </Tabs>
