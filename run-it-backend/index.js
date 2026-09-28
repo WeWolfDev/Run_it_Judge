@@ -95,6 +95,65 @@ const CHARACTER_COUNT = 10;
 // Cuenta regresiva entre POST /rounds/:id/start y el primer envío aceptado.
 const ROUND_COUNTDOWN_SECONDS = 10;
 
+const ROUND_STATUS_TEXT = {
+	pending: 'pendiente',
+	active: 'en curso',
+	closing: 'cerrándose',
+	closed: 'cerrada',
+};
+
+// Rondas anteriores de r (mismo torneo) que todavía no cerraron. Mientras haya
+// alguna, r no puede iniciar. 'closing' cuenta como abierta: closeRound todavía
+// no terminó de rankear. Espera un alias r sobre rounds.
+const OPEN_PREVIOUS_ROUNDS_SQL = `
+	SELECT prev.round_number, prev.status FROM rounds prev
+	WHERE prev.tournament_id = r.tournament_id
+	  AND prev.round_number < r.round_number
+	  AND prev.status <> 'closed'`;
+
+// Motivo legible de por qué una ronda no puede iniciar. Lo usan el 409 de
+// POST /rounds/:id/start y el listado de progreso, para que el panel muestre
+// el mismo texto antes de que el admin apriete.
+function describeStartBlock(blockers) {
+	const sorted = [...blockers].sort((a, b) => a.round_number - b.round_number);
+	if (sorted.length === 1) {
+		const [only] = sorted;
+		return `Cerrá la ronda ${only.round_number} primero: está ${ROUND_STATUS_TEXT[only.status] ?? only.status}`;
+	}
+	const parts = sorted.map((row) => `${row.round_number} (${ROUND_STATUS_TEXT[row.status] ?? row.status})`);
+	return `Cerrá primero las rondas ${parts.slice(0, -1).join(', ')} y ${parts.at(-1)}`
+}
+
+// Lo que decide si una ronda pendiente puede iniciar, además de su status.
+// Espera un alias r sobre rounds. START_ALLOWED_SQL es la misma regla como
+// condición de un WHERE; START_STATE_SQL la expone para explicar el rechazo.
+const START_ALLOWED_SQL = `
+	NOT EXISTS (SELECT 1 FROM tournaments t WHERE t.id = r.tournament_id AND t.status = 'finished')
+	AND NOT EXISTS (${OPEN_PREVIOUS_ROUNDS_SQL})
+	AND (
+	  NOT EXISTS (SELECT 1 FROM rounds prev WHERE prev.tournament_id = r.tournament_id AND prev.round_number < r.round_number)
+	  OR EXISTS (SELECT 1 FROM round_participants rp WHERE rp.round_id = r.id)
+	)`;
+const START_STATE_SQL = `
+	(SELECT t.status FROM tournaments t WHERE t.id = r.tournament_id) AS tournament_status,
+	(SELECT json_agg(b) FROM (${OPEN_PREVIOUS_ROUNDS_SQL}) b) AS start_blockers,
+	EXISTS (SELECT 1 FROM rounds prev WHERE prev.tournament_id = r.tournament_id AND prev.round_number < r.round_number) AS has_previous,
+	EXISTS (SELECT 1 FROM round_participants rp WHERE rp.round_id = r.id) AS has_roster`;
+
+// Motivo por el que una ronda pendiente no puede iniciar, o null si puede. Mismo
+// orden de prioridad que ve el admin: lo más fácil de resolver primero no sirve
+// si el torneo ya terminó.
+function startBlockReason(row) {
+	if (row.tournament_status === 'finished') return 'El torneo ya terminó';
+	if (row.start_blockers) return describeStartBlock(row.start_blockers);
+	// Una ronda siguiente sin roster es de antes de estas reglas (el panel la
+	// creaba con POST /rounds): nadie puede entrar, así que no se juega.
+	if (row.has_previous && !row.has_roster) {
+		return `La ronda ${row.round_number} no tiene participantes: solo la juegan los clasificados de la anterior. Borrala y creala con "Avanzar a la siguiente ronda".`;
+	}
+	return null
+}
+
 function generateAccessCode() {
 	let code = '';
 	for (let position = 0; position < ACCESS_CODE_LENGTH; position += 1) {
@@ -131,6 +190,17 @@ const USABLE_ACCESS_CODE_SQL = `
 // Date no es un header CORS-safelisted: sin exponerlo, el frontend en otro
 // origen (desarrollo) no puede leerlo para sincronizar el cronómetro.
 fastify.register(cors, { origin: allowedOrigins, exposedHeaders: ['Date'] });
+
+// Un valor que Postgres no puede convertir (22P02: "abc" como uuid en /rounds/abc)
+// es un error del cliente, no un 500. Todo lo demás sigue al manejador por
+// defecto de Fastify, igual que antes.
+fastify.setErrorHandler((error, request, reply) => {
+	if (error.code === '22P02') {
+		request.log.info({ err: error }, 'Valor inválido para Postgres');
+		return reply.code(400).send({ error: 'Identificador no válido' });
+	}
+	throw error
+});
 
 // now (ms) sincroniza el reloj de los clientes: el header Date solo tiene
 // resolución de un segundo y descuadraba la cuenta regresiva hasta 1 s.
@@ -328,18 +398,81 @@ fastify.get('/problems/:id', async (request, reply) => {
 	return result.rowCount ? result.rows[0] : reply.code(404).send({ error: 'Problema no encontrado' });
 });
 
+// El problema completo para el formulario de edición: casos con is_sample y las
+// rondas que lo usan. Endpoint aparte de GET /problems/:id, que no pide sesión y
+// por eso nunca devuelve casos.
+fastify.get('/problems/:id/full', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	if (!/^[0-9a-f-]{36}$/i.test(request.params.id)) return reply.code(404).send({ error: 'Problema no encontrado' });
+	const problem = await query(
+		'SELECT id, name, statement, difficulty, test_cases, created_at FROM problems WHERE id = $1',
+		[request.params.id],
+	);
+	if (!problem.rowCount) return reply.code(404).send({ error: 'Problema no encontrado' });
+	const rounds = await query(
+		`SELECT r.id, r.round_number, r.status, t.name AS tournament_name
+		 FROM rounds r JOIN tournaments t ON t.id = r.tournament_id
+		 WHERE r.problem_id = $1 ORDER BY t.created_at, r.round_number`,
+		[request.params.id],
+	);
+	return { ...problem.rows[0], rounds: rounds.rows };
+});
+
 fastify.put('/problems/:id', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
 	const { name, statement, difficulty = 'easy', testCases = [] } = request.body || {};
 	if (!name || !statement || !Array.isArray(testCases)) {
 		return reply.code(400).send({ error: 'name, statement y testCases son obligatorios' });
 	}
-	const result = await query(
-		`UPDATE problems SET name = $1, statement = $2, difficulty = $3, test_cases = $4::jsonb
-		 WHERE id = $5 RETURNING *`,
-		[name, statement, difficulty, JSON.stringify(normalizeTestCases(testCases)), request.params.id],
-	);
-	return result.rowCount ? result.rows[0] : reply.code(404).send({ error: 'Problema no encontrado' });
+	// Mismas reglas que POST /problems: sin esto, un PUT sin casos dejaba el
+	// problema vacío y todo envío terminaba en no_test_cases.
+	if (testCases.length === 0 || testCases.length > 100) {
+		return reply.code(400).send({ error: 'testCases debe tener entre 1 y 100 casos' });
+	}
+	const invalidIndex = testCases.findIndex((testCase) => typeof testCase?.stdin !== 'string'
+		|| typeof testCase?.expected !== 'string');
+	if (invalidIndex !== -1) {
+		return reply.code(400).send({ error: `El caso ${invalidIndex + 1} debe tener stdin y expected como texto` });
+	}
+	const testCasesJson = JSON.stringify(normalizeTestCases(testCases));
+	const outcome = await withTransaction(async (client) => {
+		const current = await client.query(
+			// NO KEY: no frena el KEY SHARE que toman las FK de rounds al insertar.
+			'SELECT test_cases <> $2::jsonb AS cases_changed FROM problems WHERE id = $1 FOR NO KEY UPDATE',
+			[request.params.id, testCasesJson],
+		);
+		if (!current.rowCount) return null;
+		if (current.rows[0].cases_changed) {
+			// Los casos se leen cuando corre el job (loadTestCases), no cuando se
+			// envía: cambiarlos con la ronda en juego juzgaría envíos de la misma
+			// ronda contra casos distintos. 'closing' todavía no cerró. El FOR
+			// UPDATE OF r hace esperar a un /start simultáneo hasta que esto termine.
+			const rounds = await client.query(
+				`SELECT r.round_number, r.status, t.name AS tournament_name
+				 FROM rounds r JOIN tournaments t ON t.id = r.tournament_id
+				 WHERE r.problem_id = $1 ORDER BY r.round_number FOR UPDATE OF r`,
+				[request.params.id],
+			);
+			const blocking = rounds.rows.find((row) => row.status === 'active' || row.status === 'closing');
+			if (blocking) return { blocking };
+		}
+		// Nombre, enunciado y dificultad no cambian el veredicto de nadie: se
+		// pueden editar con la ronda en juego.
+		const updated = await client.query(
+			`UPDATE problems SET name = $1, statement = $2, difficulty = $3, test_cases = $4::jsonb
+			 WHERE id = $5 RETURNING *`,
+			[name, statement, difficulty, testCasesJson, request.params.id],
+		);
+		return { problem: updated.rows[0] };
+	});
+	if (!outcome) return reply.code(404).send({ error: 'Problema no encontrado' });
+	if (outcome.blocking) {
+		const { round_number: roundNumber, status, tournament_name: tournamentName } = outcome.blocking;
+		return reply.code(409).send({
+			error: `No se pueden cambiar los casos: la ronda ${roundNumber} de "${tournamentName}" está ${ROUND_STATUS_TEXT[status]} con este problema. Nombre, enunciado y dificultad sí se pueden guardar; los casos, cuando la ronda cierre.`,
+		});
+	}
+	return outcome.problem;
 });
 
 fastify.delete('/problems/:id', async (request, reply) => {
@@ -364,10 +497,48 @@ fastify.post('/tournaments/:id/participants', async (request, reply) => {
 	return reply.code(201).send(result.rows[0]);
 });
 
+// Un participante está en una ronda si figura en su roster y sigue activo en el
+// torneo. Es el único criterio para entrar: lo usan el join HTTP y el socket
+// (canAccessSocketRound), así nadie entra por un lado y queda afuera del otro.
+async function roundMember(roundId, userId) {
+	const result = await query(
+		`SELECT p.* FROM round_participants rp
+		 JOIN participants p ON p.id = rp.participant_id
+		 WHERE rp.round_id = $1 AND p.user_id = $2 AND p.status = 'active'`,
+		[roundId, userId],
+	);
+	return result.rows[0] || null
+}
+
 fastify.post('/rounds/:id/participants/join', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'participant'))) return;
-	const round = await query("SELECT * FROM rounds WHERE id = $1 AND status IN ('pending', 'active')", [request.params.id]);
+	const round = await query(
+		`SELECT r.*, EXISTS (
+		   SELECT 1 FROM rounds prev
+		   WHERE prev.tournament_id = r.tournament_id AND prev.round_number < r.round_number
+		 ) AS has_previous,
+		 (SELECT t.status FROM tournaments t WHERE t.id = r.tournament_id) AS tournament_status
+		 FROM rounds r WHERE r.id = $1 AND r.status IN ('pending', 'active')`,
+		[request.params.id],
+	);
 	if (!round.rowCount) return reply.code(409).send({ error: 'La ronda no está disponible' });
+	// Una ronda que quedó pendiente en un torneo terminado no se juega nunca
+	// (/start la rechaza): inscribirse ahí no lleva a ningún lado.
+	if (round.rows[0].tournament_status === 'finished') return reply.code(409).send({ error: 'El torneo ya terminó' });
+	// Las rondas siguientes no admiten inscripción: su roster lo armó
+	// POST /rounds/:id/next con los clasificados. Antes se miraba solo
+	// participants.status, y alguien del torneo que nunca jugó la ronda anterior
+	// seguía 'active' y entraba igual.
+	if (round.rows[0].has_previous) {
+		const member = await roundMember(request.params.id, request.user.id);
+		if (!member) {
+			return reply.code(403).send({
+				error: `No estás en la ronda ${round.rows[0].round_number}: solo juegan los clasificados de la ronda anterior`,
+			});
+		}
+		return member;
+	}
+	// Primera ronda del torneo: el participante se inscribe solo.
 	const displayName = request.body?.displayName || request.user.username;
 	// Fuera de rango se guarda 0 en vez de rechazar: un personaje mal formado no
 	// puede impedir la entrada a la ronda.
@@ -563,11 +734,25 @@ fastify.post('/rounds', async (request, reply) => {
 	}
 	let result;
 	try {
-		result = await query(
-			`INSERT INTO rounds (tournament_id, round_number, problem_id, capacity, time_limit_seconds)
-			 VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-			[tournamentId, roundNumber, problemId, capacity, timeLimitSeconds],
-		);
+		result = await withTransaction(async (client) => {
+			// El lock del torneo serializa dos altas simultáneas: sin él, las dos
+			// verían el torneo vacío y quedarían dos "primeras" rondas.
+			const tournament = await client.query('SELECT id FROM tournaments WHERE id = $1 FOR UPDATE', [tournamentId]);
+			if (!tournament.rowCount) return { missing: true };
+			const last = await client.query(
+				'SELECT max(round_number) AS round_number FROM rounds WHERE tournament_id = $1',
+				[tournamentId],
+			);
+			// Las rondas siguientes salen de POST /rounds/:id/next, que inscribe a
+			// los clasificados. Una creada acá tendría el roster vacío y nadie
+			// podría entrar.
+			if (last.rows[0].round_number !== null) return { lastRound: last.rows[0].round_number };
+			return client.query(
+				`INSERT INTO rounds (tournament_id, round_number, problem_id, capacity, time_limit_seconds)
+				 VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+				[tournamentId, roundNumber, problemId, capacity, timeLimitSeconds],
+			);
+		});
 	} catch (error) {
 		// UNIQUE (tournament_id, round_number). Sin esto Fastify lo convierte en
 		// un 500 crudo que no le dice nada al admin.
@@ -581,6 +766,12 @@ fastify.post('/rounds', async (request, reply) => {
 		}
 		throw error;
 	}
+	if (result.missing) return reply.code(404).send({ error: 'El torneo o el problema no existe' });
+	if (result.lastRound !== undefined) {
+		return reply.code(409).send({
+			error: `El torneo ya tiene la ronda ${result.lastRound}. La siguiente se crea con "Avanzar a la siguiente ronda", que inscribe a los clasificados.`,
+		});
+	}
 	return reply.code(201).send(result.rows[0]);
 });
 
@@ -591,12 +782,18 @@ fastify.get('/tournaments/:id/rounds', async (request, reply) => {
 		        (SELECT count(*)::int FROM round_participants rp
 		         WHERE rp.round_id = r.id) AS participants_count,
 		        (SELECT count(*)::int FROM round_participants rp
-		         WHERE rp.round_id = r.id AND rp.final_status = 'advanced') AS advanced_count
+		         WHERE rp.round_id = r.id AND rp.final_status = 'advanced') AS advanced_count,
+		        ${START_STATE_SQL}
 		 FROM rounds r JOIN problems p ON p.id = r.problem_id
 		 WHERE r.tournament_id = $1 ORDER BY r.round_number`,
 		[request.params.id],
 	);
-	return result.rows;
+	// Aditivo: start_blocked_reason es el mismo texto del 409 de /start.
+	return result.rows.map((row) => {
+		const reason = row.status === 'pending' ? startBlockReason(row) : null;
+		const { tournament_status: _t, start_blockers: _b, has_previous: _p, has_roster: _r, ...rest } = row;
+		return { ...rest, start_blocked_reason: reason };
+	});
 });
 
 // Lee el estado de una ronda para saber si se puede generar la siguiente y con
@@ -635,6 +832,7 @@ async function nextRoundPreview(roundId) {
 		nextRoundNumber,
 		tournamentId: round.tournament_id,
 		tournamentStatus,
+		roundStatus: round.status,
 		advancingCount: advancing.rows.length,
 		advancing: advancing.rows.map((row) => ({
 			participant_id: row.participant_id,
@@ -704,26 +902,35 @@ fastify.post('/rounds/:id/next', async (request, reply) => {
 	}
 	const finalCapacity = requested === null ? preview.advancingCount : requested;
 
-	const created = await withTransaction(async (client) => {
-		const inserted = await client.query(
-			`INSERT INTO rounds (tournament_id, round_number, problem_id, capacity, time_limit_seconds)
-			 VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-			[preview.tournamentId, preview.nextRoundNumber, problemId, finalCapacity, seconds],
-		);
-		const nextRound = inserted.rows[0];
-		// Los clasificados entran ya en la ronda. Si se dejaran para que se
-		// unieran solos, un participante que no está presente bloquearía a todos.
-		await client.query(
-			`INSERT INTO round_participants (round_id, participant_id)
-			 SELECT $1, unnest($2::uuid[]) ON CONFLICT DO NOTHING`,
-			[nextRound.id, preview.advancing.map((entry) => entry.participant_id)],
-		);
-		const joined = await client.query(
-			'SELECT count(*)::int AS n FROM round_participants WHERE round_id = $1',
-			[nextRound.id],
-		);
-		return { round: nextRound, participants: joined.rows[0].n };
-	});
+	let created;
+	try {
+		created = await withTransaction(async (client) => {
+			const inserted = await client.query(
+				`INSERT INTO rounds (tournament_id, round_number, problem_id, capacity, time_limit_seconds)
+				 VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+				[preview.tournamentId, preview.nextRoundNumber, problemId, finalCapacity, seconds],
+			);
+			const nextRound = inserted.rows[0];
+			// Los clasificados entran ya en la ronda. Si se dejaran para que se
+			// unieran solos, un participante que no está presente bloquearía a todos.
+			await client.query(
+				`INSERT INTO round_participants (round_id, participant_id)
+				 SELECT $1, unnest($2::uuid[]) ON CONFLICT DO NOTHING`,
+				[nextRound.id, preview.advancing.map((entry) => entry.participant_id)],
+			);
+			const joined = await client.query(
+				'SELECT count(*)::int AS n FROM round_participants WHERE round_id = $1',
+				[nextRound.id],
+			);
+			return { round: nextRound, participants: joined.rows[0].n };
+		});
+	} catch (error) {
+		// Dos POST simultáneos pasan los dos la vista previa; el UNIQUE decide.
+		if (error.code === '23505') {
+			return reply.code(409).send({ error: `La ronda ${preview.nextRoundNumber} ya existe` });
+		}
+		throw error;
+	}
 
 	fastify.io?.emit('round:created', {
 		round_id: created.round.id,
@@ -756,14 +963,35 @@ fastify.post('/rounds/:id/start', async (request, reply) => {
 	// La cuenta regresiva vive en la base, no en un setTimeout: sobrevive a un
 	// reinicio y todos los clientes cuentan hacia el mismo instante. El tiempo
 	// límite corre desde starts_at, así la espera no se descuenta de la ronda.
+	// La continuidad es condición del propio UPDATE, no un SELECT previo: dos
+	// clics simultáneos no pueden pasar los dos. Un SELECT y un UPDATE aparte
+	// dejarían una ventana entre la lectura y la escritura.
 	const result = await query(
-		`UPDATE rounds SET status = 'active', started_at = now(),
+		`UPDATE rounds r SET status = 'active', started_at = now(),
 			starts_at = now() + ($2::int * interval '1 second'),
 			ends_at = now() + (($2::int + time_limit_seconds) * interval '1 second')
-		 WHERE id = $1 AND status = 'pending' RETURNING *`,
+		 WHERE r.id = $1 AND r.status = 'pending' AND ${START_ALLOWED_SQL}
+		 RETURNING *`,
 		[request.params.id, ROUND_COUNTDOWN_SECONDS],
 	);
-	if (!result.rowCount) return reply.code(409).send({ error: 'La ronda no puede iniciar' });
+	if (!result.rowCount) {
+		// Solo para explicar el rechazo: la decisión ya la tomó el UPDATE.
+		const why = await query(
+			`SELECT r.round_number, r.status, ${START_STATE_SQL}
+			 FROM rounds r WHERE r.id = $1`,
+			[request.params.id],
+		);
+		if (!why.rowCount) return reply.code(404).send({ error: 'La ronda no existe' });
+		const row = why.rows[0];
+		if (row.status !== 'pending') {
+			return reply.code(409).send({
+				error: `La ronda ${row.round_number} no está pendiente: está ${ROUND_STATUS_TEXT[row.status] ?? row.status}`,
+			});
+		}
+		const reason = startBlockReason(row);
+		if (row.start_blockers) return reply.code(409).send({ error: reason, blocking: row.start_blockers });
+		return reply.code(409).send({ error: reason ?? 'La ronda no puede iniciar' });
+	}
 	fastify.io?.emit('round:started', {
 		round_id: result.rows[0].id,
 		ends_at: result.rows[0].ends_at,
@@ -982,14 +1210,9 @@ async function canAccessSocketRound(user, roundId) {
 	const round = await query('SELECT id FROM rounds WHERE id = $1', [roundId]);
 	if (!round.rowCount) return false;
 	if (user.role === 'admin') return true;
-
-	const participant = await query(
-		`SELECT 1 FROM round_participants rp
-		 JOIN participants p ON p.id = rp.participant_id
-		 WHERE rp.round_id = $1 AND p.user_id = $2 AND p.status = 'active'`,
-		[roundId, user.id],
-	);
-	return participant.rowCount > 0;
+	// Roster y status = 'active', los dos: es la frontera que impide que un
+	// eliminado lea la ronda por el socket.
+	return Boolean(await roundMember(roundId, user.id))
 }
 
 // Veredicto final de un envío, para la cola del admin y el historial del
@@ -1262,4 +1485,4 @@ if (require.main === module) {
 	});
 }
 
-module.exports = { fastify, start, requireRole, sessions: memorySessions, closeRound };
+module.exports = { fastify, start, requireRole, sessions: memorySessions, closeRound, describeStartBlock, startBlockReason };
