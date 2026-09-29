@@ -91,8 +91,18 @@ export async function getTournaments() {
   const response = await fetch(`${API_URL}/tournaments`, { headers: authHeaders() });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "No se pudieron cargar los torneos");
-  return body as Array<{ id: string; name: string; status: string }>;
+  return body as OpenTournament[];
 }
+
+export type OpenTournament = {
+  id: string;
+  name: string;
+  status: string;
+  created_at: string;
+  rounds_count: number;
+  // Con alguna jugada, un torneo abierto no se puede borrar hasta que termine.
+  played_rounds_count: number;
+};
 
 export type FinishedTournament = {
   id: string;
@@ -125,6 +135,67 @@ export async function deleteTournament(tournamentId: string) {
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "No se pudo borrar el torneo");
   return body as { deleted: true; rounds: number; participants: number; submissions: number };
+}
+
+// Lo que se lleva cada torneo de un borrado masivo. Mismos números en la vista
+// previa y en la respuesta del borrado.
+export type TournamentDeleteRow = {
+  id: string;
+  name: string;
+  status: string;
+  rounds: number;
+  live_rounds: number;
+  participants: number;
+  access_codes: number;
+  submissions: number;
+  // Usuarios que no juegan ningún torneo fuera de la selección. No se borran.
+  orphaned_users: number;
+};
+
+export type TournamentDeleteTotals = {
+  tournaments: number;
+  rounds: number;
+  participants: number;
+  access_codes: number;
+  submissions: number;
+  orphaned_users: number;
+};
+
+export type TournamentDeletePreview = {
+  deletable: TournamentDeleteRow[];
+  blocked: Array<TournamentDeleteRow & { reason: string }>;
+  missing: string[];
+  totals: TournamentDeleteTotals;
+};
+
+// No borra nada: dice qué se borraría y qué queda afuera, con el motivo.
+export async function previewTournamentsDelete(ids: string[]) {
+  const response = await fetch(`${API_URL}/tournaments/delete-preview`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ ids }),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudo preparar el borrado");
+  return body as TournamentDeletePreview;
+}
+
+// Una sola transacción: los borrables se van todos o ninguno; los bloqueados
+// vuelven en skipped.
+export async function deleteTournaments(ids: string[]) {
+  const response = await fetch(`${API_URL}/tournaments`, {
+    method: "DELETE",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ ids }),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudieron borrar los torneos");
+  return body as {
+    deleted: TournamentDeleteRow[];
+    skipped: Array<TournamentDeleteRow & { reason: string }>;
+    missing: string[];
+    totals: TournamentDeleteTotals;
+  };
 }
 
 export type OrphanUser = {
@@ -254,6 +325,46 @@ export async function deleteProblem(problemId: string) {
   if (!response.ok) throw new Error(body.error || "No se pudo borrar el problema");
   // roundsKept: rondas de torneos terminados que quedan sin el vínculo, con el nombre.
   return body as { deleted: true; roundsKept: number };
+}
+
+export type ProblemDeletePreview = {
+  // rounds_kept: rondas de torneos terminados que se conservan con el nombre.
+  deletable: Array<{ id: string; name: string; rounds_kept: number }>;
+  // blocking: las rondas de torneos abiertos que impiden borrarlo.
+  blocked: Array<{
+    id: string;
+    name: string;
+    reason: string;
+    blocking: Array<{ round_number: number; status: string; tournament_name: string }>;
+  }>;
+  missing: string[];
+};
+
+// No borra nada: separa la selección en los que se borran y los que no.
+export async function previewProblemsDelete(ids: string[]) {
+  const response = await fetch(`${API_URL}/problems/delete-preview`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ ids }),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudo preparar el borrado");
+  return body as ProblemDeletePreview;
+}
+
+export async function deleteProblems(ids: string[]) {
+  const response = await fetch(`${API_URL}/problems`, {
+    method: "DELETE",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ ids }),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudieron borrar los problemas");
+  return body as {
+    deleted: ProblemDeletePreview["deletable"];
+    skipped: ProblemDeletePreview["blocked"];
+    missing: string[];
+  };
 }
 
 // Solo rondas pendientes. timeLimitSeconds va en segundos: el panel convierte.

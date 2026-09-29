@@ -244,3 +244,5 @@ ALTER TABLE submissions ADD COLUMN IF NOT EXISTS case_results JSONB NOT NULL DEF
 
 CREATE INDEX IF NOT EXISTS rounds_active_idx ON rounds(status);
 CREATE INDEX IF NOT EXISTS submissions_participant_idx ON submissions(participant_id, submitted_at);
+-- /queue/stats y la lista de envíos del panel cuentan y filtran por ronda.
+CREATE INDEX IF NOT EXISTS submissions_round_idx ON submissions(round_id, verdict);

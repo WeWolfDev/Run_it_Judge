@@ -373,7 +373,15 @@ fastify.get('/tournaments', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
 	const scope = request.query?.status;
 	if (scope === undefined) {
-		const result = await query("SELECT * FROM tournaments WHERE status <> 'finished' ORDER BY created_at DESC");
+		// played_rounds_count decide si el borrado masivo ofrece la casilla: un
+		// torneo abierto con rondas jugadas no se borra (mismo criterio que DELETE).
+		const result = await query(
+			`SELECT t.*,
+			        (SELECT count(*)::int FROM rounds r WHERE r.tournament_id = t.id) AS rounds_count,
+			        (SELECT count(*)::int FROM rounds r
+			         WHERE r.tournament_id = t.id AND r.status <> 'pending') AS played_rounds_count
+			 FROM tournaments t WHERE t.status <> 'finished' ORDER BY t.created_at DESC`,
+		);
 		return result.rows;
 	}
 	if (scope !== 'finished') return reply.code(400).send({ error: 'status solo admite finished' });
@@ -442,6 +450,106 @@ fastify.delete('/tournaments/:id', async (request, reply) => {
 		});
 	}
 	return { deleted: true, ...outcome };
+});
+
+// Ids de un borrado masivo: de 1 a 500 uuids, sin repetidos. null si no sirve.
+function parseIdList(ids) {
+	if (!Array.isArray(ids) || ids.length === 0 || ids.length > 500
+		|| !ids.every((id) => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id))) {
+		return null;
+	}
+	return [...new Set(ids.map((id) => id.toLowerCase()))]
+}
+
+// Un torneo se borra si terminó o si nunca se jugó una ronda. Es el criterio de
+// DELETE /tournaments/:id, repetido en el WHERE del borrado masivo.
+const TOURNAMENT_DELETABLE_SQL = `
+	(t.status = 'finished'
+	 OR NOT EXISTS (SELECT 1 FROM rounds r WHERE r.tournament_id = t.id AND r.status <> 'pending'))`;
+
+// Qué se llevaría el borrado de cada torneo. Lo usan la vista previa y el
+// borrado, así el admin confirma sobre los mismos números que se ejecutan. Con
+// lock, rondas y torneos quedan tomados hasta el COMMIT, en el orden de
+// closeRound (ronda, después torneo): ningún /start ni /next se cuela entre la
+// decisión y el DELETE.
+async function classifyTournaments(client, ids, { lock = false } = {}) {
+	if (lock) {
+		await client.query('SELECT id FROM rounds WHERE tournament_id = ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
+		await client.query('SELECT id FROM tournaments WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
+	}
+	const result = await client.query(
+		`SELECT t.id, t.name, t.status, ${TOURNAMENT_DELETABLE_SQL} AS deletable,
+		        (SELECT count(*)::int FROM rounds r WHERE r.tournament_id = t.id) AS rounds,
+		        (SELECT count(*)::int FROM rounds r
+		         WHERE r.tournament_id = t.id AND r.status IN ('active', 'closing')) AS live_rounds,
+		        (SELECT count(*)::int FROM participants p WHERE p.tournament_id = t.id) AS participants,
+		        (SELECT count(*)::int FROM access_codes ac WHERE ac.tournament_id = t.id) AS access_codes,
+		        (SELECT count(*)::int FROM submissions s JOIN rounds r ON r.id = s.round_id
+		         WHERE r.tournament_id = t.id) AS submissions,
+		        (SELECT count(*)::int FROM participants p
+		         WHERE p.tournament_id = t.id
+		           AND NOT EXISTS (SELECT 1 FROM participants other
+		                           WHERE other.user_id = p.user_id AND other.tournament_id <> ALL($1::uuid[]))
+		        ) AS orphaned_users
+		 FROM tournaments t WHERE t.id = ANY($1::uuid[]) ORDER BY t.created_at DESC`,
+		[ids],
+	);
+	const found = new Set(result.rows.map((row) => row.id));
+	const deletable = [];
+	const blocked = [];
+	for (const { deletable: ok, ...row } of result.rows) {
+		if (ok) {
+			deletable.push(row);
+			continue;
+		}
+		const why = row.live_rounds > 0 ? 'tiene una ronda en curso' : 'no terminó y ya se jugaron rondas';
+		blocked.push({ ...row, reason: `"${row.name}" ${why}. Finalizalo antes de borrarlo.` });
+	}
+	const totals = { tournaments: deletable.length, rounds: 0, participants: 0, access_codes: 0, submissions: 0, orphaned_users: 0 };
+	for (const row of deletable) {
+		for (const key of ['rounds', 'participants', 'access_codes', 'submissions', 'orphaned_users']) totals[key] += row[key];
+	}
+	return { deletable, blocked, missing: ids.filter((id) => !found.has(id)), totals };
+}
+
+// Vista previa del borrado masivo: no borra nada. orphaned_users cuenta a los
+// que no juegan ningún torneo fuera de la selección: no se borran, quedan para
+// /users/orphans.
+fastify.post('/tournaments/delete-preview', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const ids = parseIdList(request.body?.ids);
+	if (!ids) return reply.code(400).send({ error: 'ids debe ser una lista de 1 a 500 ids de torneo' });
+	return classifyTournaments({ query }, ids);
+});
+
+// Borra los torneos borrables de la lista en una sola transacción: o se van
+// todos, o ninguno. Los bloqueados no se tocan y vuelven en skipped con el
+// motivo. users no se toca: participants no cascadea hacia users.
+fastify.delete('/tournaments', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const ids = parseIdList(request.body?.ids);
+	if (!ids) return reply.code(400).send({ error: 'ids debe ser una lista de 1 a 500 ids de torneo' });
+	const plan = await withTransaction(async (client) => {
+		const classified = await classifyTournaments(client, ids, { lock: true });
+		const doomed = classified.deletable.map((row) => row.id);
+		if (!doomed.length) return classified;
+		// submissions no cascadea desde rounds ni participants (ver DELETE /tournaments/:id).
+		await client.query(
+			`DELETE FROM submissions s USING rounds r
+			 WHERE r.id = s.round_id AND r.tournament_id = ANY($1::uuid[])`,
+			[doomed],
+		);
+		const deleted = await client.query(
+			`DELETE FROM tournaments t WHERE t.id = ANY($1::uuid[]) AND ${TOURNAMENT_DELETABLE_SQL} RETURNING t.id`,
+			[doomed],
+		);
+		// Con las filas tomadas no debería pasar; si pasa, ROLLBACK y nada a medias.
+		if (deleted.rowCount !== doomed.length) {
+			throw new Error(`Borrado de torneos incompleto: ${deleted.rowCount} de ${doomed.length}`);
+		}
+		return classified;
+	});
+	return { deleted: plan.deletable, skipped: plan.blocked, missing: plan.missing, totals: plan.totals };
 });
 
 // Un usuario huérfano es un participante que no está en ningún torneo: el suyo
@@ -678,20 +786,101 @@ fastify.delete('/problems/:id', async (request, reply) => {
 	});
 	if (!outcome) return reply.code(404).send({ error: 'Problema no encontrado' });
 	if (outcome.blocking) {
-		const list = outcome.blocking
-			.map((row) => `ronda ${row.round_number} de "${row.tournament_name}" (${ROUND_STATUS_TEXT[row.status] ?? row.status})`)
-			.join(', ');
-		// PUT /rounds/:id solo edita pendientes: una ronda ya jugada libera el
-		// problema recién cuando su torneo termina.
-		const hint = outcome.blocking.every((row) => row.status === 'pending')
-			? 'Cambiale el problema a esa ronda (Editar, en Progreso del torneo) y volvé a intentar.'
-			: 'Una ronda ya jugada lo libera cuando su torneo termine; una pendiente, cambiándole el problema.';
 		return reply.code(409).send({
-			error: `No se puede borrar: lo usa${outcome.blocking.length === 1 ? '' : 'n'} ${list}, de un torneo que no terminó. ${hint}`,
+			error: `No se puede borrar: ${problemBlockReason(outcome.blocking)}`,
 			blocking: outcome.blocking,
 		});
 	}
 	return { deleted: true, roundsKept: outcome.roundsKept };
+});
+
+// Por qué no se puede borrar un problema: las rondas de torneos abiertos que lo usan.
+function problemBlockReason(blocking) {
+	const list = blocking
+		.map((row) => `ronda ${row.round_number} de "${row.tournament_name}" (${ROUND_STATUS_TEXT[row.status] ?? row.status})`)
+		.join(', ');
+	// PUT /rounds/:id solo edita pendientes: una ronda ya jugada libera el
+	// problema recién cuando su torneo termina.
+	const hint = blocking.every((row) => row.status === 'pending')
+		? 'Cambiale el problema a esa ronda (Editar, en Progreso del torneo) y volvé a intentar.'
+		: 'Una ronda ya jugada lo libera cuando su torneo termine; una pendiente, cambiándole el problema.';
+	return `lo usa${blocking.length === 1 ? '' : 'n'} ${list}, de un torneo que no terminó. ${hint}`
+}
+
+// Mismo criterio que DELETE /problems/:id, para el WHERE del borrado masivo:
+// ninguna ronda de un torneo sin terminar usa el problema.
+const PROBLEM_DELETABLE_SQL = `
+	NOT EXISTS (SELECT 1 FROM rounds r JOIN tournaments t ON t.id = r.tournament_id
+	            WHERE r.problem_id = p.id AND t.status <> 'finished')`;
+
+// Separa la selección en los que se borran y los que no, con el motivo. Lo usan
+// la vista previa y el borrado. Con lock, el FOR UPDATE choca con el KEY SHARE
+// de la FK de rounds: nadie crea ni edita una ronda con estos problemas hasta
+// el COMMIT, igual que en DELETE /problems/:id.
+async function classifyProblems(client, ids, { lock = false } = {}) {
+	const problems = await client.query(
+		`SELECT id, name FROM problems WHERE id = ANY($1::uuid[]) ORDER BY created_at DESC${lock ? ' FOR UPDATE' : ''}`,
+		[ids],
+	);
+	const rounds = await client.query(
+		`SELECT r.problem_id, r.round_number, r.status, t.name AS tournament_name, t.status AS tournament_status
+		 FROM rounds r JOIN tournaments t ON t.id = r.tournament_id
+		 WHERE r.problem_id = ANY($1::uuid[]) ORDER BY t.created_at, r.round_number`,
+		[ids],
+	);
+	const deletable = [];
+	const blocked = [];
+	for (const problem of problems.rows) {
+		const own = rounds.rows.filter((row) => row.problem_id === problem.id);
+		const blocking = own
+			.filter((row) => row.tournament_status !== 'finished')
+			.map(({ round_number, status, tournament_name }) => ({ round_number, status, tournament_name }));
+		if (blocking.length) {
+			blocked.push({ ...problem, blocking, reason: `"${problem.name}": ${problemBlockReason(blocking)}` });
+		} else {
+			// Rondas de torneos terminados: quedan con problem_id NULL y el nombre.
+			deletable.push({ ...problem, rounds_kept: own.length });
+		}
+	}
+	const found = new Set(problems.rows.map((row) => row.id));
+	return { deletable, blocked, missing: ids.filter((id) => !found.has(id)) };
+}
+
+// Vista previa: no borra nada.
+fastify.post('/problems/delete-preview', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const ids = parseIdList(request.body?.ids);
+	if (!ids) return reply.code(400).send({ error: 'ids debe ser una lista de 1 a 500 ids de problema' });
+	return classifyProblems({ query }, ids);
+});
+
+// Borra los problemas borrables de la lista y deja los bloqueados, en una sola
+// transacción: los borrables se van todos o ninguno. El panel manda solo los
+// que la vista previa dio por borrables; si algo cambió desde entonces, vuelve
+// en skipped con su motivo y no se borra.
+fastify.delete('/problems', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const ids = parseIdList(request.body?.ids);
+	if (!ids) return reply.code(400).send({ error: 'ids debe ser una lista de 1 a 500 ids de problema' });
+	const plan = await withTransaction(async (client) => {
+		const classified = await classifyProblems(client, ids, { lock: true });
+		const doomed = classified.deletable.map((row) => row.id);
+		if (!doomed.length) return classified;
+		await client.query(
+			`UPDATE rounds r SET problem_name = p.name FROM problems p
+			 WHERE p.id = r.problem_id AND p.id = ANY($1::uuid[])`,
+			[doomed],
+		);
+		const deleted = await client.query(
+			`DELETE FROM problems p WHERE p.id = ANY($1::uuid[]) AND ${PROBLEM_DELETABLE_SQL} RETURNING p.id`,
+			[doomed],
+		);
+		if (deleted.rowCount !== doomed.length) {
+			throw new Error(`Borrado de problemas incompleto: ${deleted.rowCount} de ${doomed.length}`);
+		}
+		return classified;
+	});
+	return { deleted: plan.deletable, skipped: plan.blocked, missing: plan.missing };
 });
 
 fastify.post('/tournaments/:id/participants', async (request, reply) => {
@@ -1413,21 +1602,50 @@ fastify.get('/rounds/:id/submissions/mine', async (request, reply) => {
 	return result.rows;
 });
 
+// Veredictos que dicen que falló la infraestructura, no el programa: el encolado
+// (queue_error), el job de BullMQ (judge_error) y los dos status de Judge0 que
+// son del sandbox (13 Internal Error, 14 Exec Format Error). WA, TLE, CE y RE
+// son evaluaciones que funcionaron y no cuentan como fallidos.
+const INFRA_FAILURE_VERDICTS = ['queue_error', 'judge_error', 'Internal Error', 'Exec Format Error'];
+
+// round: los envíos de la ronda activa, contados en submissions. Es la única
+// fuente que sabe de qué ronda es cada envío y no cambia si Redis se vacía.
+// 'queued' cubre a la vez "en espera" y "ejecutándose": la base no los separa,
+// así que sale un solo número, pending. null = no hay ronda activa.
+// waiting..delayed son los contadores globales de BullMQ en Redis, de todas las
+// rondas y con hasta 1000 completados retenidos (removeOnComplete). Se conservan
+// por compatibilidad; null si Redis no responde (queue_available: false).
 fastify.get('/queue/stats', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
+	// La ronda activa con el criterio de /public/rounds/active.
+	const active = await query(
+		`SELECT r.id, r.round_number, r.status, t.id AS tournament_id, t.name AS tournament_name,
+		        count(s.id)::int AS total,
+		        count(s.id) FILTER (WHERE s.verdict = 'queued')::int AS pending,
+		        count(s.id) FILTER (WHERE s.verdict <> 'queued')::int AS completed,
+		        count(s.id) FILTER (WHERE s.verdict = ANY($1::text[]))::int AS failed
+		 FROM rounds r
+		 JOIN tournaments t ON t.id = r.tournament_id
+		 LEFT JOIN submissions s ON s.round_id = r.id
+		 WHERE r.id = (SELECT id FROM rounds WHERE status = 'active' ORDER BY started_at DESC LIMIT 1)
+		 GROUP BY r.id, t.id`,
+		[INFRA_FAILURE_VERDICTS],
+	);
+	let counts = null;
 	try {
-		const counts = await submissionQueue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed');
-		return {
-			waiting: counts.waiting ?? 0,
-			active: counts.active ?? 0,
-			completed: counts.completed ?? 0,
-			failed: counts.failed ?? 0,
-			delayed: counts.delayed ?? 0,
-		};
+		counts = await submissionQueue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed');
 	} catch (error) {
 		request.log.error(error, 'Queue stats failed');
-		return reply.code(503).send({ error: 'La cola no está disponible' });
 	}
+	return {
+		round: active.rows[0] ?? null,
+		queue_available: counts !== null,
+		waiting: counts ? counts.waiting ?? 0 : null,
+		active: counts ? counts.active ?? 0 : null,
+		completed: counts ? counts.completed ?? 0 : null,
+		failed: counts ? counts.failed ?? 0 : null,
+		delayed: counts ? counts.delayed ?? 0 : null,
+	};
 });
 
 fastify.get('/tournaments/:id/leaderboard', async (request, reply) => {
@@ -1732,5 +1950,6 @@ if (require.main === module) {
 
 module.exports = {
 	fastify, start, requireRole, sessions: memorySessions, closeRound, describeStartBlock, startBlockReason,
-	validateRoundEdit, ORPHAN_USER_SQL,
+	validateRoundEdit, ORPHAN_USER_SQL, parseIdList, TOURNAMENT_DELETABLE_SQL, PROBLEM_DELETABLE_SQL,
+	INFRA_FAILURE_VERDICTS,
 };
