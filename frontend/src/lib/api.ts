@@ -6,6 +6,29 @@ function authHeaders() {
   return session.token ? { authorization: `Bearer ${session.token}` } : {};
 }
 
+// El proxy puede cortar la subida antes de que exista una respuesta JSON: con un
+// body grande Nginx devuelve su propia página HTML de 413. response.json() sobre
+// esa página revienta con "Unexpected token '<'", y eso era justo lo que el admin
+// veía en lugar del motivo. Se lee el cuerpo como texto y se busca un mensaje
+// utilizable, sin asumir que la respuesta venga en JSON.
+async function requestError(response: Response, fallback: string): Promise<Error> {
+  if (response.status === 413) {
+    return new Error(
+      "El problema supera los 16 MB permitidos. Reducí los casos o partilo en problemas más chicos.",
+    );
+  }
+  try {
+    const text = await response.text();
+    if (text) {
+      const parsed = JSON.parse(text) as { error?: string };
+      if (parsed?.error) return new Error(parsed.error);
+    }
+  } catch {
+    // Respuesta sin JSON (HTML del proxy, página de error): queda el mensaje por defecto.
+  }
+  return new Error(fallback);
+}
+
 export async function login(username: string, accessCode: string) {
   const response = await fetch(`${API_URL}/auth/login`, {
     method: "POST",
@@ -311,9 +334,8 @@ export async function updateProblem(problemId: string, input: ProblemInput) {
     headers: { "content-type": "application/json", ...authHeaders() },
     body: JSON.stringify(input),
   });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error || "No se pudo guardar el problema");
-  return body as { id: string; name: string; difficulty: ProblemDifficulty };
+  if (!response.ok) throw await requestError(response, "No se pudo guardar el problema");
+  return response.json() as Promise<{ id: string; name: string; difficulty: ProblemDifficulty }>;
 }
 
 export async function deleteProblem(problemId: string) {
@@ -399,9 +421,9 @@ export async function createProblem(input: ProblemInput) {
     headers: { "content-type": "application/json", ...authHeaders() },
     body: JSON.stringify(input),
   });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error || "No se pudo crear el problema");
-  return body as { id: string; name: string; difficulty: ProblemDifficulty };
+  // El body va antes del ok: un 413 viene sin JSON y no se puede leer como tal.
+  if (!response.ok) throw await requestError(response, "No se pudo crear el problema");
+  return response.json() as Promise<{ id: string; name: string; difficulty: ProblemDifficulty }>;
 }
 
 export async function createTournament(name: string) {

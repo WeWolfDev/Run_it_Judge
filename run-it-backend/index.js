@@ -1,4 +1,16 @@
-const fastify = require('fastify')({ logger: true, trustProxy: ['127.0.0.1', '::1'] });
+// Un problema real con casos importados de un .zip pesa varios MB: enunciado,
+// 100 entradas y 100 salidas. El bodyLimit por defecto de Fastify (1 MiB) los
+// rechazaba con 413 sin llegar a leer el body, y el vhost de Nginx corta en el
+// mismo valor. Los dos techos quedan en 16 MB y a propósito son el mismo número:
+// si el proxy dejara pasar más que el backend, el 413 sería JSON y el del proxy
+// no, y el frontend no podría distinguirlos.
+const MAX_BODY_BYTES = 16 * 1024 * 1024;
+
+const fastify = require('fastify')({
+	logger: true,
+	trustProxy: ['127.0.0.1', '::1'],
+	bodyLimit: MAX_BODY_BYTES,
+});
 
 const crypto = require('node:crypto');
 const cors = require('@fastify/cors');
@@ -205,6 +217,15 @@ fastify.setErrorHandler((error, request, reply) => {
 	if (error.code === '22P02') {
 		request.log.info({ err: error }, 'Valor inválido para Postgres');
 		return reply.code(400).send({ error: 'Identificador no válido' });
+	}
+	// El 413 lo dispara el parser de body de Fastify, antes de que corra cualquier
+	// hook: sin esto el admin ve un JSON con un code interno en vez de un motivo.
+	if (error.statusCode === 413) {
+		request.log.info({ err: error }, 'Cuerpo de request demasiado grande');
+		return reply.code(413).send({
+			error: `El problema supera los ${MAX_BODY_BYTES / (1024 * 1024)} MB permitidos. `
+				+ 'Reducí los casos o partilo en problemas más chicos.',
+		});
 	}
 	throw error
 });
@@ -1951,5 +1972,5 @@ if (require.main === module) {
 module.exports = {
 	fastify, start, requireRole, sessions: memorySessions, closeRound, describeStartBlock, startBlockReason,
 	validateRoundEdit, ORPHAN_USER_SQL, parseIdList, TOURNAMENT_DELETABLE_SQL, PROBLEM_DELETABLE_SQL,
-	INFRA_FAILURE_VERDICTS,
+	INFRA_FAILURE_VERDICTS, MAX_BODY_BYTES,
 };
