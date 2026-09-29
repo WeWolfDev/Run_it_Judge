@@ -274,6 +274,9 @@ export function AdminPanel({
   // Nunca son ejemplo: el admin no los ve, así que no puede decidir publicarlos.
   const [hiddenCases, setHiddenCases] = useState<ProblemTestCase[]>([]);
   const [savingProblem, setSavingProblem] = useState(false);
+  // Resultado del formulario de problemas. Se muestra junto al botón: el mensaje
+  // general queda arriba de la lista, fuera de pantalla para quien guarda.
+  const [problemFormMessage, setProblemFormMessage] = useState("");
   // Problema en edición. null = el formulario crea uno nuevo.
   const [editingProblem, setEditingProblem] = useState<ProblemDetail | null>(null);
   const [loadingProblemId, setLoadingProblemId] = useState("");
@@ -733,6 +736,7 @@ export function AdminPanel({
     setProblemDifficulty("easy");
     setTestCases([EMPTY_CASE]);
     setHiddenCases([]);
+    setProblemFormMessage("");
   };
 
   // Relee la lista del servidor. La lista de problemas y los dos selectores de
@@ -746,15 +750,16 @@ export function AdminPanel({
   };
 
   const saveProblem = async () => {
+    setProblemFormMessage("");
     if (!problemName.trim() || !problemStatement.trim()) {
-      setMessage("Completa el nombre y el enunciado.");
+      setProblemFormMessage("Completa el nombre y el enunciado.");
       return;
     }
-    const incomplete = allCases.findIndex(
-      (testCase) => !testCase.stdin.trim() || !testCase.expected.trim(),
-    );
+    // La entrada puede ir vacía: un problema sin stdin es válido y el backend lo
+    // acepta. La salida esperada, no.
+    const incomplete = allCases.findIndex((testCase) => !testCase.expected.trim());
     if (incomplete !== -1) {
-      setMessage(`Completa la entrada y la salida esperada del caso ${incomplete + 1}.`);
+      setProblemFormMessage(`Completa la salida esperada del caso ${incomplete + 1}.`);
       return;
     }
     // Quitar el último ejemplo público pide un segundo clic: el participante deja
@@ -793,8 +798,11 @@ export function AdminPanel({
         done += " No se pudo actualizar la lista; recargá la página.";
       });
       setMessage(done);
+      setProblemFormMessage(done);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "No se pudo guardar el problema");
+      setProblemFormMessage(
+        error instanceof Error ? error.message : "No se pudo guardar el problema",
+      );
     } finally {
       setSavingProblem(false);
     }
@@ -820,6 +828,7 @@ export function AdminPanel({
       // Todos a la vista: un ejemplo oculto no se podría desmarcar.
       setTestCases(cases.length ? cases : [EMPTY_CASE]);
       setHiddenCases([]);
+      setProblemFormMessage("");
       setMessage(`Editando “${detail.name}”.`);
       problemFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     } catch (error) {
@@ -883,20 +892,20 @@ export function AdminPanel({
     try {
       const parsed = await parseCodeforcesZip(file);
       if (parsed.length > 100) {
-        setMessage(`El .zip tiene ${parsed.length} casos y el máximo es 100.`);
+        setProblemFormMessage(`El .zip tiene ${parsed.length} casos y el máximo es 100.`);
         return;
       }
       // Los dos primeros quedan visibles y editables; el resto se envía oculto.
       const imported = parsed.map((testCase) => ({ ...testCase, is_sample: false }));
       setTestCases(imported.slice(0, 2));
       setHiddenCases(imported.slice(2));
-      setMessage(
+      setProblemFormMessage(
         parsed.length > 2
           ? `Se importaron ${parsed.length} casos: 2 en el editor y ${parsed.length - 2} ocultos. Ninguno es ejemplo público hasta que lo marques.`
           : `Se importaron ${parsed.length} casos. Ninguno es ejemplo público hasta que lo marques.`,
       );
     } catch (error) {
-      setMessage(
+      setProblemFormMessage(
         error instanceof Error
           ? `No se pudo leer el .zip: ${error.message}`
           : "No se pudo leer el .zip",
@@ -2482,6 +2491,14 @@ export function AdminPanel({
                   </button>
                 )}
               </div>
+            )}
+            {problemFormMessage && (
+              <p
+                role="status"
+                className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground"
+              >
+                {problemFormMessage}
+              </p>
             )}
           </form>
         </section>
