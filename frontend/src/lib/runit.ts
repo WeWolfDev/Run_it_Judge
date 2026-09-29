@@ -190,6 +190,34 @@ export function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString("es", { hour12: false });
 }
 
+/**
+ * Respuesta de GET /queue/stats. `round` sale de la tabla submissions y es de la
+ * ronda activa; null si no hay ninguna. `pending` junta "en espera" y
+ * "ejecutándose": la base guarda las dos como verdict = 'queued'. `failed` son
+ * errores de infraestructura (cola, juez), nunca un WA o un CE.
+ * waiting..delayed son los contadores globales de BullMQ en Redis, de todas las
+ * rondas; se conservan por compatibilidad y son null si Redis no responde.
+ */
+export type QueueStats = {
+  round: {
+    id: string;
+    round_number: number;
+    status: string;
+    tournament_id: string;
+    tournament_name: string;
+    total: number;
+    pending: number;
+    completed: number;
+    failed: number;
+  } | null;
+  queue_available: boolean;
+  waiting: number | null;
+  active: number | null;
+  completed: number | null;
+  failed: number | null;
+  delayed: number | null;
+};
+
 export interface RunItEvents {
   "round:started": RoundStartedPayload;
   "round:snapshot": RoundSnapshotEvent;
