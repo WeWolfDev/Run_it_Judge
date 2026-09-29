@@ -52,6 +52,7 @@ import {
   createSocketFeed,
   formatTime,
   LANGUAGE_LABEL,
+  MAX_PROBLEM_PAYLOAD_BYTES,
   mergeSubmissions,
   type QueueStats,
   upsertSubmission,
@@ -781,6 +782,17 @@ export function AdminPanel({
         is_sample: testCase.is_sample,
       })),
     };
+    // Medir antes de enviar: el proxy corta la subida con un 413 que no explica
+    // el motivo. Blob mide los bytes UTF-8 reales, que es lo que cuenta el servidor.
+    const payloadBytes = new Blob([JSON.stringify(input)]).size;
+    if (payloadBytes > MAX_PROBLEM_PAYLOAD_BYTES) {
+      setProblemFormMessage(
+        `Este problema mide ${(payloadBytes / (1024 * 1024)).toFixed(1)} MB y el máximo son 16 MB. ` +
+          "Reducí los casos o partilo en problemas más chicos.",
+      );
+      setSavingProblem(false);
+      return;
+    }
     try {
       let done: string;
       let keepSelected = selectedProblem;

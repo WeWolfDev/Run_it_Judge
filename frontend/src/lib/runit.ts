@@ -241,6 +241,16 @@ export interface RunItFeed {
 
 export const SILK_COUNT = 10;
 
+/**
+ * Techo de la subida de un problema, en bytes del body ya serializado.
+ *
+ * Es el mismo número que `client_max_body_size` en el vhost de Nginx y que
+ * `MAX_BODY_BYTES` en el backend. El formulario mide contra este valor antes de
+ * enviar: subir 6 MB para que el proxy los rechace con un 413 no le dice nada a
+ * quien está preparando el torneo.
+ */
+export const MAX_PROBLEM_PAYLOAD_BYTES = 16 * 1024 * 1024;
+
 export function createSocketFeed(roundId = import.meta.env["VITE_ROUND_ID"]): RunItFeed | null {
   const socketUrl = import.meta.env["VITE_SOCKET_URL"];
   if (!socketUrl) return null;
