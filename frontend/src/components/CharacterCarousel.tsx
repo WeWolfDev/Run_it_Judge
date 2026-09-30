@@ -10,37 +10,19 @@ import {
 import { CHARACTER_COUNT, getSelectedCharacter, setSelectedCharacter } from "@/lib/session";
 
 const CHARACTERS = [
-  { name: "Aurora", title: "La veloz", silk: 0 },
-  { name: "Nilo", title: "El estratega", silk: 1 },
-  { name: "Mango", title: "El constante", silk: 2 },
-  { name: "Sol", title: "La precisa", silk: 3 },
-  { name: "Pixel", title: "El veloz", silk: 4 },
-  { name: "Nova", title: "La resistente", silk: 5 },
-  { name: "Trébol", title: "El paciente", silk: 6 },
-  { name: "Lima", title: "La curiosa", silk: 7 },
-  { name: "Canela", title: "La metódica", silk: 8 },
-  { name: "Brasa", title: "El implacable", silk: 9 },
+  { name: "Pixel", title: "El veloz", silk: 4, image: "/character-white.gif" },
+  { name: "Aurora", title: "La veloz", silk: 0, image: "/character-blue.gif" },
+  { name: "Jungle", title: "El salvaje", silk: 5, image: "/jungle-idle.gif" },
 ] as const;
 
-/** Tarjetas visibles a la vez. Las flechas desplazan el grupo completo. */
-const VISIBLE_COUNT = 6;
+/** Tarjetas visibles a la vez. Las flechas desplazan de a 1. */
+const VISIBLE_COUNT = 1;
 
 interface CharacterCarouselProps {
   /** Dueño de la selección: forma parte de la clave de localStorage. */
   username: string;
   /** Se llama después de guardar la selección. Solo lo dispara el botón de confirmar. */
   onSelect?: (index: number) => void;
-}
-
-function HorseIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 64 64" className={className} aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M12 46c0-9 5-14 12-17l4-9c1-3 4-6 8-7l6-2 3 5-4 3 2 4c4 2 6 6 6 11l4 3-3 4-4-2c-1 4-4 7-8 9l1 8h-5l-1-7-8 1-2 6h-5l1-7-4-1-3 4-3-2z"
-      />
-    </svg>
-  );
 }
 
 export function CharacterCarousel({ username, onSelect }: CharacterCarouselProps) {
@@ -110,16 +92,19 @@ export function CharacterCarousel({ username, onSelect }: CharacterCarouselProps
 
         <Carousel
           setApi={setApi}
-          opts={{ align: "start", loop: true }}
+          opts={{ align: "center", loop: true }}
           className="min-w-0 flex-1"
           aria-label="Personajes"
         >
           <CarouselContent className="-ml-2">
             {CHARACTERS.map((character, index) => (
-              <CarouselItem key={character.name} className="basis-1/6 pl-2">
+              <CarouselItem key={character.name} className="basis-1/3 pl-2">
                 <button
                   type="button"
-                  onClick={() => setViewing(index)}
+                  onClick={() => {
+                    scrollToViewing.current = true;
+                    setViewing(index);
+                  }}
                   aria-pressed={index === selected}
                   className={`w-full rounded-lg border p-1 text-center transition-colors sm:p-2 ${
                     index === selected
@@ -129,8 +114,10 @@ export function CharacterCarousel({ username, onSelect }: CharacterCarouselProps
                         : "border-border bg-muted"
                   }`}
                 >
-                  <HorseIcon
-                    className={`mx-auto h-7 w-7 sm:h-12 sm:w-12 text-silk-${character.silk}`}
+                  <img
+                    src={character.image}
+                    alt={character.name}
+                    className="mx-auto h-16 w-16 object-contain sm:h-24 sm:w-24"
                   />
                   <span className="mt-1 block truncate text-[10px] font-semibold text-foreground sm:text-xs">
                     {character.name}

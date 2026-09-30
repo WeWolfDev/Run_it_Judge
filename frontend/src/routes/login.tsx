@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 
@@ -9,6 +9,8 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { setSession } from "@/lib/session";
 import { login, register } from "@/lib/api";
+
+const BACKGROUNDS = ["/bg-1.png", "/bg-3.png", "/bg-4.png"];
 
 export const Route = createFileRoute("/login")({
   component: LoginPage,
@@ -29,6 +31,12 @@ function LoginPage() {
   const [registerMode, setRegisterMode] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [background, setBackground] = useState(BACKGROUNDS[0]);
+
+  useEffect(() => {
+    const randomIndex = Math.floor(Math.random() * BACKGROUNDS.length);
+    setBackground(BACKGROUNDS[randomIndex]);
+  }, []);
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -66,26 +74,24 @@ function LoginPage() {
   };
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background p-4 pt-[30vh]">
-      {/* Video de fondo arcade */}
-      <video
-        autoPlay
-        muted
-        loop
-        playsInline
+    <main className="relative flex min-h-screen items-start justify-center overflow-hidden bg-background p-4 pt-80">
+      {/* Imagen de fondo aleatoria */}
+      <img
+        src={background}
+        alt=""
         className="absolute inset-0 h-full w-full object-cover"
-        poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1920' height='1080'%3E%3Crect width='100%25' height='100%25' fill='%230a0a1a'/%3E%3C/svg%3E"
-      >
-        <source src="/Login.mp4" type="video/mp4" />
-      </video>
+      />
 
       {/* Overlay oscuro para legibilidad */}
       <div className="absolute inset-0 bg-black/20" />
 
+      {/* Título */}
+      <h1 className="relative z-10 mb-6 text-center text-7xl text-primary" style={{ fontFamily: "'Press Start 2P', cursive" }}>
+        Run It
+      </h1>
+
       {/* Contenido del formulario */}
       <section className="relative z-10 w-full max-w-[300px] rounded-lg border border-border bg-card/80 p-4 shadow-2xl backdrop-blur-md">
-        <header className="text-center" />
-
         <form onSubmit={submit} className="space-y-3">
           <Input
             value={username}

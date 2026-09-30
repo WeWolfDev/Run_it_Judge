@@ -467,14 +467,28 @@ export function ParticipantView() {
         <section
           role="timer"
           aria-live="assertive"
-          className="rounded-xl border border-info bg-info-soft px-5 py-8 text-center text-info"
+          className="relative overflow-hidden rounded-xl border border-info bg-info-soft px-5 py-8 text-center text-info"
         >
-          <p className="text-sm font-semibold uppercase tracking-widest">La ronda empieza en</p>
-          <p className="mt-2 font-mono text-8xl font-bold tabular-nums">
-            {/* Redondeo hacia arriba: el 00:00 coincide con el desbloqueo. */}
-            {formatClock(Math.ceil(untilStart / 1000) * 1000)}
-          </p>
-          <p className="mt-2 text-sm">Puedes escribir en cuanto llegue a cero.</p>
+          {/* Video de fondo */}
+          <video
+            autoPlay
+            muted
+            loop
+            playsInline
+            className="absolute inset-0 h-full w-full object-cover"
+          >
+            <source src="/Login.mp4" type="video/mp4" />
+          </video>
+          <div className="absolute inset-0 bg-black/40" />
+
+          <div className="relative z-10">
+            <p className="text-sm font-semibold uppercase tracking-widest">La ronda empieza en</p>
+            <p className="mt-2 font-mono text-8xl font-bold tabular-nums">
+              {/* Redondeo hacia arriba: el 00:00 coincide con el desbloqueo. */}
+              {formatClock(Math.ceil(untilStart / 1000) * 1000)}
+            </p>
+            <p className="mt-2 text-sm">Puedes escribir en cuanto llegue a cero.</p>
+          </div>
         </section>
       )}
 
