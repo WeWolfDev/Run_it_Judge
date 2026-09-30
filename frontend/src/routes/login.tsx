@@ -66,19 +66,34 @@ function LoginPage() {
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background p-4">
-      <section className="w-full max-w-[400px] rounded-lg border border-border bg-card p-8">
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background p-4">
+      {/* Video de fondo arcade */}
+      <video
+        autoPlay
+        muted
+        loop
+        playsInline
+        className="absolute inset-0 h-full w-full object-cover"
+        poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1920' height='1080'%3E%3Crect width='100%25' height='100%25' fill='%230a0a1a'/%3E%3C/svg%3E"
+      >
+        <source
+          src="/Login.mp4"
+          type="video/mp4"
+        />
+      </video>
+
+      {/* Overlay oscuro para legibilidad */}
+      <div className="absolute inset-0 bg-black/20" />
+
+      {/* Contenido del formulario */}
+      <section className="relative z-10 w-full max-w-[300px] rounded-lg border border-border bg-card/80 p-4 shadow-2xl backdrop-blur-md">
         <header className="mb-8 text-center">
           <div className="mb-2 inline-flex items-center gap-2">
-            <div className="h-6 w-6 rounded-sm bg-primary" aria-hidden="true" />
-            <span className="text-xl font-semibold tracking-tight text-card-foreground">
-              Run It
-            </span>
+
           </div>
-          <p className="text-sm text-muted-foreground">Compite. Resuelve. Avanza.</p>
         </header>
 
-        <form onSubmit={submit} className="space-y-4">
+        <form onSubmit={submit} className="space-y-3">
           <Input
             value={username}
             onChange={(event) => setUsername(event.target.value)}
