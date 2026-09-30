@@ -66,7 +66,7 @@ function LoginPage() {
   };
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background p-4">
+    <main className="relative flex min-h-screen items-start justify-center overflow-hidden bg-background p-4 pt-80">
       {/* Video de fondo arcade */}
       <video
         autoPlay
