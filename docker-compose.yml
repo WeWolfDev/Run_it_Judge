@@ -10,6 +10,17 @@ services:
   server:
     image: judge0/judge0:1.13.1
     platform: linux/amd64
+    # El techo real de Judge0 no son los workers sino estas peticiones: por cada
+    # envio en vuelo hay un POST de alta y un GET de consulta cada 500 ms. Con los
+    # defaults de la imagen (16 threads x 2 procesos = 32) se agotaba el pool de
+    # ActiveRecord y la API devolvia 500 con 16 envios en vuelo, de forma
+    # intermitente. Subir los threads duplica el margen.
+    #
+    # El pool de conexiones sigue a RAILS_MAX_THREADS, asi que 32 x 2 = 64
+    # conexiones: cabe en los max_connections=100 de la base de Judge0.
+    environment:
+      RAILS_MAX_THREADS: "32"
+      RAILS_SERVER_PROCESSES: "2"
     volumes:
       - ./judge0.conf:/judge0.conf:ro
     ports:
@@ -27,6 +38,12 @@ services:
     image: judge0/judge0:1.13.1
     platform: linux/amd64
     command: ["./scripts/workers"]
+    # Un worker ejecuta COUNT=8 (judge0.conf) a la vez. Con 50 participantes y
+    # problemas de 20 casos hacen falta ~16 ejecuciones simultaneas, asi que un
+    # solo worker se queda corto. Este replicado solo tiene sentido junto al
+    # aumento de threads del server: workers sin capacidad de API no alcanzan.
+    deploy:
+      replicas: 2
     volumes:
       - ./judge0.conf:/judge0.conf:ro
     privileged: true
