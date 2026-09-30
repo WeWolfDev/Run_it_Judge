@@ -66,7 +66,7 @@ function LoginPage() {
   };
 
   return (
-    <main className="relative flex min-h-screen items-start justify-center overflow-hidden bg-background p-4 pt-80">
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background p-4 pt-[30vh]">
       {/* Video de fondo arcade */}
       <video
         autoPlay
@@ -84,9 +84,7 @@ function LoginPage() {
 
       {/* Contenido del formulario */}
       <section className="relative z-10 w-full max-w-[300px] rounded-lg border border-border bg-card/80 p-4 shadow-2xl backdrop-blur-md">
-        <header className="mb-8 text-center">
-          <div className="mb-2 inline-flex items-center gap-2"></div>
-        </header>
+        <header className="text-center" />
 
         <form onSubmit={submit} className="space-y-3">
           <Input
