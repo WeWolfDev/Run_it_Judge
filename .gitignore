@@ -1,6 +1,9 @@
 judge0.conf
 .env
 secrets
+# Copias de seguridad del archivo anterior: tienen las mismas credenciales, asi
+# que un "git add -A" no debe subirlas nunca.
+secrets.bak-*
 node_modules/
 .DS_Store
 frontend/.output.next/
