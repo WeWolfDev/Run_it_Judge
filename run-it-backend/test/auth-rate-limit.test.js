@@ -24,7 +24,7 @@ test('los limites por identidad y por IP estan separados y el de IP es mayor', (
   // asi que su tope tiene que ser holgado. El que protege la cuenta es el de
   // identidad.
   assert.equal(AUTH_IDENTITY_LIMIT, 5);
-  assert.equal(AUTH_IP_LIMIT, 40);
+  assert.equal(AUTH_IP_LIMIT, 200);
   assert.ok(AUTH_IP_LIMIT > AUTH_IDENTITY_LIMIT, 'el tope por IP debe superar al de identidad');
 });
 
@@ -35,9 +35,10 @@ test('la IP aplica su propio tope, no el de identidad', () => {
   assert.equal(authLimitForTest('identity:alguien'), AUTH_IDENTITY_LIMIT);
 });
 
-test('una IP puede acumular mas fallos que una identidad', () => {
-  // Verifica el presupuesto disponible para un grupo共享 IP: 40 intentos, no 5.
-  assert.ok(AUTH_IP_LIMIT >= 30, 'una ronda de 50 personas necesita margen holgado');
+test('una IP compartida aguanta dos rondas completas de tecleos', () => {
+  // 50 personas equivocandose una vez cada una, dos veces: 100 fallos. Tiene que
+  // caber en el tope por IP, si no el torneo se cae en la primera ronda.
+  assert.ok(AUTH_IP_LIMIT >= 100, 'el tope por IP debe absorber 100 fallos de una ronda');
 });
 
 test('un acierto libera los contadores de identidad y de IP', () => {

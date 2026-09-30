@@ -36,7 +36,11 @@ const authFailureWindowMs = Number(process.env.AUTH_FAILURE_WINDOW_MS || 15 * 60
 // que el ultimo en entrar con el codigo correcto tambien recibia 429. El tope por
 // IP va muy por encima para tolerar el grupejo sin perder la capa.
 const authIdentityLimit = Number(process.env.AUTH_IDENTITY_FAILURE_LIMIT || 5);
-const authIpLimit = Number(process.env.AUTH_IP_FAILURE_LIMIT || 40);
+// El tope por IP tiene que absorber a todo el grupo contendiendo por la misma
+// IP: 50 participantes con un tecleo cada uno ya son 50. Se eligio 200 para que
+// dos vueltos de la ronda no alcancen a cortar a nadie, sin que la capa deje de
+// ser util: el limite por identidad (5) sigue siendo el que protege la cuenta.
+const authIpLimit = Number(process.env.AUTH_IP_FAILURE_LIMIT || 200);
 
 function normalizeAuthIdentity(value) {
 	return String(value || '').trim().toLowerCase().slice(0, 128);
@@ -57,18 +61,22 @@ function authLimitForKey(key) {
 }
 
 function authRetryAfter(request, identity) {
-	const keys = [`ip:${request.ip}`];
+	// Se evalua primero la identidad y se corta en cuanto esa bloquea: si una
+	// cuenta esta bloqueada, el 429 no cambia por mirar tambien la IP. Evita
+	// mezclar el dato de una cuenta con el ruido agregado de la red.
 	const normalizedIdentity = normalizeAuthIdentity(identity);
+	const keys = [];
 	if (normalizedIdentity) keys.push(`identity:${normalizedIdentity}`);
+	keys.push(`ip:${request.ip}`);
 
-	let retryAfterMs = 0;
 	for (const key of keys) {
 		const failure = getAuthFailure(key);
 		if (!failure) continue;
+		if (failure.count < authLimitForKey(key)) continue;
 		const remainingMs = authFailureWindowMs - (Date.now() - failure.firstFailureAt);
-		if (failure.count >= authLimitForKey(key)) retryAfterMs = Math.max(retryAfterMs, remainingMs);
+		if (remainingMs > 0) return Math.ceil(remainingMs / 1000);
 	}
-	return Math.ceil(retryAfterMs / 1000);
+	return 0;
 }
 
 function rejectLimitedAuth(request, reply, identity) {
