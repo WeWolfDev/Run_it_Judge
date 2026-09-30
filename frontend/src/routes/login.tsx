@@ -76,10 +76,7 @@ function LoginPage() {
         className="absolute inset-0 h-full w-full object-cover"
         poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1920' height='1080'%3E%3Crect width='100%25' height='100%25' fill='%230a0a1a'/%3E%3C/svg%3E"
       >
-        <source
-          src="/Login.mp4"
-          type="video/mp4"
-        />
+        <source src="/Login.mp4" type="video/mp4" />
       </video>
 
       {/* Overlay oscuro para legibilidad */}
@@ -88,9 +85,7 @@ function LoginPage() {
       {/* Contenido del formulario */}
       <section className="relative z-10 w-full max-w-[300px] rounded-lg border border-border bg-card/80 p-4 shadow-2xl backdrop-blur-md">
         <header className="mb-8 text-center">
-          <div className="mb-2 inline-flex items-center gap-2">
-
-          </div>
+          <div className="mb-2 inline-flex items-center gap-2"></div>
         </header>
 
         <form onSubmit={submit} className="space-y-3">
