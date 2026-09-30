@@ -28,7 +28,15 @@ const {
 const submissionRate = new Map();
 const authFailures = new Map();
 const authFailureWindowMs = Number(process.env.AUTH_FAILURE_WINDOW_MS || 15 * 60 * 1000);
-const authFailureLimit = Number(process.env.AUTH_FAILURE_LIMIT || 5);
+// Dos limites distintos porqueprotegen cosas distintas. La identidad es el
+// objetivo real de un ataque de fuerza bruta: 5 intentos por cuenta. La IP es
+// solo una capa extra, y aqui es contraproducente: 50 participantes del torneo
+// comparten la misma IP del Wi-Fi de la oficina, asi que un tecleo de cualquiera
+// sumaba para todos y, peor, un login exitoso no borra el contador de IP, con lo
+// que el ultimo en entrar con el codigo correcto tambien recibia 429. El tope por
+// IP va muy por encima para tolerar el grupejo sin perder la capa.
+const authIdentityLimit = Number(process.env.AUTH_IDENTITY_FAILURE_LIMIT || 5);
+const authIpLimit = Number(process.env.AUTH_IP_FAILURE_LIMIT || 40);
 
 function normalizeAuthIdentity(value) {
 	return String(value || '').trim().toLowerCase().slice(0, 128);
@@ -44,6 +52,10 @@ function getAuthFailure(key) {
 	return current;
 }
 
+function authLimitForKey(key) {
+	return key.startsWith('ip:') ? authIpLimit : authIdentityLimit;
+}
+
 function authRetryAfter(request, identity) {
 	const keys = [`ip:${request.ip}`];
 	const normalizedIdentity = normalizeAuthIdentity(identity);
@@ -54,7 +66,7 @@ function authRetryAfter(request, identity) {
 		const failure = getAuthFailure(key);
 		if (!failure) continue;
 		const remainingMs = authFailureWindowMs - (Date.now() - failure.firstFailureAt);
-		if (failure.count >= authFailureLimit) retryAfterMs = Math.max(retryAfterMs, remainingMs);
+		if (failure.count >= authLimitForKey(key)) retryAfterMs = Math.max(retryAfterMs, remainingMs);
 	}
 	return Math.ceil(retryAfterMs / 1000);
 }
@@ -82,6 +94,15 @@ function recordAuthFailure(request, identity) {
 function clearIdentityAuthFailures(identity) {
 	const normalizedIdentity = normalizeAuthIdentity(identity);
 	if (normalizedIdentity) authFailures.delete(`identity:${normalizedIdentity}`);
+}
+
+// Un acierto prueba que quien camea no esta atacando esa IP, asi que tambien
+// libera el contador de IP. Sin esto, fifty personas del mismo Wi-Fi se bloqueaban
+// entre si: los fallos de uno congelaban la entrada del resto durante 15 minutos
+// y el que Finally escribia bien su codigo tambien recibia 429.
+function clearAuthFailuresForRequest(request, identity) {
+	clearIdentityAuthFailures(identity);
+	authFailures.delete(`ip:${request.ip}`);
 }
 
 setInterval(() => {
@@ -268,7 +289,7 @@ fastify.post('/auth/login', async (request, reply) => {
 		return reply.code(401).send({ error: 'Credenciales inválidas' });
 	}
 
-	clearIdentityAuthFailures(username);
+	clearAuthFailuresForRequest(request, username);
 	const user = result.rows[0];
 	const token = crypto.randomUUID();
 	await setSession(token, user);
@@ -338,7 +359,7 @@ fastify.post('/auth/register', async (request, reply) => {
 			return userResult.rows[0];
 		});
 
-		clearIdentityAuthFailures(username);
+		clearAuthFailuresForRequest(request, username);
 		const token = crypto.randomUUID();
 		await setSession(token, user);
 		return { token, user };
@@ -1973,4 +1994,10 @@ module.exports = {
 	fastify, start, requireRole, sessions: memorySessions, closeRound, describeStartBlock, startBlockReason,
 	validateRoundEdit, ORPHAN_USER_SQL, parseIdList, TOURNAMENT_DELETABLE_SQL, PROBLEM_DELETABLE_SQL,
 	INFRA_FAILURE_VERDICTS, MAX_BODY_BYTES,
+	// Expuestos para test/auth-rate-limit.test.js: el rate limit vive en el
+	// servidor y sin esto habria que.matchear contra una DB real para probarlo.
+	AUTH_IDENTITY_LIMIT: authIdentityLimit, AUTH_IP_LIMIT: authIpLimit,
+	recordAuthFailureForTest: recordAuthFailure, clearAuthFailuresForTest: clearAuthFailuresForRequest,
+	authFailureCountForTest: (key) => getAuthFailure(key)?.count ?? 0,
+	authLimitForTest: authLimitForKey,
 };
