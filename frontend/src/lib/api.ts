@@ -392,7 +392,12 @@ export async function deleteProblems(ids: string[]) {
 // Solo rondas pendientes. timeLimitSeconds va en segundos: el panel convierte.
 export async function updateRound(
   roundId: string,
-  input: { problemId: string; capacity: number; timeLimitSeconds: number },
+  input: {
+    problemId: string;
+    capacity: number;
+    timeLimitSeconds: number;
+    difficulty?: ProblemDifficulty;
+  },
 ) {
   const response = await fetch(`${API_URL}/rounds/${roundId}`, {
     method: "PUT",
@@ -458,7 +463,33 @@ export async function getTournamentRounds(tournamentId: string) {
     // Motivo por el que una ronda pendiente no puede iniciar todavía; null si
     // puede. Es el mismo texto que devuelve POST /rounds/:id/start.
     start_blocked_reason: string | null;
+    // campos nuevos que el backend real todavía no devuelve.
+    difficulty?: ProblemDifficulty | null;
+    starts_at?: string | null;
+    ends_at?: string | null;
+    paused?: boolean;
   }>;
+}
+
+// planificar todas las rondas de un torneo de una vez. Solo
+// toca rondas pendientes; las que ya se jugaron quedan como están.
+export type RoundPlanItem = {
+  round_number: number;
+  difficulty: ProblemDifficulty;
+  problemId: string;
+  capacity: number;
+  timeLimitSeconds: number;
+};
+
+export async function saveTournamentPlan(tournamentId: string, rounds: RoundPlanItem[]) {
+  const response = await fetch(`${API_URL}/tournaments/${tournamentId}/plan`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ rounds }),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudo guardar el plan de rondas");
+  return body as Awaited<ReturnType<typeof getTournamentRounds>>;
 }
 
 export async function createRound(
@@ -626,6 +657,19 @@ export async function toggleRoundPause(roundId: string) {
   return body as { paused: boolean };
 }
 
+// la próxima ronda pendiente a la que el participante puede
+// esperar (sala de espera antes de que el organizador la inicie).
+export async function getUpcomingRound() {
+  const response = await fetch(`${API_URL}/public/rounds/upcoming`, { headers: authHeaders() });
+  if (!response.ok) throw new Error("No se pudo consultar la próxima ronda");
+  return response.json() as Promise<{
+    id: string;
+    round_number: number;
+    tournament_name: string;
+    capacity: number;
+  } | null>;
+}
+
 export async function getActiveRound() {
   const response = await fetch(`${API_URL}/public/rounds/active`);
   if (!response.ok) throw new Error("No se pudo cargar la ronda activa");
@@ -659,6 +703,49 @@ export async function joinRound(roundId: string, displayName: string, character:
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "No se pudo entrar a la ronda");
   return body as { id: string; display_name: string; character: number };
+}
+
+export type RunCaseResult = {
+  status: string;
+  stdin: string;
+  stdout: string;
+  stderr: string;
+  compile_output: string;
+  time: string | null;
+  memory: number | null;
+  /** Solo en los casos de ejemplo: con entrada propia no hay salida esperada. */
+  expected?: string;
+  passed?: boolean;
+};
+
+export type RunResult = {
+  mode: "samples" | "custom";
+  results: RunCaseResult[];
+  passed: number;
+  total: number;
+};
+
+// "Probar código": corre contra los ejemplos (sin stdin) o contra una entrada
+// propia. No cuenta como envío ni suma penalización.
+export async function runCode(
+  roundId: string,
+  participantId: string,
+  code: string,
+  language: string,
+  stdin?: string,
+): Promise<RunResult> {
+  const response = await fetch(`${API_URL}/rounds/${roundId}/run`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify(
+      stdin === undefined
+        ? { participantId, code, language }
+        : { participantId, code, language, stdin },
+    ),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudo probar el código");
+  return body as RunResult;
 }
 
 export async function submitRound(

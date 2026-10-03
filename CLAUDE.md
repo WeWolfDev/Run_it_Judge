@@ -75,6 +75,17 @@ Un torneo tiene N rondas y termina cuando queda un solo clasificado.
 responde `409`. Las siguientes salen del paso 8, que inscribe a los
 clasificados; una creada a mano tendría el roster vacío.
 
+**Plan de rondas.** `PUT /tournaments/:id/plan` crea o actualiza todas las
+rondas pendientes de una vez (número, `difficulty`, problema, cupo, tiempo) y
+borra las pendientes sin inscriptos que ya no están en el plan; las jugadas no
+se tocan. Las siguientes quedan con el roster vacío: el paso 8 las **llena** en
+vez de rechazarlas (`existing.planned` en `GET /rounds/:id/next`). Hasta
+entonces `/start` las rechaza por falta de roster.
+
+**Sala de espera.** Sin ronda activa, `GET /public/rounds/upcoming` devuelve la
+ronda pendiente que el participante espera; se inscribe en la primera ronda
+antes de que empiece (el join ya admite `pending`).
+
 **Quién entra a una ronda.** En la primera ronda de un torneo el participante
 se inscribe solo (paso 5). En las siguientes solo entra quien está en el roster
 que armó el paso 8. El criterio es uno solo, `roundMember()` (roster +

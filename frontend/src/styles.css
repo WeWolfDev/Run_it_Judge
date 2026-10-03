@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Pixelify+Sans:wght@400;500;600;700&display=swap");
 @import "katex/dist/katex.min.css";
 @import "tailwindcss" source(none);
 @source "../src";
@@ -240,5 +240,264 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+  }
+}
+
+/* hoja de sprites de 4 columnas (ver CharacterSprite). */
+@keyframes run-it-sprite {
+  from {
+    background-position-x: 0%;
+  }
+  to {
+    background-position-x: 133.3333%;
+  }
+}
+
+/* ================= Diseño arcade: tipografía, paletas, cursor y animaciones ================= */
+
+/* Tipografía pixel en toda la interfaz; el código sigue en monoespaciada. */
+/* @theme inline copia el valor en la utilidad: se pisa la clase directamente. */
+body,
+.font-sans {
+  font-family: "Pixelify Sans", "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Paletas elegibles por cada usuario (1, 14 y 19 de la propuesta). Solo
+   redefinen colores de marca: silks, éxito/peligro y los veredictos no cambian. */
+:root[data-palette] {
+  --foreground: color-mix(in oklch, white 93%, var(--pal-acc));
+  --card: color-mix(in oklch, var(--pal-bg), white 6%);
+  --card-foreground: var(--foreground);
+  --popover: var(--card);
+  --popover-foreground: var(--foreground);
+  --primary: var(--pal-pri);
+  --primary-foreground: color-mix(in oklch, var(--pal-bg), black 30%);
+  --secondary: var(--pal-acc);
+  --secondary-foreground: color-mix(in oklch, var(--pal-bg), black 30%);
+  --muted: color-mix(in oklch, var(--pal-bg), white 11%);
+  --muted-foreground: color-mix(in oklch, var(--pal-bg), white 60%);
+  --accent: var(--pal-acc);
+  --accent-foreground: color-mix(in oklch, var(--pal-bg), black 30%);
+  --border: color-mix(in oklch, var(--pal-bg), white 20%);
+  --input: var(--border);
+  --ring: var(--pal-pri);
+  --background: var(--pal-bg);
+  --info: var(--pal-acc);
+  --info-foreground: color-mix(in oklch, var(--pal-bg), black 30%);
+  --info-soft: color-mix(in oklch, var(--pal-acc) 18%, var(--pal-bg));
+  --editor: color-mix(in oklch, var(--pal-bg), black 40%);
+  --editor-foreground: color-mix(in oklch, white 90%, var(--pal-acc));
+  --editor-muted: color-mix(in oklch, var(--pal-bg), white 50%);
+  --editor-border: color-mix(in oklch, var(--pal-bg), white 16%);
+}
+/* 1 · Arcade Neón */
+:root[data-palette="arcade"] {
+  --pal-bg: oklch(0.16 0.05 290);
+  --pal-pri: oklch(0.7 0.23 345);
+  --pal-acc: oklch(0.86 0.14 195);
+}
+/* 14 · Marquesina */
+:root[data-palette="marquesina"] {
+  --pal-bg: oklch(0.24 0.11 305);
+  --pal-pri: oklch(0.86 0.12 75);
+  --pal-acc: oklch(0.62 0.17 258);
+}
+/* 19 · Lavanda Koala */
+:root[data-palette="lavanda"] {
+  --pal-bg: oklch(0.22 0.05 285);
+  --pal-pri: oklch(0.82 0.08 285);
+  --pal-acc: oklch(0.64 0.17 255);
+}
+
+/* Cursor pixel (lo dibuja src/lib/pixel-cursor.ts con los colores de la paleta). */
+html.pixel-cursor,
+html.pixel-cursor * {
+  cursor: var(--cur-default, auto);
+}
+html.pixel-cursor :is(button, a, label, select, [role="button"], [role="tab"]) {
+  cursor: var(--cur-pointer, pointer);
+}
+
+/* Animaciones del demo animado: pasos discretos, como un juego de 8 bits. */
+@keyframes run-it-pop {
+  40% {
+    transform: translateY(-8px) scale(1.06);
+  }
+}
+.animate-run-it-pop {
+  animation: run-it-pop 0.45s steps(4);
+}
+
+@keyframes run-it-hurry {
+  50% {
+    opacity: 0.45;
+    transform: scale(1.06);
+  }
+}
+.animate-run-it-hurry {
+  animation: run-it-hurry 1s steps(2, jump-none) infinite;
+}
+
+@keyframes run-it-shake {
+  20% {
+    transform: translateX(-8px);
+  }
+  40% {
+    transform: translateX(8px);
+  }
+  60% {
+    transform: translateX(-5px);
+  }
+  80% {
+    transform: translateX(5px);
+  }
+}
+.animate-run-it-shake {
+  animation: run-it-shake 0.5s steps(5);
+}
+
+/* Visible desde el primer cuadro: si la animación no corre, el texto igual se ve. */
+@keyframes run-it-zoom {
+  0% {
+    transform: scale(1.6);
+  }
+  60% {
+    transform: scale(0.92);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.animate-run-it-zoom {
+  animation: run-it-zoom 0.6s steps(5) both;
+}
+
+@keyframes run-it-rise {
+  0% {
+    transform: translateY(16px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+.animate-run-it-rise {
+  animation: run-it-rise 0.6s steps(6) both;
+}
+
+@keyframes run-it-flash {
+  0% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.animate-run-it-flash {
+  animation: run-it-flash 0.7s steps(3) both;
+}
+
+@keyframes run-it-sweep {
+  from {
+    top: -30%;
+  }
+  to {
+    top: 100%;
+  }
+}
+.run-it-crt-sweep {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 30%;
+  background: linear-gradient(transparent, rgb(255 255 255 / 0.18), transparent);
+  animation: run-it-sweep 4s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes run-it-flicker {
+  0%,
+  92%,
+  100% {
+    opacity: 1;
+  }
+  93% {
+    opacity: 0.75;
+  }
+  97% {
+    opacity: 0.85;
+  }
+}
+.animate-run-it-flicker {
+  animation: run-it-flicker 3s steps(1) infinite;
+}
+
+@keyframes run-it-blink {
+  50% {
+    opacity: 0.2;
+  }
+}
+.animate-run-it-blink {
+  animation: run-it-blink 0.8s steps(1) infinite;
+}
+
+/* Spinner pixel de 8 pasos (9 cuadraditos, el del centro vacío). */
+.run-it-spinner {
+  display: inline-grid;
+  grid-template-columns: repeat(3, 5px);
+  gap: 2px;
+  vertical-align: middle;
+}
+.run-it-spinner i {
+  width: 5px;
+  height: 5px;
+  background: var(--muted);
+  animation: run-it-spin 1s steps(1) infinite;
+}
+.run-it-spinner i:nth-child(5) {
+  visibility: hidden;
+}
+.run-it-spinner i:nth-child(2) {
+  animation-delay: 0.125s;
+}
+.run-it-spinner i:nth-child(3) {
+  animation-delay: 0.25s;
+}
+.run-it-spinner i:nth-child(6) {
+  animation-delay: 0.375s;
+}
+.run-it-spinner i:nth-child(9) {
+  animation-delay: 0.5s;
+}
+.run-it-spinner i:nth-child(8) {
+  animation-delay: 0.625s;
+}
+.run-it-spinner i:nth-child(7) {
+  animation-delay: 0.75s;
+}
+.run-it-spinner i:nth-child(4) {
+  animation-delay: 0.875s;
+}
+@keyframes run-it-spin {
+  0%,
+  20% {
+    background: var(--primary);
+  }
+  21%,
+  100% {
+    background: var(--muted);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-run-it-pop,
+  .animate-run-it-hurry,
+  .animate-run-it-shake,
+  .animate-run-it-zoom,
+  .animate-run-it-rise,
+  .animate-run-it-flicker,
+  .animate-run-it-blink,
+  .run-it-crt-sweep,
+  .run-it-spinner i {
+    animation: none !important;
   }
 }

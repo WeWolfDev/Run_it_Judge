@@ -7,15 +7,12 @@ import {
   CarouselItem,
   type CarouselApi,
 } from "@/components/ui/carousel";
+import { Sprite } from "@/components/Sprite";
+import { CHARACTER_PACKS, CHARACTERS } from "@/lib/characters";
+import { play } from "@/lib/sfx";
 import { CHARACTER_COUNT, getSelectedCharacter, setSelectedCharacter } from "@/lib/session";
 
-const CHARACTERS = [
-  { name: "Pixel", title: "El veloz", silk: 4, image: "/character-white.gif" },
-  { name: "Aurora", title: "La veloz", silk: 0, image: "/character-blue.gif" },
-  { name: "Jungle", title: "El salvaje", silk: 5, image: "/jungle-idle.gif" },
-] as const;
-
-/** Tarjetas visibles a la vez. Las flechas desplazan de a 1. */
+/** Tres tarjetas grandes a la vista; las flechas desplazan de a 1. */
 const VISIBLE_COUNT = 1;
 
 interface CharacterCarouselProps {
@@ -29,9 +26,10 @@ export function CharacterCarousel({ username, onSelect }: CharacterCarouselProps
   const [api, setApi] = useState<CarouselApi>();
   const [viewing, setViewing] = useState(0);
   const [selected, setSelected] = useState(0);
-  // Solo las flechas y la carga inicial mueven el carrusel hasta `viewing`; el clic
-  // en una tarjeta cambia el foco sin desplazar el grupo que se está mirando.
-  // Ni las flechas, ni arrastrar, ni el clic en una tarjeta eligen: solo el botón.
+  const [popping, setPopping] = useState(false);
+  // Solo las flechas, los grupos y la carga inicial mueven el carrusel hasta
+  // `viewing`. Ni las flechas, ni arrastrar, ni el clic en una tarjeta eligen:
+  // solo el botón.
   const scrollToViewing = useRef(false);
 
   // localStorage solo existe en el cliente: leerlo después de montar evita que
@@ -49,7 +47,7 @@ export function CharacterCarousel({ username, onSelect }: CharacterCarouselProps
     api.scrollTo(viewing);
   }, [api, viewing]);
 
-  // Arrastrar o usar el teclado mueve el carrusel: el foco sigue a la primera tarjeta.
+  // Arrastrar o usar el teclado mueve el carrusel: el foco sigue a la tarjeta central.
   useEffect(() => {
     if (!api) return;
     const onScrollSelect = () => setViewing(api.selectedScrollSnap());
@@ -66,78 +64,121 @@ export function CharacterCarousel({ username, onSelect }: CharacterCarouselProps
   const shift = (direction: -1 | 1) => {
     scrollToViewing.current = true;
     move(direction * VISIBLE_COUNT);
+    play("click");
+  };
+
+  const jumpTo = (index: number) => {
+    scrollToViewing.current = true;
+    setViewing(index);
+    play("click");
   };
 
   const choose = (index: number) => {
     setSelectedCharacter(username, index);
     setSelected(index);
     setViewing(index);
-    onSelect?.(index);
+    setPopping(true);
+    play("coin");
+    // La tarjeta rebota antes de pasar a la sala de espera.
+    setTimeout(() => onSelect?.(index), 450);
   };
 
-  // getSelectedCharacter ya acota a [0, CHARACTER_COUNT); el ?? solo satisface a TS.
-  const current = CHARACTERS[viewing] ?? CHARACTERS[0];
+  const current = CHARACTERS[viewing] ?? CHARACTERS[0]!;
+  const near = (index: number) => {
+    const distance = Math.abs(index - viewing);
+    return distance <= 2 || distance >= CHARACTER_COUNT - 2;
+  };
 
   return (
-    <div className="mt-4 flex flex-col items-center gap-4">
-      <div className="flex w-full max-w-3xl items-center gap-2 sm:gap-3">
+    <div className="mt-5 flex flex-col items-center gap-5">
+      {/* Grupos: saltan al primer personaje de cada pack. */}
+      <div className="flex flex-wrap justify-center gap-2">
+        {CHARACTER_PACKS.map((pack) => {
+          const first = CHARACTERS.findIndex((c) => c.pack === pack);
+          const active = current.pack === pack;
+          return (
+            <button
+              key={pack}
+              type="button"
+              onClick={() => jumpTo(first)}
+              className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                active
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {pack}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex w-full items-center gap-3 sm:gap-5">
         <button
           type="button"
           onClick={() => shift(-1)}
           aria-label="Personaje anterior"
-          className="shrink-0 rounded-full border border-border p-2 text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+          className="shrink-0 text-muted-foreground transition-colors hover:text-primary"
         >
-          <ChevronLeft className="h-5 w-5" />
+          <ChevronLeft className="h-10 w-10" strokeWidth={3} />
         </button>
 
-        <Carousel
-          setApi={setApi}
-          opts={{ align: "center", loop: true }}
-          className="min-w-0 flex-1"
-          aria-label="Personajes"
-        >
-          <CarouselContent className="-ml-2">
-            {CHARACTERS.map((character, index) => (
-              <CarouselItem key={character.name} className="basis-1/3 pl-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    scrollToViewing.current = true;
-                    setViewing(index);
-                  }}
-                  aria-pressed={index === selected}
-                  className={`w-full rounded-lg border p-1 text-center transition-colors sm:p-2 ${
-                    index === selected
-                      ? "border-primary bg-primary/10 ring-2 ring-primary/20"
-                      : index === viewing
-                        ? "border-primary/50 bg-muted"
-                        : "border-border bg-muted"
-                  }`}
+        {/* La caja de la distribución: tres tarjetas grandes adentro. */}
+        <div className="min-w-0 flex-1 rounded-2xl border border-border bg-muted/60 p-3 sm:p-5">
+          <Carousel
+            setApi={setApi}
+            opts={{ align: "center", loop: true }}
+            className="min-w-0"
+            aria-label="Personajes"
+          >
+            <CarouselContent className="-ml-3 sm:-ml-5">
+              {CHARACTERS.map((character, index) => (
+                <CarouselItem
+                  key={`${character.pack}-${character.name}`}
+                  className="basis-1/3 pl-3 sm:pl-5"
                 >
-                  <img
-                    src={character.image}
-                    alt={character.name}
-                    className="mx-auto h-16 w-16 object-contain sm:h-24 sm:w-24"
-                  />
-                  <span className="mt-1 block truncate text-[10px] font-semibold text-foreground sm:text-xs">
-                    {character.name}
-                  </span>
-                  <span className="mt-0.5 hidden truncate text-[11px] text-muted-foreground md:block">
-                    {character.title}
-                  </span>
-                </button>
-              </CarouselItem>
-            ))}
-          </CarouselContent>
-        </Carousel>
+                  <button
+                    type="button"
+                    onClick={() => jumpTo(index)}
+                    aria-pressed={index === selected}
+                    className={`flex aspect-square w-full flex-col items-center justify-end overflow-hidden rounded-xl border-2 p-3 text-center transition-all ${
+                      index === viewing
+                        ? `border-primary bg-primary/10 ring-4 ring-primary/20 ${popping ? "animate-run-it-pop" : ""}`
+                        : "scale-95 border-border bg-card opacity-70 hover:opacity-100"
+                    }`}
+                  >
+                    <span className="flex min-h-0 flex-1 items-end justify-center">
+                      {/* Solo se animan las tarjetas cercanas: con 48, el resto espera. */}
+                      {near(index) ? (
+                        <Sprite
+                          index={index}
+                          state={index === viewing ? "run" : "idle"}
+                          scale={1.5}
+                        />
+                      ) : (
+                        <span className="block h-32 w-32" />
+                      )}
+                    </span>
+                    <span className="mt-2 block w-full truncate text-sm font-semibold text-foreground sm:text-base">
+                      {character.name}
+                    </span>
+                    <span className="hidden w-full truncate text-xs text-muted-foreground sm:block">
+                      {character.title} · {character.pack}
+                    </span>
+                  </button>
+                </CarouselItem>
+              ))}
+            </CarouselContent>
+          </Carousel>
+        </div>
 
         <button
           type="button"
           onClick={() => shift(1)}
           aria-label="Personaje siguiente"
-          className="shrink-0 rounded-full border border-border p-2 text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+          className="shrink-0 text-muted-foreground transition-colors hover:text-primary"
         >
-          <ChevronRight className="h-5 w-5" />
+          <ChevronRight className="h-10 w-10" strokeWidth={3} />
         </button>
       </div>
 
@@ -148,7 +189,7 @@ export function CharacterCarousel({ username, onSelect }: CharacterCarouselProps
       <button
         type="button"
         onClick={() => choose(viewing)}
-        className="rounded-lg bg-primary px-6 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+        className="rounded-lg bg-primary px-8 py-2.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
       >
         Confirmar {current.name}
       </button>

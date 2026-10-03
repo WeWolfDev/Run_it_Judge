@@ -11,14 +11,23 @@ import {
 } from "@/lib/runit";
 import { useRoundTimer, useServerClockOffset } from "@/hooks/use-round-timer";
 import { CharacterCarousel } from "@/components/CharacterCarousel";
+import { CodeEditor } from "@/components/CodeEditor";
+import { WaitingScreen } from "@/components/WaitingScreen";
+import { PixelIcon } from "@/components/PixelIcon";
+import { Sprite } from "@/components/Sprite";
+import { confetti } from "@/lib/confetti";
+import { play } from "@/lib/sfx";
 import { ProblemStatement } from "@/components/ProblemStatement";
 import {
   getActiveRound,
   getMySubmissions,
   getRoundLeaderboard,
+  getUpcomingRound,
   joinRound,
+  runCode,
   submitRound,
   type MySubmission,
+  type RunResult,
 } from "@/lib/api";
 import {
   getCharacterConfirmed,
@@ -38,30 +47,83 @@ const LANGUAGES = {
 
 type Language = keyof typeof LANGUAGES;
 
-// Se muestran como placeholder del textarea vacío, nunca como su valor: así el
-// participante no puede enviar la plantilla sin querer.
-const PLACEHOLDERS: Record<Language, string> = {
+// Código inicial de cada lenguaje, copiado tal cual de plantillas_lenguajes/*.md
+// (test/judge-contract.test.js verifica que sigan idénticos). Es el valor del
+// editor, no un placeholder: probar o enviar la plantilla sin cambios se rechaza
+// en el cliente, para no gastar un envío ni sumar penalización por error.
+const TEMPLATES: Record<Language, string> = {
   python: `import sys
+input = sys.stdin.readline
+
+def solve():
+  # solucion
+  # ejemplo de entrada rapida:
+  # # n = int(input())
+  pass
+
+
 def main():
-    # Lee desde la entrada estándar (stdin)
-    # --- ESCRIBE TU LÓGICA AQUÍ ---
-    pass
-if __name__ == '__main__':
-    main()`,
+  t = 1
+  # t = int(input())  # Descomentar si hay varios casos de prueba
+  for _ in range(t):
+    solve()
+
+
+if __name__ == "__main__":
+  main()`,
   c: `#include <stdio.h>
-int main() {
-    // --- ESCRIBE TU LÓGICA AQUÍ ---
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+
+typedef long long ll;
+
+void solve(void) {
+    // Código de la solución aquí
+
+}
+
+int main(void) {
+    int t = 1;
+    // Descomentar si el problema tiene múltiples casos de prueba:
+    // if (scanf("%d", &t) != 1) return 0;
+
+    while (t--) {
+        solve();
+    }
+
     return 0;
 }`,
-  cpp: `#include <iostream>
+  cpp: `#include <bits/stdc++.h>
 using namespace std;
+#define fast_io ios_base::sync_with_stdio(false); cin.tie(NULL); cout.tie(NULL);
+
+void solve(){
+    // Código de la solución aquí
+}
+
 int main() {
-    ios_base::sync_with_stdio(false);
-    cin.tie(NULL);
-    // --- ESCRIBE TU LÓGICA AQUÍ ---
+    fast_io;
+
+    int t=1;
+    //Descomentar si el problema tiene múltiples casos de prueba:
+    //cin>>t;
+
+    while(t--){
+        solve();
+    }
+    
     return 0;
 }`,
 };
+
+// La plantilla de cualquier lenguaje, sin tocar. Se compara sin espacios al
+// borde: un salto de línea de más no cuenta como solución.
+const isUntouchedTemplate = (text: string) =>
+  Object.values(TEMPLATES).some((template) => template.trim() === text.trim());
 
 // Casos marcados como ejemplo por el admin. El servidor ya los proyecta a
 // stdin/expected: los demás casos nunca llegan al cliente.
@@ -97,6 +159,9 @@ type LiveStanding = Awaited<ReturnType<typeof getRoundLeaderboard>>[number];
 
 type Load = "loading" | "none" | "error" | "ready";
 
+// Pestañas del panel de prueba, debajo del editor.
+type RunTab = "samples" | "custom";
+
 export function ParticipantView() {
   const [load, setLoad] = useState<Load>("loading");
   const [reloadKey, setReloadKey] = useState(0);
@@ -106,16 +171,30 @@ export function ParticipantView() {
   const [participant, setParticipant] = useState<{ roundId: string; id: string } | null>(null);
   const [joinError, setJoinError] = useState("");
   const [standings, setStandings] = useState<Standing[] | null>(null);
-  const [code, setCode] = useState("");
+  // aviso animado del último veredicto propio ("+2 tests", "¡Resuelto!", fallo).
+  const [moment, setMoment] = useState<{
+    kind: "pass" | "fail" | "solved";
+    text: string;
+    key: number;
+  } | null>(null);
+  const bestPassedRef = useRef(0);
+  const [code, setCode] = useState(TEMPLATES.python);
   const [language, setLanguage] = useState<Language>("python");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const [runTab, setRunTab] = useState<RunTab>("samples");
+  const [customInput, setCustomInput] = useState("");
+  const [running, setRunning] = useState(false);
+  const [runResult, setRunResult] = useState<RunResult | null>(null);
+  const [runError, setRunError] = useState("");
   // Se acumula: cada envío es una fila y los eventos solo actualizan la suya.
   const [history, setHistory] = useState<MySubmission[]>([]);
   const [liveStandings, setLiveStandings] = useState<LiveStanding[]>([]);
   // null hasta leer localStorage en el cliente: el SSR no sabe si ya eligió, y
   // renderizar cualquiera de las dos pantallas antes provocaría un salto visible.
   const [characterConfirmed, setConfirmedState] = useState<boolean | null>(null);
+  // ronda pendiente en la que espera (sala de espera), si no hay activa.
+  const [upcoming, setUpcoming] = useState<Awaited<ReturnType<typeof getUpcomingRound>>>(null);
   const serverOffsetMs = useServerClockOffset(setMessage);
   const remaining = useRoundTimer(live?.endsAt ?? 0, serverOffsetMs);
   // Mismo reloj corregido que el cronómetro: todos cuentan hacia el mismo
@@ -151,9 +230,18 @@ export function ParticipantView() {
       if (!remote) {
         setRound(null);
         setLive(null);
+        // sin ronda activa, la próxima pendiente es la sala de espera. Se
+        // inscribe ya, así el admin lo ve conectado antes de iniciar.
+        const next = await getUpcomingRound().catch(() => null);
+        if (cancelled) return;
+        setUpcoming(next);
         setLoad("none");
+        if (next && getCharacterConfirmed(username)) {
+          void joinRound(next.id, username, getSelectedCharacter(username)).catch(() => undefined);
+        }
         return;
       }
+      setUpcoming(null);
       // `samples` y `paused` vienen en /public/rounds/active; el tipo de api.ts no los declara.
       const extra = remote as { samples?: SampleCase[]; paused?: boolean; round_number?: number };
       setRound({
@@ -199,6 +287,8 @@ export function ParticipantView() {
     let cancelled = false;
     setHistory([]);
     setLiveStandings([]);
+    bestPassedRef.current = 0;
+    setMoment(null);
     // Ids de la ronda en pantalla: participant:progress no trae la ronda y sale
     // a todos los sockets, así que se ignora el de participantes ajenos.
     let standingIds = new Set<string>();
@@ -325,6 +415,29 @@ export function ParticipantView() {
     // participantId es el que devolvió el join, resuelto por el backend desde el token.
     feed.on("submission:judged", (event) => {
       if (event.participant_id !== participantId || event.round_id !== joinedRoundId) return;
+      // animación y sonido según el veredicto, como en el demo animado.
+      const accepted = event.verdict === "accepted" || event.verdict === "Accepted";
+      const gained = event.test_cases_passed - bestPassedRef.current;
+      bestPassedRef.current = Math.max(bestPassedRef.current, event.test_cases_passed);
+      if (accepted) {
+        setMoment({ kind: "solved", text: "¡Resuelto! Todos los casos", key: Date.now() });
+        play("win");
+        confetti({ x: 0.7, y: 0.35 });
+      } else if (gained > 0) {
+        setMoment({
+          kind: "pass",
+          text: `+${gained} ${gained === 1 ? "test" : "tests"} · ${event.test_cases_passed}/${event.test_cases_total}`,
+          key: Date.now(),
+        });
+        play("coin");
+      } else {
+        setMoment({
+          kind: "fail",
+          text: `${verdictLabel(event.verdict)} · +30 s`,
+          key: Date.now(),
+        });
+        play("error");
+      }
       setHistory((current) =>
         upsertSubmission(current, {
           id: event.id,
@@ -345,9 +458,22 @@ export function ParticipantView() {
   }, [joinedRoundId, participantId, username]);
 
   const closed = live?.status === "closed" || live?.status === "closing";
+  // solo el puesto propio al cerrar la ronda.
+  const myStanding = standings?.find((entry) => entry.participant_id === participantId) ?? null;
+  const celebratedRef = useRef("");
+  useEffect(() => {
+    if (!myStanding || !round || celebratedRef.current === round.id) return;
+    celebratedRef.current = round.id;
+    if (myStanding.advanced) {
+      play("win");
+      confetti();
+    } else {
+      play("over");
+    }
+  }, [myStanding, round]);
   const paused = Boolean(live?.paused) && !closed;
   const countingDown = live?.status === "active" && untilStart > 0;
-  // Bloqueo real: deshabilita el textarea, no solo el botón. El texto se conserva.
+  // Bloqueo real: deja el editor en solo lectura, no solo el botón. El texto se conserva.
   const locked = !live || live.status !== "active" || live.paused || remaining <= 0 || countingDown;
   const inscribed = Boolean(participant && round && participant.roundId === round.id);
 
@@ -357,7 +483,7 @@ export function ParticipantView() {
     setConfirmedState(true);
     // Sin ronda activa no hay dónde inscribirse: el efecto de carga lo hace con
     // este personaje cuando llegue round:started.
-    const roundId = roundIdRef.current;
+    const roundId = roundIdRef.current ?? upcoming?.id ?? null;
     if (!roundId) return;
     void joinRound(roundId, username, character)
       .then((joined) => {
@@ -369,6 +495,15 @@ export function ParticipantView() {
       });
   };
 
+  // Con la plantilla intacta (o el editor vacío) se cambia a la del nuevo
+  // lenguaje; si ya escribió algo, el código se conserva tal cual.
+  const changeLanguage = (next: Language) => {
+    setLanguage(next);
+    setCode((current) =>
+      isUntouchedTemplate(current) || !current.trim() ? TEMPLATES[next] : current,
+    );
+  };
+
   const send = async () => {
     if (locked || !round || !participant || participant.roundId !== round.id) {
       setMessage("No puedes enviar ahora.");
@@ -376,6 +511,10 @@ export function ParticipantView() {
     }
     if (!code.trim()) {
       setMessage("Escribe tu solución antes de enviar.");
+      return;
+    }
+    if (isUntouchedTemplate(code)) {
+      setMessage("Tu código todavía es la plantilla: escribe tu solución antes de enviar.");
       return;
     }
     setSending(true);
@@ -398,6 +537,42 @@ export function ParticipantView() {
       setMessage(error instanceof Error ? error.message : "No se pudo enviar");
     } finally {
       setSending(false);
+    }
+  };
+
+  // Probar no es enviar: no queda en el historial ni suma penalización.
+  const run = async (mode: RunTab = runTab) => {
+    if (running) return;
+    if (locked || !round || !participant || participant.roundId !== round.id) {
+      setRunError("No puedes probar ahora.");
+      return;
+    }
+    if (!code.trim()) {
+      setRunError("Escribe tu solución antes de probarla.");
+      return;
+    }
+    if (isUntouchedTemplate(code)) {
+      setRunError("Tu código todavía es la plantilla: escribe tu solución antes de probarla.");
+      return;
+    }
+    setRunTab(mode);
+    setRunning(true);
+    setRunError("");
+    setRunResult(null);
+    try {
+      const result = await runCode(
+        round.id,
+        participant.id,
+        code,
+        language,
+        mode === "custom" ? customInput : undefined,
+      );
+      setRunResult(result);
+      play(result.mode === "custom" || result.passed === result.total ? "coin" : "error");
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : "No se pudo probar el código");
+    } finally {
+      setRunning(false);
     }
   };
 
@@ -424,73 +599,90 @@ export function ParticipantView() {
     );
   }
 
-  if (load === "none" || load === "error" || !round) {
+  if (load === "error") {
     return (
       <section className="rounded-xl border border-border bg-card px-5 py-8 text-center">
         <h1 className="text-lg font-semibold text-foreground">
-          {load === "error"
-            ? "No se pudo conectar con el servidor"
-            : "Todavía no hay una ronda activa"}
+          No se pudo conectar con el servidor
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          {load === "error"
-            ? "Revisa tu conexión y vuelve a intentarlo."
-            : "El organizador aún no abrió ninguna. La vista se actualiza sola cuando empiece."}
+          Revisa tu conexión y vuelve a intentarlo.
         </p>
         <button
           type="button"
           onClick={reload}
           className="mt-4 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
         >
-          {load === "error" ? "Reintentar" : "Recargar"}
+          Reintentar
         </button>
       </section>
     );
   }
 
+  const character = getSelectedCharacter(username);
+
+  // sala de espera (CRT) hasta que el organizador inicia la ronda.
+  if (load === "none" || !round) {
+    return (
+      <WaitingScreen
+        roundNumber={upcoming?.round_number ?? null}
+        tournamentName={upcoming?.tournament_name}
+        character={character}
+        countdownMs={null}
+        note={
+          upcoming
+            ? undefined
+            : "Todavía no hay una ronda para vos. La pantalla se actualiza sola cuando haya una."
+        }
+      />
+    );
+  }
+
+  // al iniciar la ronda, "RUN IT" deja lugar a la cuenta regresiva.
+  if (countingDown) {
+    return (
+      <WaitingScreen roundNumber={round.number} character={character} countdownMs={untilStart} />
+    );
+  }
+
+  // Posición en la tabla, con el orden del servidor.
+  const myIndex = liveStandings.findIndex((entry) => entry.participant_id === participantId);
+  const sampleResults = runResult?.mode === "samples" ? runResult : null;
+  const customResult = runResult?.mode === "custom" ? runResult.results[0] : undefined;
+
   return (
     <div className="space-y-5">
-      <header className="flex flex-wrap items-end justify-between gap-4 rounded-xl border border-border bg-card px-5 py-4">
-        <div>
+      {/* Barra: nombre del problema · posición en tabla · reloj. */}
+      <header className="grid grid-cols-1 items-center gap-3 rounded-xl border border-border bg-card px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:gap-8">
+        <div className="min-w-0">
           <p className="text-xs uppercase tracking-widest text-muted-foreground">
             {round.number ? `Ronda ${round.number} · ` : ""}cupo {round.capacity}
           </p>
-          <h1 className="mt-1 text-xl font-semibold text-foreground">{round.problem}</h1>
+          <h1 className="mt-1 truncate text-2xl font-semibold text-foreground">{round.problem}</h1>
         </div>
-        <p className="font-mono text-4xl font-semibold tabular-nums text-foreground">
-          {/* Durante la cuenta regresiva muestra el tiempo completo de la ronda. */}
-          {formatClock(countingDown && live ? live.endsAt - live.startsAt : remaining)}
+        <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+          <PixelIcon name="trophy" className="h-4 w-4 text-primary" />
+          Posición en tabla:{" "}
+          <span className="font-mono text-lg font-semibold tabular-nums text-foreground">
+            {myIndex >= 0 ? `#${myIndex + 1}` : "—"}
+          </span>
+          {liveStandings.length > 0 && (
+            <span className="font-mono tabular-nums"> / {liveStandings.length}</span>
+          )}
+        </p>
+        <p
+          className={`flex items-center gap-2 font-mono text-4xl font-semibold tabular-nums ${
+            !closed && remaining <= 10_000
+              ? "animate-run-it-hurry text-danger"
+              : !closed && remaining <= 60_000
+                ? "text-danger"
+                : "text-foreground"
+          }`}
+        >
+          <PixelIcon name="clock" className="h-7 w-7" />
+          {formatClock(remaining)}
         </p>
       </header>
-
-      {countingDown && (
-        <section
-          role="timer"
-          aria-live="assertive"
-          className="relative overflow-hidden rounded-xl border border-info bg-info-soft px-5 py-8 text-center text-info"
-        >
-          {/* Video de fondo */}
-          <video
-            autoPlay
-            muted
-            loop
-            playsInline
-            className="absolute inset-0 h-full w-full object-cover"
-          >
-            <source src="/Login.mp4" type="video/mp4" />
-          </video>
-          <div className="absolute inset-0 bg-black/40" />
-
-          <div className="relative z-10">
-            <p className="text-sm font-semibold uppercase tracking-widest">La ronda empieza en</p>
-            <p className="mt-2 font-mono text-8xl font-bold tabular-nums">
-              {/* Redondeo hacia arriba: el 00:00 coincide con el desbloqueo. */}
-              {formatClock(Math.ceil(untilStart / 1000) * 1000)}
-            </p>
-            <p className="mt-2 text-sm">Puedes escribir en cuanto llegue a cero.</p>
-          </div>
-        </section>
-      )}
 
       {joinError && (
         <section
@@ -520,87 +712,105 @@ export function ParticipantView() {
         </section>
       )}
 
+      {/* al cerrar la ronda el participante ve solo su puesto, no todo el ranking. */}
       {closed && (
-        <section role="status" className="rounded-xl border border-border bg-card px-5 py-4">
-          <p className="font-semibold text-foreground">Ronda finalizada</p>
-          {standings ? (
-            <ol className="mt-3 space-y-1 text-sm">
-              {standings.map((entry) => (
-                <li
-                  key={entry.participant_id}
-                  className={`flex items-center justify-between rounded-lg px-3 py-1.5 ${
-                    entry.participant_id === participantId ? "bg-info-soft font-medium" : ""
-                  }`}
-                >
-                  <span className="font-mono">
-                    {entry.rank}. {entry.name}
-                  </span>
-                  <span className={entry.advanced ? "text-success" : "text-danger"}>
-                    {entry.advanced ? "Clasificado" : "Eliminado"}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p className="mt-1 text-sm text-muted-foreground">
-              El ranking aparece cuando el servidor termine de calcularlo.
-            </p>
+        <section
+          role="status"
+          className={`relative overflow-hidden rounded-xl border px-5 py-6 ${
+            myStanding && !myStanding.advanced
+              ? "animate-run-it-shake border-danger bg-danger-soft"
+              : "border-primary bg-card"
+          }`}
+        >
+          {myStanding && !myStanding.advanced && (
+            <div
+              aria-hidden="true"
+              className="animate-run-it-flash pointer-events-none absolute inset-0 bg-danger"
+            />
           )}
+          <div className="relative flex flex-wrap items-center gap-6">
+            <Sprite
+              index={character}
+              state={myStanding?.advanced === false ? "out" : "run"}
+              scale={0.75}
+            />
+            <div className="min-w-0 flex-1">
+              {!myStanding ? (
+                <>
+                  <p className="font-semibold text-foreground">Ronda finalizada</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Tu puesto aparece cuando el servidor termine de calcularlo.
+                  </p>
+                </>
+              ) : myStanding.advanced ? (
+                <>
+                  <p className="animate-run-it-zoom flex items-center gap-2 text-3xl font-bold text-primary">
+                    <PixelIcon name="trophy" className="h-8 w-8" /> ¡Clasificaste!
+                  </p>
+                  <p className="mt-1 text-lg text-foreground">
+                    Quedaste en el puesto <b className="font-mono">#{myStanding.rank}</b> de{" "}
+                    {standings?.length ?? "—"}.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="animate-run-it-zoom flex items-center gap-2 text-3xl font-bold text-danger">
+                    <PixelIcon name="skull" className="h-8 w-8" /> Game Over
+                  </p>
+                  <p className="mt-1 text-lg text-foreground">
+                    Quedaste en el puesto <b className="font-mono">#{myStanding.rank}</b> de{" "}
+                    {standings?.length ?? "—"}. ¡Gracias por correr!
+                  </p>
+                </>
+              )}
+            </div>
+            {myStanding?.advanced && (
+              <button
+                type="button"
+                onClick={reload}
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+              >
+                Ir a la sala de espera de la ronda siguiente
+              </button>
+            )}
+          </div>
         </section>
       )}
 
-      <section className="rounded-xl border border-border bg-card px-5 py-4">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground">
-          Estado de la evaluación
-        </p>
-        <p className="mt-2 text-sm text-foreground">
-          Solo los casos de ejemplo son visibles; el resto de los casos de prueba es privado. El
-          veredicto aparecerá después de que Judge0 procese tu envío.
-        </p>
-      </section>
-
-      <div className="grid gap-5 lg:grid-cols-2">
-        <div className="space-y-5">
-          <section className="rounded-xl border border-border bg-card p-5">
-            <h2 className="text-sm font-semibold text-foreground">Enunciado</h2>
+      {/* Distribución: enunciado | IDE arriba, casos de prueba | envíos abajo. */}
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        <section className="flex max-h-[34rem] flex-col rounded-xl border border-border bg-card p-5 lg:order-1">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <PixelIcon name="flag" className="h-4 w-4 text-primary" /> Enunciado
+          </h2>
+          <div className="mt-2 min-h-0 flex-1 overflow-y-auto pr-1">
             <ProblemStatement statement={round.statement} />
-          </section>
+          </div>
+        </section>
 
-          {round.samples.length > 0 && (
-            <section className="rounded-xl border border-border bg-card p-5">
-              <h2 className="text-sm font-semibold text-foreground">Casos de ejemplo</h2>
-              <div className="mt-3 space-y-3">
-                {round.samples.map((sample, index) => (
-                  <div key={index} className="rounded-lg border border-border p-3">
-                    <p className="text-xs font-medium text-foreground">Ejemplo {index + 1}</p>
-                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                      <div>
-                        <p className="text-xs text-muted-foreground">Entrada</p>
-                        <pre className="mt-1 overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs text-foreground">
-                          {sample.stdin}
-                        </pre>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">Salida esperada</p>
-                        <pre className="mt-1 overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs text-foreground">
-                          {sample.expected}
-                        </pre>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-        </div>
-
-        <section className="overflow-hidden rounded-xl border border-border bg-editor">
-          <div className="flex items-center justify-between border-b border-editor-border px-4 py-2.5">
+        <section className="overflow-hidden rounded-xl border border-border bg-editor lg:order-2">
+          <div className="flex items-end justify-between gap-3 border-b border-editor-border pl-2 pr-4 pt-2">
+            {/* Pestaña del archivo, como en un IDE. */}
+            <div
+              role="tablist"
+              aria-label="Archivo"
+              className="flex items-center gap-2 rounded-t-md border border-b-0 border-editor-border bg-editor px-3 py-1.5"
+            >
+              <span aria-hidden="true" className="h-2 w-2 rounded-full bg-primary" />
+              <span
+                role="tab"
+                aria-selected="true"
+                className="font-mono text-xs text-editor-foreground"
+              >
+                {LANGUAGES[language].file}
+              </span>
+            </div>
             <select
               value={language}
-              onChange={(event) => setLanguage(event.target.value as Language)}
+              onChange={(event) => changeLanguage(event.target.value as Language)}
               disabled={locked}
-              className="rounded-md border border-editor-border bg-editor px-2 py-1 font-mono text-xs text-editor-foreground outline-none"
+              aria-label="Lenguaje"
+              className="mb-1.5 rounded-md border border-editor-border bg-editor px-2 py-1 font-mono text-xs text-editor-foreground outline-none"
             >
               {(Object.keys(LANGUAGES) as Language[]).map((key) => (
                 <option key={key} value={key}>
@@ -608,33 +818,41 @@ export function ParticipantView() {
                 </option>
               ))}
             </select>
-            <span className="font-mono text-xs text-editor-muted">{LANGUAGES[language].file}</span>
           </div>
-          <textarea
+          <CodeEditor
             value={code}
-            onChange={(e) => setCode(e.target.value)}
-            placeholder={PLACEHOLDERS[language]}
-            spellCheck={false}
-            disabled={locked}
-            className="h-96 w-full resize-none bg-editor px-4 py-3 font-mono text-sm text-editor-foreground outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            onChange={(value) => setCode(value)}
+            language={language}
+            readOnly={locked}
+            onRunShortcut={() => void run()}
           />
-          <div className="flex justify-end gap-3 border-t border-editor-border px-4 py-3">
-            <button
-              type="button"
-              onClick={() => setMessage("Prueba local pendiente de test cases del problema.")}
-              disabled={locked}
-              className="rounded-lg border border-editor-border px-4 py-2 text-sm font-medium text-editor-foreground transition-colors hover:bg-white/5 disabled:opacity-50"
-            >
-              Probar
-            </button>
-            <button
-              type="button"
-              onClick={() => void send()}
-              disabled={sending || locked || !inscribed}
-              className="rounded-lg bg-info px-4 py-2 text-sm font-medium text-info-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-            >
-              Enviar solución
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-editor-border px-4 py-3">
+            <p className="text-xs text-editor-muted">
+              Probar no cuenta como envío · Ctrl/Cmd + Enter
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => void run()}
+                disabled={running || locked || !inscribed}
+                className="rounded-lg border border-editor-border px-4 py-2 text-sm font-medium text-editor-foreground transition-colors hover:bg-white/5 disabled:opacity-50"
+              >
+                <span className="flex items-center gap-1.5">
+                  <PixelIcon name="play" className="h-4 w-4" />
+                  {running ? "Probando…" : "Probar"}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => void send()}
+                disabled={sending || locked || !inscribed}
+                className="rounded-lg bg-info px-4 py-2 text-sm font-medium text-info-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+              >
+                <span className="flex items-center gap-1.5">
+                  <PixelIcon name="zap" className="h-4 w-4" /> Enviar solución
+                </span>
+              </button>
+            </div>
           </div>
           {message && (
             <p className="border-t border-editor-border px-4 py-2 text-xs text-editor-muted">
@@ -642,76 +860,233 @@ export function ParticipantView() {
             </p>
           )}
         </section>
-      </div>
 
-      {!closed && liveStandings.length > 0 && (
-        <section className="rounded-xl border border-border bg-card p-5">
-          <h2 className="text-sm font-semibold text-foreground">Posiciones</h2>
-          <ol className="mt-3 space-y-1 text-sm">
-            {liveStandings.map((entry, index) => (
-              <li
-                key={entry.participant_id}
-                className={`flex items-center justify-between rounded-lg px-3 py-1.5 ${
-                  entry.participant_id === participantId ? "bg-info-soft font-medium" : ""
-                }`}
-              >
-                <span className="font-mono">
-                  {index + 1}. {entry.display_name}
-                </span>
-                <span
-                  className={`font-mono tabular-nums ${entry.solved_at ? "text-success" : "text-muted-foreground"}`}
+        {/* Casos de prueba: los ejemplos, con el resultado de "Probar" al lado. */}
+        <section className="rounded-xl border border-border bg-card p-5 lg:order-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <PixelIcon name="check" className="h-4 w-4 text-primary" /> Casos de prueba
+            </h2>
+            <div
+              role="tablist"
+              aria-label="Casos de prueba"
+              className="flex gap-1 rounded-lg bg-muted p-1"
+            >
+              {(
+                [
+                  ["samples", `Ejemplos (${round.samples.length})`],
+                  ["custom", "Entrada propia"],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={runTab === key}
+                  onClick={() => setRunTab(key)}
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium ${
+                    runTab === key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"
+                  }`}
                 >
-                  {entry.solved_at
-                    ? `Resuelto · ${formatClock((entry.total_time_seconds ?? 0) * 1000)}`
-                    : `${Math.round(Number(entry.best_pass_percentage))}%`}
-                </span>
-              </li>
-            ))}
-          </ol>
-        </section>
-      )}
-
-      <section className="rounded-xl border border-border bg-card p-5">
-        <h2 className="text-sm font-semibold text-foreground">Tus envíos</h2>
-        {history.length === 0 ? (
-          <p className="mt-2 text-xs text-muted-foreground">Todavía no enviaste nada.</p>
-        ) : (
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <tr>
-                  <th className="pb-2 font-medium">Hora</th>
-                  <th className="pb-2 font-medium">Lenguaje</th>
-                  <th className="pb-2 font-medium">Estado</th>
-                  <th className="pb-2 text-right font-medium">Casos</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {history.map((row) => (
-                  <tr key={row.id}>
-                    <td className="py-2 font-mono tabular-nums text-muted-foreground">
-                      {formatTime(row.submitted_at)}
-                    </td>
-                    <td className="py-2">
-                      {LANGUAGES[row.language as Language]?.label ?? row.language}
-                    </td>
-                    <td
-                      className={`py-2 font-medium ${VERDICT_TONE_CLASS[verdictTone(row.verdict)]}`}
-                    >
-                      {verdictLabel(row.verdict)}
-                    </td>
-                    <td className="py-2 text-right font-mono tabular-nums">
-                      {row.test_cases_total
-                        ? `${row.test_cases_passed}/${row.test_cases_total}`
-                        : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
-        )}
-      </section>
+          <div className="mt-3 max-h-80 space-y-3 overflow-y-auto pr-1 text-xs">
+            {running && (
+              <p className="flex items-center gap-2 text-muted-foreground">
+                <span className="run-it-spinner" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                  <i />
+                  <i />
+                  <i />
+                  <i />
+                  <i />
+                  <i />
+                </span>
+                Ejecutando en el juez…
+              </p>
+            )}
+            {runError && <p className="text-danger">{runError}</p>}
+            {runTab === "samples" && (
+              <>
+                {sampleResults && (
+                  <p
+                    className={`font-semibold ${
+                      sampleResults.passed === sampleResults.total ? "text-success" : "text-danger"
+                    }`}
+                  >
+                    {sampleResults.passed}/{sampleResults.total} ejemplos correctos
+                  </p>
+                )}
+                {round.samples.length === 0 && (
+                  <p className="text-muted-foreground">
+                    Este problema no tiene casos de ejemplo. Usa una entrada propia.
+                  </p>
+                )}
+                {round.samples.map((sample, index) => {
+                  const result = sampleResults?.results[index];
+                  return (
+                    <div key={index} className="rounded-lg border border-border p-3">
+                      <p className="flex items-center justify-between gap-2 font-medium text-foreground">
+                        Ejemplo {index + 1}
+                        {result && (
+                          <span className={result.passed ? "text-success" : "text-danger"}>
+                            {result.passed ? "Correcto" : verdictLabel(result.status)}
+                            {result.time ? ` · ${result.time} s` : ""}
+                          </span>
+                        )}
+                      </p>
+                      <div
+                        className={`mt-2 grid gap-2 ${result ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}
+                      >
+                        <div>
+                          <p className="text-muted-foreground">Entrada</p>
+                          <pre className="mt-1 overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-foreground">
+                            {sample.stdin}
+                          </pre>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Salida esperada</p>
+                          <pre className="mt-1 overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-foreground">
+                            {sample.expected}
+                          </pre>
+                        </div>
+                        {result && (
+                          <div>
+                            <p className="text-muted-foreground">Tu salida</p>
+                            <pre
+                              className={`mt-1 overflow-x-auto rounded-md px-3 py-2 font-mono ${
+                                result.passed
+                                  ? "bg-success-soft text-success"
+                                  : "bg-danger-soft text-danger"
+                              }`}
+                            >
+                              {result.stdout || "(vacía)"}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                      {(result?.compile_output || result?.stderr) && (
+                        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded-md bg-danger-soft px-3 py-2 font-mono text-danger">
+                          {result.compile_output || result.stderr}
+                        </pre>
+                      )}
+                    </div>
+                  );
+                })}
+              </>
+            )}
+            {runTab === "custom" && (
+              <>
+                <label className="block">
+                  <span className="text-muted-foreground">Entrada (stdin)</span>
+                  <textarea
+                    value={customInput}
+                    onChange={(event) => setCustomInput(event.target.value)}
+                    spellCheck={false}
+                    rows={4}
+                    placeholder="Escribe aquí la entrada que leerá tu programa"
+                    className="mt-1 w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-xs text-foreground outline-none focus:border-ring"
+                  />
+                </label>
+                {customResult && (
+                  <div className="rounded-lg border border-border p-3">
+                    <p className="flex justify-between font-medium text-foreground">
+                      Tu salida
+                      <span className="text-muted-foreground">
+                        {verdictLabel(customResult.status)}
+                        {customResult.time ? ` · ${customResult.time} s` : ""}
+                      </span>
+                    </p>
+                    <pre className="mt-1 overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-foreground">
+                      {customResult.stdout || "(vacía)"}
+                    </pre>
+                    {(customResult.compile_output || customResult.stderr) && (
+                      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded-md bg-danger-soft px-3 py-2 font-mono text-danger">
+                        {customResult.compile_output || customResult.stderr}
+                      </pre>
+                    )}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void run("custom")}
+                  disabled={running || locked || !inscribed}
+                  className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                >
+                  Probar con esta entrada
+                </button>
+              </>
+            )}
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-border bg-card p-5 lg:order-4">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <PixelIcon name="zap" className="h-4 w-4 text-primary" /> Tus envíos
+          </h2>
+          {moment && (
+            <p
+              key={moment.key}
+              className={`animate-run-it-rise mt-2 flex items-center gap-2 text-sm font-bold ${
+                moment.kind === "fail" ? "text-danger" : "text-success"
+              }`}
+            >
+              <PixelIcon
+                name={
+                  moment.kind === "fail" ? "close" : moment.kind === "solved" ? "trophy" : "check"
+                }
+                className="h-4 w-4"
+              />
+              {moment.text}
+            </p>
+          )}
+          {history.length === 0 ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Todavía no enviaste nada. Cada envío fallido suma 30 s de penalización.
+            </p>
+          ) : (
+            <div className="mt-3 max-h-80 overflow-auto">
+              <table className="w-full text-sm">
+                <thead className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th className="pb-2 font-medium">Hora</th>
+                    <th className="pb-2 font-medium">Lenguaje</th>
+                    <th className="pb-2 font-medium">Estado</th>
+                    <th className="pb-2 text-right font-medium">Casos</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {history.map((row) => (
+                    <tr key={row.id}>
+                      <td className="py-2 font-mono tabular-nums text-muted-foreground">
+                        {formatTime(row.submitted_at)}
+                      </td>
+                      <td className="py-2">
+                        {LANGUAGES[row.language as Language]?.label ?? row.language}
+                      </td>
+                      <td
+                        className={`py-2 font-medium ${VERDICT_TONE_CLASS[verdictTone(row.verdict)]}`}
+                      >
+                        {verdictLabel(row.verdict)}
+                      </td>
+                      <td className="py-2 text-right font-mono tabular-nums">
+                        {row.test_cases_total
+                          ? `${row.test_cases_passed}/${row.test_cases_total}`
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   );
 }

@@ -13,6 +13,10 @@ import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { clearSession, getSession, type Session } from "../lib/session";
 import { logout } from "../lib/api";
+import { PixelIcon } from "../components/PixelIcon";
+import { applyPalette, PALETTE_BOOT_SCRIPT, PALETTES, storedPalette } from "../lib/palette";
+import { applyPixelCursor } from "../lib/pixel-cursor";
+import { onSoundChange, setSoundOn, soundOn } from "../lib/sfx";
 
 function NotFoundComponent() {
   return (
@@ -104,10 +108,12 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {
         rel: "stylesheet",
-        href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap",
+        href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Pixelify+Sans:wght@400;500;600;700&display=swap",
       },
       { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
     ],
+    // La paleta elegida se aplica antes del primer pintado (ver lib/palette.ts).
+    scripts: [{ children: PALETTE_BOOT_SCRIPT }],
   }),
   shellComponent: RootShell,
   component: RootComponent,
@@ -117,7 +123,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootShell({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="es" suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
@@ -143,6 +149,47 @@ function RootComponent() {
   );
 }
 
+// Paleta y sonido: preferencias de cada usuario, guardadas en su navegador.
+function Preferences() {
+  const [palette, setPalette] = useState("");
+  const [sound, setSound] = useState(false);
+  useEffect(() => {
+    setPalette(storedPalette());
+    setSound(soundOn());
+    applyPixelCursor();
+    return onSoundChange(() => setSound(soundOn()));
+  }, []);
+  return (
+    <div className="ml-auto flex items-center gap-3 text-sm">
+      <label className="flex items-center gap-2 text-muted-foreground">
+        Paleta
+        <select
+          value={palette}
+          onChange={(event) => {
+            setPalette(event.target.value);
+            applyPalette(event.target.value);
+          }}
+          className="rounded-md border border-input bg-background px-2 py-1 text-sm text-foreground outline-none focus:border-ring"
+        >
+          {PALETTES.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button
+        type="button"
+        onClick={() => setSoundOn(!sound)}
+        aria-pressed={sound}
+        className="rounded-md border border-border px-2 py-1 text-muted-foreground hover:text-foreground"
+      >
+        Sonido: {sound ? "sí" : "no"}
+      </button>
+    </div>
+  );
+}
+
 function RoleNavigation() {
   const navigate = useRouter();
   const [session, setSession] = useState<Session | null>(null);
@@ -155,38 +202,57 @@ function RoleNavigation() {
 
   return (
     <header className="border-b border-border bg-card">
-      <div className="mx-auto flex max-w-7xl items-center gap-6 px-5 py-3">
+      <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3">
         <Link
           to={session.role === "admin" ? "/admin" : "/participante"}
-          className="font-mono text-sm font-semibold tracking-tight text-foreground"
+          className="text-sm text-primary"
+          style={{ fontFamily: "'Press Start 2P', ui-monospace, monospace" }}
         >
           Run&nbsp;It
         </Link>
         <nav className="flex items-center gap-4 text-sm text-muted-foreground">
           {session.role === "participant" ? (
-            <Link to="/participante" activeProps={{ className: "text-foreground font-medium" }}>
-              Mi carrera
+            <Link
+              to="/participante"
+              className="flex items-center gap-1.5"
+              activeProps={{ className: "text-foreground font-medium" }}
+            >
+              <PixelIcon name="flag" className="h-4 w-4 text-primary" /> Mi carrera
             </Link>
           ) : (
-            <Link to="/admin" activeProps={{ className: "text-foreground font-medium" }}>
-              Administración
-            </Link>
+            <>
+              <Link
+                to="/admin"
+                className="flex items-center gap-1.5"
+                activeProps={{ className: "text-foreground font-medium" }}
+              >
+                <PixelIcon name="gamepad" className="h-4 w-4 text-primary" /> Administración
+              </Link>
+              <Link
+                to="/pista"
+                className="flex items-center gap-1.5"
+                activeProps={{ className: "text-foreground font-medium" }}
+              >
+                <PixelIcon name="flag" className="h-4 w-4 text-primary" /> Pista
+              </Link>
+            </>
           )}
-          <button
-            type="button"
-            className="ml-auto text-muted-foreground hover:text-foreground"
-            onClick={() => {
-              void logout()
-                .catch(() => undefined)
-                .finally(() => {
-                  clearSession();
-                  void navigate.navigate({ to: "/login" });
-                });
-            }}
-          >
-            Salir
-          </button>
         </nav>
+        <Preferences />
+        <button
+          type="button"
+          className="text-sm text-muted-foreground hover:text-foreground"
+          onClick={() => {
+            void logout()
+              .catch(() => undefined)
+              .finally(() => {
+                clearSession();
+                void navigate.navigate({ to: "/login" });
+              });
+          }}
+        >
+          Salir
+        </button>
       </div>
     </header>
   );

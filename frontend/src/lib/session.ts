@@ -18,7 +18,8 @@ const CHARACTER_KEY_PREFIX = "run-it-character:";
 // Clave aparte: el personaje guardado no alcanza para saber si ya eligió,
 // porque 0 (ausente) y 0 (eligió Aurora) son el mismo valor.
 const CHARACTER_CONFIRMED_KEY_PREFIX = "run-it-character-confirmed:";
-export const CHARACTER_COUNT = 3;
+// un índice por personaje de src/lib/characters.ts.
+export const CHARACTER_COUNT = 48;
 
 export function getSession(): Session | null {
   if (typeof window === "undefined") return null;
