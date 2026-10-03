@@ -5,6 +5,7 @@ import { parseCodeforcesZip } from "@/lib/test-case-parser";
 import { ProblemStatement } from "@/components/ProblemStatement";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RowCheckbox, SelectAllCheckbox } from "@/components/BulkSelect";
+import { CeremonyPanel } from "@/components/CeremonyPanel";
 import { PixelIcon, type PixelIconName } from "@/components/PixelIcon";
 import { Sprite } from "@/components/Sprite";
 import {
@@ -2043,6 +2044,8 @@ export function AdminPanel({
             <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
               <PixelIcon name="trophy" className="h-4 w-4 text-primary" /> Progreso del torneo
             </h3>
+            {/* Torneo terminado: ganador y botones de la ceremonia de premios. */}
+            <CeremonyPanel />
             {!progressTournamentId ? (
               <p className="mt-4 text-sm text-muted-foreground">
                 Elige un torneo o inicia una ronda para ver su progreso.

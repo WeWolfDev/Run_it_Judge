@@ -18,6 +18,8 @@ import { Sprite } from "@/components/Sprite";
 import { confetti } from "@/lib/confetti";
 import { play } from "@/lib/sfx";
 import { ProblemStatement } from "@/components/ProblemStatement";
+import { Ceremony } from "@/components/Ceremony";
+import { useCeremony } from "@/hooks/use-ceremony";
 import {
   getActiveRound,
   getMySubmissions,
@@ -471,6 +473,9 @@ export function ParticipantView() {
       play("over");
     }
   }, [myStanding, round]);
+  // Al terminar el torneo, la ceremonia de premios reemplaza la sala de espera
+  // y el resultado de la última ronda (se ve igual que en la pista).
+  const ceremony = useCeremony();
   const paused = Boolean(live?.paused) && !closed;
   const countingDown = live?.status === "active" && untilStart > 0;
   // Bloqueo real: deja el editor en solo lectura, no solo el botón. El texto se conserva.
@@ -620,6 +625,10 @@ export function ParticipantView() {
   }
 
   const character = getSelectedCharacter(username);
+
+  if (ceremony && (load === "none" || !round || closed)) {
+    return <Ceremony ceremony={ceremony} compact />;
+  }
 
   // sala de espera (CRT) hasta que el organizador inicia la ronda.
   if (load === "none" || !round) {

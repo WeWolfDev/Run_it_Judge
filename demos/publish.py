@@ -7,7 +7,7 @@ demo = sys.argv[1]
 here = os.path.dirname(os.path.abspath(__file__))
 dist = os.path.join(here, "dist", demo)
 html = open(os.path.join(dist, "index.html")).read()
-titles = {"admin": "Panel Admin Run It", "participante": "Vista Participante Run It", "pista": "Pista Run It", "login": "Login Run It"}
+titles = {"admin": "Panel Admin Run It", "participante": "Vista Participante Run It", "pista": "Pista Run It", "login": "Login Run It", "proyeccion": "Pista proyectada Run It", "premios": "Ceremonia de premios Run It"}
 
 css_files = re.findall(r'<link rel="stylesheet" crossorigin href="\./(assets/[^"]+\.css)">', html)
 css = "".join(open(os.path.join(dist, f)).read() for f in css_files)
@@ -27,12 +27,13 @@ for name in os.listdir(os.path.join(dist, "assets")):
     path = os.path.join(dist, "assets", name)
     js = open(path, encoding="utf8").read()
     for item in public:
-        for quote in ('"', "'", "`"):
-            needle = f"{quote}/{item}{quote}"
+        # Rutas entre comillas o dentro de url(...) en estilos puestos desde el JS.
+        for left, right in (('"', '"'), ("'", "'"), ("`", "`"), ("url(", ")")):
+            needle = f"{left}/{item}{right}"
             if needle in js:
-                js = js.replace(needle, f"{quote}./{item}{quote}")
+                js = js.replace(needle, f"{left}./{item}{right}")
                 used_public.add(item)
-            if f"{quote}./{item}{quote}" in js:
+            if f"{left}./{item}{right}" in js:
                 used_public.add(item)
     # El minificador deja U+FFFD literal; la publicación lo rechaza.
     js = js.replace("�", "\\ufffd")

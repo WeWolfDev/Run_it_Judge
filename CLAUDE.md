@@ -86,6 +86,18 @@ entonces `/start` las rechaza por falta de roster.
 ronda pendiente que el participante espera; se inscribe en la primera ronda
 antes de que empiece (el join ya admite `pending`).
 
+**Fin del torneo y premios.** La última ronda es la que deja un solo
+clasificado (normalmente cupo 1): `closeRound` marca al participante `winner`,
+el torneo `finished` y emite `ceremony:update`. La ceremonia (`awards.js`,
+`GET /public/ceremony`) la ven `/pista` y la pantalla del participante; el admin
+la avanza desde "Progreso del torneo" (`POST /tournaments/:id/ceremony/next`,
+`/reset`). `tournaments.ceremony_step`: `NULL` ganador, `0` presentación, `1..N`
+premio, `N+1` fin. El ganador de cada premio solo viaja cuando ya se mostró, y la
+revelación se cuenta desde `ceremony_updated_at` (quien entra tarde la ve
+revelada). Un premio sin candidato queda desierto. "Compilador O(1) Humano" usa
+`submissions.exec_ms` (el mayor tiempo de Judge0 entre los casos): los envíos
+anteriores a la columna no compiten.
+
 **Quién entra a una ronda.** En la primera ronda de un torneo el participante
 se inscribe solo (paso 5). En las siguientes solo entra quien está en el roster
 que armó el paso 8. El criterio es uno solo, `roundMember()` (roster +
@@ -205,7 +217,7 @@ sudo env RUN_IT_API_URL=https://<host> E2E_ALLOW_REMOTE=1 node deploy/e2e-test.c
 ```text
 frontend/            App TanStack Start
   src/routes/        Rutas: login, admin, participante, pista, reglas, __root
-  src/components/    AdminPanel, RaceTrack, ParticipantView, ui/ (shadcn)
+  src/components/    AdminPanel, ProjectedRace (pista), ParticipantView, ui/ (shadcn)
   src/lib/api.ts     Cliente HTTP. VITE_API_URL="" = mismo origen
   src/lib/runit.ts   Tipos de eventos y cliente de Socket.io
   vite.config.ts     Wrapper de @lovable.dev/vite-tanstack-config

@@ -670,6 +670,45 @@ export async function getUpcomingRound() {
   } | null>;
 }
 
+export type CeremonyAward = {
+  id: string;
+  title: string;
+  description: string;
+  // Solo viaja cuando el premio ya se mostró.
+  winner?: { participant_id: string; display_name: string; character: number };
+  detail?: string;
+};
+
+export type Ceremony = {
+  tournament: { id: string; name: string };
+  /** null = pantalla del ganador, 0 = presentación, 1..N = premio N, N + 1 = fin. */
+  step: number | null;
+  /** Cuándo avanzó el admin: la revelación del premio se cuenta desde ahí. */
+  updated_at: string | null;
+  champion: { participant_id: string; display_name: string; character: number } | null;
+  awards: CeremonyAward[];
+};
+
+// Ceremonia del último torneo, si ya terminó (pista y participantes).
+export async function getCeremony() {
+  const response = await fetch(`${API_URL}/public/ceremony`);
+  if (!response.ok) throw new Error("No se pudo cargar la ceremonia");
+  return response.json() as Promise<Ceremony | null>;
+}
+
+async function ceremonyAction(tournamentId: string, action: "next" | "reset") {
+  const response = await fetch(`${API_URL}/tournaments/${tournamentId}/ceremony/${action}`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudo avanzar la ceremonia");
+  return body as Ceremony;
+}
+
+export const advanceCeremony = (tournamentId: string) => ceremonyAction(tournamentId, "next");
+export const resetCeremony = (tournamentId: string) => ceremonyAction(tournamentId, "reset");
+
 export async function getActiveRound() {
   const response = await fetch(`${API_URL}/public/rounds/active`);
   if (!response.ok) throw new Error("No se pudo cargar la ronda activa");

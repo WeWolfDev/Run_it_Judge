@@ -35,7 +35,7 @@ Run It es un torneo de programación por rondas, con una pista pública en tiemp
 - `/participante`: vista de participante protegida.
 - `/pista`: vista pública para espectadores, sin login.
 - `/reglas`: reglas públicas.
-- `RaceTrack`, `AdminPanel` y `ParticipantView`.
+- `ProjectedRace` (la pista de `/pista`), `AdminPanel` y `ParticipantView`.
 - Socket.io en produccion mediante `VITE_SOCKET_URL=/`; el feed mock solo debe usarse en desarrollo.
 
 ## Requisitos

@@ -1,0 +1,13 @@
+Sprites de la pista proyectada
+
+Recortes de "Pixel Platformer" (Kenney, tilemap_packed.png, tiles de 18 px):
+  flag.png   bandera, 2 cuadros (fila 5, col. 11-12)
+  coin.png   moneda (fila 7, col. 11)
+  digits.png dígitos 0-9 (fila 8, col. 10-19)
+
+Autor: Kenney (www.kenney.nl)
+Fuente: https://kenney.nl/assets/pixel-platformer
+Licencia: CC0 1.0 (dominio público). No exige atribución; se deja el crédito
+por cortesía.
+
+Las medallas se dibujan por código (src/components/ProjectedTrack.tsx), son propias.
