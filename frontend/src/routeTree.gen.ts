@@ -14,7 +14,6 @@ import { Route as AdminRouteImport } from './routes/admin'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ParticipanteRouteImport } from './routes/participante'
 import { Route as PistaRouteImport } from './routes/pista'
-import { Route as PreviewRouteImport } from './routes/preview'
 import { Route as ReglasRouteImport } from './routes/reglas'
 
 const IndexRoute = IndexRouteImport.update({
@@ -42,11 +41,6 @@ const PistaRoute = PistaRouteImport.update({
   path: '/pista',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PreviewRoute = PreviewRouteImport.update({
-  id: '/preview',
-  path: '/preview',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ReglasRoute = ReglasRouteImport.update({
   id: '/reglas',
   path: '/reglas',
@@ -59,7 +53,6 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/participante': typeof ParticipanteRoute
   '/pista': typeof PistaRoute
-  '/preview': typeof PreviewRoute
   '/reglas': typeof ReglasRoute
 }
 export interface FileRoutesByTo {
@@ -68,7 +61,6 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/participante': typeof ParticipanteRoute
   '/pista': typeof PistaRoute
-  '/preview': typeof PreviewRoute
   '/reglas': typeof ReglasRoute
 }
 export interface FileRoutesById {
@@ -78,28 +70,13 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/participante': typeof ParticipanteRoute
   '/pista': typeof PistaRoute
-  '/preview': typeof PreviewRoute
   '/reglas': typeof ReglasRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/'
-    | '/admin'
-    | '/login'
-    | '/participante'
-    | '/pista'
-    | '/preview'
-    | '/reglas'
+  fullPaths: '/' | '/admin' | '/login' | '/participante' | '/pista' | '/reglas'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/admin'
-    | '/login'
-    | '/participante'
-    | '/pista'
-    | '/preview'
-    | '/reglas'
+  to: '/' | '/admin' | '/login' | '/participante' | '/pista' | '/reglas'
   id:
     | '__root__'
     | '/'
@@ -107,7 +84,6 @@ export interface FileRouteTypes {
     | '/login'
     | '/participante'
     | '/pista'
-    | '/preview'
     | '/reglas'
   fileRoutesById: FileRoutesById
 }
@@ -117,7 +93,6 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   ParticipanteRoute: typeof ParticipanteRoute
   PistaRoute: typeof PistaRoute
-  PreviewRoute: typeof PreviewRoute
   ReglasRoute: typeof ReglasRoute
 }
 
@@ -158,13 +133,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PistaRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/preview': {
-      id: '/preview'
-      path: '/preview'
-      fullPath: '/preview'
-      preLoaderRoute: typeof PreviewRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/reglas': {
       id: '/reglas'
       path: '/reglas'
@@ -181,7 +149,6 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   ParticipanteRoute: ParticipanteRoute,
   PistaRoute: PistaRoute,
-  PreviewRoute: PreviewRoute,
   ReglasRoute: ReglasRoute,
 }
 export const routeTree = rootRouteImport
