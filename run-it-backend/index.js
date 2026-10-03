@@ -16,7 +16,9 @@ const crypto = require('node:crypto');
 const cors = require('@fastify/cors');
 const { Server } = require('socket.io');
 const { initDb, query, withTransaction } = require('./db');
-const { submissionQueue, startSubmissionWorker } = require('./queue');
+const { submissionQueue, startSubmissionWorker, judge0Slots } = require('./queue');
+const { createSubmission, waitForSubmission } = require('./judge0-client');
+const { createLimiter, runTestCases } = require('./case-runner');
 const {
   setSession,
   getSession,
@@ -26,6 +28,7 @@ const {
 } = require('./session-store');
 
 const submissionRate = new Map();
+const runRate = new Map();
 const authFailures = new Map();
 const authFailureWindowMs = Number(process.env.AUTH_FAILURE_WINDOW_MS || 15 * 60 * 1000);
 // Dos limites distintos porqueprotegen cosas distintas. La identidad es el
@@ -131,8 +134,9 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:8080,ht
 const ACCESS_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const ACCESS_CODE_LENGTH = 6;
 const ACCESS_CODE_MAX_COUNT = 500;
-// Igual que CHARACTER_COUNT de frontend/src/lib/session.ts y silk-{0..9} de styles.css.
-const CHARACTER_COUNT = 10;
+// Igual que CHARACTER_COUNT de frontend/src/lib/session.ts: un índice por
+// personaje de frontend/src/lib/characters.ts.
+const CHARACTER_COUNT = 48;
 // Cuenta regresiva entre POST /rounds/:id/start y el primer envío aceptado.
 const ROUND_COUNTDOWN_SECONDS = 10;
 
@@ -681,7 +685,9 @@ function normalizeTestCases(testCases) {
 }
 
 // Validación de PUT /rounds/:id que no necesita la base. null = no cambia.
-function validateRoundEdit({ problemId, capacity, timeLimitSeconds }) {
+const DIFFICULTIES = ['easy', 'medium', 'hard'];
+
+function validateRoundEdit({ problemId, capacity, timeLimitSeconds, difficulty = null }) {
 	if (problemId !== null && (typeof problemId !== 'string' || !/^[0-9a-f-]{36}$/i.test(problemId))) {
 		return 'problemId no es válido';
 	}
@@ -692,8 +698,36 @@ function validateRoundEdit({ problemId, capacity, timeLimitSeconds }) {
 		&& (!Number.isInteger(timeLimitSeconds) || timeLimitSeconds < 10 || timeLimitSeconds > 86400)) {
 		return 'timeLimitSeconds debe estar entre 10 y 86400';
 	}
-	if (problemId === null && capacity === null && timeLimitSeconds === null) {
-		return 'Indicá al menos problemId, capacity o timeLimitSeconds';
+	if (difficulty !== null && !DIFFICULTIES.includes(difficulty)) {
+		return 'difficulty debe ser easy, medium o hard';
+	}
+	if (problemId === null && capacity === null && timeLimitSeconds === null && difficulty === null) {
+		return 'Indicá al menos problemId, capacity, timeLimitSeconds o difficulty';
+	}
+	return null
+}
+
+// Plan de rondas de PUT /tournaments/:id/plan, sin la base. Cada ronda trae su
+// número, dificultad, problema, cupo y tiempo. null = válido.
+function validateRoundPlan(rounds) {
+	if (!Array.isArray(rounds) || rounds.length === 0) return 'El plan no tiene rondas';
+	if (rounds.length > 50) return 'El plan admite hasta 50 rondas';
+	const numbers = new Set();
+	for (const round of rounds) {
+		const number = round?.round_number;
+		if (!Number.isInteger(number) || number < 1) return 'round_number debe ser un entero desde 1';
+		if (numbers.has(number)) return `La ronda ${number} está repetida en el plan`;
+		numbers.add(number);
+		if (!DIFFICULTIES.includes(round.difficulty)) return `Ronda ${number}: difficulty debe ser easy, medium o hard`;
+		if (typeof round.problemId !== 'string' || !/^[0-9a-f-]{36}$/i.test(round.problemId)) {
+			return `Ronda ${number}: elegí un problema`;
+		}
+		if (!Number.isInteger(round.capacity) || round.capacity < 1) {
+			return `Ronda ${number}: el cupo debe ser un entero positivo`;
+		}
+		if (!Number.isInteger(round.timeLimitSeconds) || round.timeLimitSeconds < 10 || round.timeLimitSeconds > 86400) {
+			return `Ronda ${number}: el tiempo debe estar entre 10 segundos y 24 horas`;
+		}
 	}
 	return null
 }
@@ -1096,6 +1130,9 @@ fastify.get('/access-codes', async (request, reply) => {
 		 FROM access_codes ac
 		 LEFT JOIN tournaments t ON t.id = ac.tournament_id
 		 WHERE ($1::uuid IS NULL OR ac.tournament_id = $1)
+		   -- Los invalidados y los vencidos sin usar ya no sirven: no se listan.
+		   AND ac.status <> 'expired'
+		   AND NOT (ac.status = 'unused' AND ac.expires_at IS NOT NULL AND ac.expires_at <= now())
 		 ORDER BY ac.created_at DESC
 		 LIMIT 500`,
 		[tournamentId],
@@ -1243,6 +1280,80 @@ fastify.get('/tournaments/:id/rounds', async (request, reply) => {
 	});
 });
 
+// Planifica todas las rondas de un torneo de una vez. Crea las que faltan y
+// actualiza las pendientes; las que ya empezaron no se tocan. Una ronda
+// pendiente que ya no está en el plan se borra si todavía no tiene inscriptos.
+// Las rondas siguientes quedan con el roster vacío: lo llena "Avanzar" con los
+// clasificados (POST /rounds/:id/next), y hasta entonces /start no las inicia.
+fastify.put('/tournaments/:id/plan', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const rounds = request.body?.rounds;
+	const invalid = validateRoundPlan(rounds);
+	if (invalid) return reply.code(400).send({ error: invalid });
+	let outcome;
+	try {
+		outcome = await withTransaction(async (client) => {
+			const tournament = await client.query('SELECT status FROM tournaments WHERE id = $1 FOR UPDATE', [request.params.id]);
+			if (!tournament.rowCount) return { status: 404, error: 'El torneo no existe' };
+			if (tournament.rows[0].status === 'finished') return { status: 409, error: 'El torneo ya terminó' };
+			const existing = await client.query(
+				`SELECT r.id, r.round_number, r.status,
+				        (SELECT count(*)::int FROM round_participants rp WHERE rp.round_id = r.id) AS enrolled
+				 FROM rounds r WHERE r.tournament_id = $1 FOR UPDATE`,
+				[request.params.id],
+			);
+			const byNumber = new Map(existing.rows.map((row) => [Number(row.round_number), row]));
+			// Las jugadas siguen; el plan se completa alrededor de ellas sin huecos.
+			const numbers = new Set([
+				...existing.rows.filter((row) => row.status !== 'pending').map((row) => Number(row.round_number)),
+				...rounds.map((round) => round.round_number),
+			]);
+			for (let n = 1; n <= numbers.size; n += 1) {
+				if (!numbers.has(n)) return { status: 400, error: `Falta la ronda ${n}: las rondas van de 1 en adelante, sin huecos` };
+			}
+			for (const round of rounds) {
+				const current = byNumber.get(round.round_number);
+				if (current && current.status !== 'pending') continue;
+				if (current && current.enrolled > 0 && round.round_number > 1 && round.capacity > current.enrolled) {
+					return { status: 409, error: `Ronda ${round.round_number}: el cupo no puede ser mayor que los ${current.enrolled} inscriptos` };
+				}
+				if (current) {
+					await client.query(
+						`UPDATE rounds SET problem_id = $1, capacity = $2, time_limit_seconds = $3, difficulty = $4
+						 WHERE id = $5 AND status = 'pending'`,
+						[round.problemId, round.capacity, round.timeLimitSeconds, round.difficulty, current.id],
+					);
+				} else {
+					await client.query(
+						`INSERT INTO rounds (tournament_id, round_number, problem_id, capacity, time_limit_seconds, difficulty)
+						 VALUES ($1, $2, $3, $4, $5, $6)`,
+						[request.params.id, round.round_number, round.problemId, round.capacity, round.timeLimitSeconds, round.difficulty],
+					);
+				}
+			}
+			await client.query(
+				`DELETE FROM rounds r WHERE r.tournament_id = $1 AND r.status = 'pending'
+				   AND NOT (r.round_number = ANY($2::int[]))
+				   AND NOT EXISTS (SELECT 1 FROM round_participants rp WHERE rp.round_id = r.id)`,
+				[request.params.id, rounds.map((round) => round.round_number)],
+			);
+			return { status: 200 };
+		});
+	} catch (error) {
+		if (error.code === '23503') return reply.code(404).send({ error: 'Uno de los problemas no existe' });
+		throw error;
+	}
+	if (outcome.status !== 200) return reply.code(outcome.status).send({ error: outcome.error });
+	const result = await query(
+		`SELECT r.*, COALESCE(p.name, r.problem_name) AS problem_name,
+		        (SELECT count(*)::int FROM round_participants rp WHERE rp.round_id = r.id) AS participants_count
+		 FROM rounds r LEFT JOIN problems p ON p.id = r.problem_id
+		 WHERE r.tournament_id = $1 ORDER BY r.round_number`,
+		[request.params.id],
+	);
+	return result.rows;
+});
+
 // Lee el estado de una ronda para saber si se puede generar la siguiente y con
 // quienes. Lo usa el panel para prellenar el formulario antes de crearla.
 async function nextRoundPreview(roundId) {
@@ -1271,9 +1382,14 @@ async function nextRoundPreview(roundId) {
 	const nextRoundNumber = Number(round.round_number) + 1;
 
 	const existing = await query(
-		'SELECT id, round_number, status FROM rounds WHERE tournament_id = $1 AND round_number = $2',
+		`SELECT r.id, r.round_number, r.status, r.problem_id, r.capacity, r.time_limit_seconds, r.difficulty,
+		        (SELECT count(*)::int FROM round_participants rp WHERE rp.round_id = r.id) AS enrolled
+		 FROM rounds r WHERE r.tournament_id = $1 AND r.round_number = $2`,
 		[round.tournament_id, nextRoundNumber],
 	);
+	// Una ronda planificada (PUT /tournaments/:id/plan) existe pero sigue
+	// pendiente y sin roster: avanzar la llena en vez de rechazar.
+	const planned = existing.rowCount && existing.rows[0].status === 'pending' && existing.rows[0].enrolled === 0;
 
 	const preview = {
 		nextRoundNumber,
@@ -1288,7 +1404,16 @@ async function nextRoundPreview(roundId) {
 			best_pass_percentage: row.best_pass_percentage,
 		})),
 		existing: existing.rowCount
-			? { id: existing.rows[0].id, round_number: existing.rows[0].round_number, status: existing.rows[0].status }
+			? {
+				id: existing.rows[0].id,
+				round_number: existing.rows[0].round_number,
+				status: existing.rows[0].status,
+				planned: Boolean(planned),
+				problem_id: existing.rows[0].problem_id,
+				capacity: existing.rows[0].capacity,
+				time_limit_seconds: existing.rows[0].time_limit_seconds,
+				difficulty: existing.rows[0].difficulty,
+			}
 			: null,
 	};
 
@@ -1302,7 +1427,7 @@ async function nextRoundPreview(roundId) {
 		// Un solo clasificado significa que closeRound ya declaró ganador.
 		return { ...preview, available: false, reason: 'No hay suficientes clasificados para otra ronda' };
 	}
-	if (existing.rowCount) {
+	if (existing.rowCount && !planned) {
 		return { ...preview, available: false, reason: `La ronda ${nextRoundNumber} ya existe` };
 	}
 	return { ...preview, available: true };
@@ -1352,11 +1477,26 @@ fastify.post('/rounds/:id/next', async (request, reply) => {
 	let created;
 	try {
 		created = await withTransaction(async (client) => {
-			const inserted = await client.query(
-				`INSERT INTO rounds (tournament_id, round_number, problem_id, capacity, time_limit_seconds)
-				 VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-				[preview.tournamentId, preview.nextRoundNumber, problemId, finalCapacity, seconds],
-			);
+			// La ronda planificada se completa; si no existe, se crea como antes.
+			// El UPDATE exige que siga pendiente y sin roster: dos clics no la llenan dos veces.
+			const inserted = preview.existing?.planned
+				? await client.query(
+					`UPDATE rounds r SET problem_id = $1, capacity = $2, time_limit_seconds = $3
+					 WHERE r.id = $4 AND r.status = 'pending'
+					   AND NOT EXISTS (SELECT 1 FROM round_participants rp WHERE rp.round_id = r.id)
+					 RETURNING *`,
+					[problemId, finalCapacity, seconds, preview.existing.id],
+				)
+				: await client.query(
+					`INSERT INTO rounds (tournament_id, round_number, problem_id, capacity, time_limit_seconds)
+					 VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+					[preview.tournamentId, preview.nextRoundNumber, problemId, finalCapacity, seconds],
+				);
+			if (!inserted.rowCount) {
+				const conflict = new Error('La ronda siguiente ya tiene participantes');
+				conflict.code = '23505';
+				throw conflict;
+			}
 			const nextRound = inserted.rows[0];
 			// Los clasificados entran ya en la ronda. Si se dejaran para que se
 			// unieran solos, un participante que no está presente bloquearía a todos.
@@ -1392,8 +1532,8 @@ fastify.post('/rounds/:id/next', async (request, reply) => {
 // POST /rounds: el panel convierte desde minutos.
 fastify.put('/rounds/:id', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
-	const { problemId = null, capacity = null, timeLimitSeconds = null } = request.body || {};
-	const error = validateRoundEdit({ problemId, capacity, timeLimitSeconds });
+	const { problemId = null, capacity = null, timeLimitSeconds = null, difficulty = null } = request.body || {};
+	const error = validateRoundEdit({ problemId, capacity, timeLimitSeconds, difficulty });
 	if (error) return reply.code(400).send({ error });
 	let result;
 	try {
@@ -1404,13 +1544,14 @@ fastify.put('/rounds/:id', async (request, reply) => {
 		result = await query(
 			`UPDATE rounds r SET problem_id = COALESCE($1, r.problem_id),
 			        capacity = COALESCE($2, r.capacity),
-			        time_limit_seconds = COALESCE($3, r.time_limit_seconds)
+			        time_limit_seconds = COALESCE($3, r.time_limit_seconds),
+			        difficulty = COALESCE($5, r.difficulty)
 			 WHERE r.id = $4 AND r.status = 'pending'
 			   AND ($2::int IS NULL
 			     OR NOT EXISTS (SELECT 1 FROM rounds prev WHERE prev.tournament_id = r.tournament_id AND prev.round_number < r.round_number)
 			     OR $2::int <= (SELECT count(*) FROM round_participants rp WHERE rp.round_id = r.id))
 			 RETURNING *`,
-			[problemId, capacity, timeLimitSeconds, request.params.id],
+			[problemId, capacity, timeLimitSeconds, request.params.id, difficulty],
 		);
 	} catch (error) {
 		if (error.code === '23503') return reply.code(404).send({ error: 'El problema no existe' });
@@ -1494,6 +1635,35 @@ fastify.post('/rounds/:id/pause', async (request, reply) => {
 	if (!result.rowCount) return reply.code(409).send({ error: 'La ronda no está activa' });
 	fastify.io?.to(`round:${request.params.id}`).emit('round:paused', result.rows[0]);
 	return result.rows[0];
+});
+
+// Sala de espera: sin ronda activa, la próxima pendiente que el participante
+// puede esperar. Es la primera ronda de un torneo abierto (se inscribe ahí) o
+// una siguiente donde ya está en el roster. La sesión es opcional.
+fastify.get('/public/rounds/upcoming', async (request) => {
+	const active = await query("SELECT 1 FROM rounds WHERE status = 'active' LIMIT 1");
+	if (active.rowCount) return null;
+	const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
+	const user = token ? await getSession(token).catch(() => null) : null;
+	const result = await query(
+		`SELECT r.id, r.round_number, r.capacity, t.name AS tournament_name
+		 FROM rounds r JOIN tournaments t ON t.id = r.tournament_id
+		 WHERE r.status = 'pending' AND t.status <> 'finished'
+		   AND (
+		     NOT EXISTS (SELECT 1 FROM rounds prev WHERE prev.tournament_id = r.tournament_id AND prev.round_number < r.round_number)
+		     OR EXISTS (
+		       SELECT 1 FROM round_participants rp JOIN participants p ON p.id = rp.participant_id
+		       WHERE rp.round_id = r.id AND p.user_id = $1 AND p.status = 'active'
+		     )
+		   )
+		 ORDER BY EXISTS (
+		     SELECT 1 FROM round_participants rp JOIN participants p ON p.id = rp.participant_id
+		     WHERE rp.round_id = r.id AND p.user_id = $1
+		   ) DESC, t.created_at DESC, r.round_number
+		 LIMIT 1`,
+		[user?.id ?? null],
+	);
+	return result.rows[0] || null;
 });
 
 fastify.get('/public/rounds/active', async () => {
@@ -1605,11 +1775,124 @@ fastify.post('/rounds/:id/submissions', async (request, reply) => {
 	return reply.code(202).send(publicSubmission);
 });
 
+// "Probar código": corre el programa contra los casos de ejemplo o contra una
+// entrada propia y devuelve la salida. No guarda nada: ni submissions, ni
+// penalización, ni eventos de socket. Comparte el presupuesto de Judge0 con los
+// envíos reales, pero a lo sumo RUN_MAX_IN_FLIGHT casos de prueba a la vez, así
+// nunca dejan sin lugar a la cola de envíos.
+const RUN_MAX_IN_FLIGHT = Number(process.env.JUDGE0_RUN_MAX_IN_FLIGHT || 2);
+const runSlots = createLimiter(RUN_MAX_IN_FLIGHT);
+const RUN_INTERVAL_MS = Number(process.env.RUN_INTERVAL_MS || 3000);
+const RUN_TIMEOUT_MS = Number(process.env.RUN_TIMEOUT_MS || 20000);
+const RUN_MAX_STDIN = 64 * 1024;
+const RUN_MAX_SAMPLES = 10;
+const RUN_MAX_OUTPUT = 4000;
+
+// Validación de POST /rounds/:id/run que no necesita la base. null = válido.
+function validateRunPayload(body) {
+	const { participantId, code, language, stdin } = body || {};
+	if (typeof participantId !== 'string' || typeof code !== 'string' || code.length === 0 || code.length > 100_000) {
+		return 'Código inválido: hasta 100000 caracteres';
+	}
+	if (!['python', 'c', 'cpp'].includes(language)) return 'Lenguaje no soportado: use Python, C o C++';
+	if (stdin !== undefined && stdin !== null && (typeof stdin !== 'string' || stdin.length > RUN_MAX_STDIN)) {
+		return 'La entrada personalizada debe ser texto de hasta 64 KB';
+	}
+	return null
+}
+
+const clip = (text) => {
+	if (typeof text !== 'string') return '';
+	return text.length > RUN_MAX_OUTPUT ? `${text.slice(0, RUN_MAX_OUTPUT)}\n… (salida recortada)` : text
+};
+
+// Resultado de un caso para el participante. passed solo existe si hay salida
+// esperada: con entrada personalizada no hay contra qué comparar.
+function summarizeRun(result, testCase) {
+	const accepted = result.status?.id === 3;
+	const stdout = result.stdout ?? '';
+	const summary = {
+		status: result.status?.description || 'Error',
+		stdin: testCase.stdin ?? '',
+		stdout: clip(stdout),
+		stderr: clip(result.stderr ?? ''),
+		compile_output: clip(result.compile_output ?? ''),
+		time: result.time ?? null,
+		memory: result.memory ?? null,
+	};
+	if (typeof testCase.expected === 'string') {
+		summary.expected = testCase.expected;
+		summary.passed = accepted && stdout.trim() === testCase.expected.trim();
+		if (accepted && !summary.passed) summary.status = 'Wrong Answer';
+	}
+	return summary
+}
+
+fastify.post('/rounds/:id/run', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'participant'))) return;
+	const invalid = validateRunPayload(request.body);
+	if (invalid) return reply.code(400).send({ error: invalid });
+	const { participantId, code, language } = request.body;
+	const custom = typeof request.body.stdin === 'string';
+	const recent = runRate.get(request.user.id) || 0;
+	if (Date.now() - recent < RUN_INTERVAL_MS) {
+		return reply.code(429).send({ error: 'Espera unos segundos antes de volver a probar' });
+	}
+	runRate.set(request.user.id, Date.now());
+	// Mismas condiciones que un envío: si no se puede enviar, tampoco probar.
+	const round = await query(
+		`SELECT r.tournament_id, r.paused, r.starts_at > now() AS counting_down, p.test_cases
+		 FROM rounds r JOIN problems p ON p.id = r.problem_id
+		 WHERE r.id = $1 AND r.status = 'active' AND r.ends_at > now()`,
+		[request.params.id],
+	);
+	if (!round.rowCount) return reply.code(409).send({ error: 'La ronda no está activa' });
+	if (round.rows[0].paused) return reply.code(409).send({ error: 'La ronda está pausada' });
+	if (round.rows[0].counting_down) return reply.code(409).send({ error: 'La ronda todavía no empezó' });
+	const participant = await query(
+		`SELECT p.id FROM participants p
+		 JOIN round_participants rp ON rp.participant_id = p.id AND rp.round_id = $1
+		 WHERE p.id = $2 AND p.user_id = $3 AND p.tournament_id = $4 AND p.status = 'active'`,
+		[request.params.id, participantId, request.user.id, round.rows[0].tournament_id],
+	);
+	if (!participant.rowCount) return reply.code(403).send({ error: 'Participante no válido para esta ronda' });
+
+	// Solo los casos marcados como ejemplo, que el participante ya ve en pantalla.
+	const allCases = Array.isArray(round.rows[0].test_cases) ? round.rows[0].test_cases : [];
+	const cases = custom
+		? [{ stdin: request.body.stdin }]
+		: allCases
+			.filter((testCase) => testCase?.is_sample === true)
+			.slice(0, RUN_MAX_SAMPLES)
+			.map((testCase) => ({ stdin: String(testCase.stdin ?? ''), expected: String(testCase.expected ?? '') }));
+	if (!cases.length) {
+		return reply.code(409).send({ error: 'Este problema no tiene casos de ejemplo: prueba con una entrada personalizada' });
+	}
+	let results;
+	try {
+		results = await runTestCases(cases, (testCase) => judge0Slots.run(async () => {
+			const created = await createSubmission(code, language, testCase.stdin);
+			const result = await waitForSubmission(created.token, { timeoutMs: RUN_TIMEOUT_MS });
+			return summarizeRun(result, testCase);
+		}), runSlots);
+	} catch (error) {
+		request.log.error(error, 'Falló la prueba de código');
+		return reply.code(502).send({ error: 'El juez no respondió. Intenta de nuevo en unos segundos' });
+	}
+	const graded = results.filter((result) => typeof result.passed === 'boolean');
+	return {
+		mode: custom ? 'custom' : 'samples',
+		results,
+		passed: graded.filter((result) => result.passed).length,
+		total: graded.length,
+	};
+});
+
 fastify.get('/rounds/:id/leaderboard', async (request) => {
 	// El tiempo corre desde el fin de la cuenta regresiva. Las rondas sin
 	// starts_at (anteriores a la columna) siguen contando desde started_at.
 	const result = await query(
-		`SELECT rp.*, p.display_name,
+		`SELECT rp.*, p.display_name, p.character,
 		        EXTRACT(EPOCH FROM rp.solved_at - COALESCE(r.starts_at, r.started_at)
 		          + rp.penalty_seconds * interval '1 second')::int AS total_time_seconds
 		 FROM round_participants rp
@@ -2001,7 +2284,8 @@ if (require.main === module) {
 module.exports = {
 	fastify, start, requireRole, sessions: memorySessions, closeRound, describeStartBlock, startBlockReason,
 	validateRoundEdit, ORPHAN_USER_SQL, parseIdList, TOURNAMENT_DELETABLE_SQL, PROBLEM_DELETABLE_SQL,
-	INFRA_FAILURE_VERDICTS, MAX_BODY_BYTES,
+	INFRA_FAILURE_VERDICTS, MAX_BODY_BYTES, validateRunPayload, summarizeRun, validateRoundPlan,
+	CHARACTER_COUNT,
 	// Expuestos para test/auth-rate-limit.test.js: el rate limit vive en el
 	// servidor y sin esto habria que.matchear contra una DB real para probarlo.
 	AUTH_IDENTITY_LIMIT: authIdentityLimit, AUTH_IP_LIMIT: authIpLimit,

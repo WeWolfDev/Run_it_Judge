@@ -151,6 +151,18 @@ ALTER TABLE rounds ADD COLUMN IF NOT EXISTS paused BOOLEAN NOT NULL DEFAULT fals
 -- cuenta regresiva", así que nadie queda bloqueado en una ronda ya en curso.
 ALTER TABLE rounds ADD COLUMN IF NOT EXISTS starts_at TIMESTAMPTZ;
 
+-- Nivel de dificultad de la ronda: en el panel filtra los problemas que se
+-- ofrecen para ella. NULL en las rondas anteriores a la columna.
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS difficulty TEXT;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'rounds_difficulty_check') THEN
+    ALTER TABLE rounds ADD CONSTRAINT rounds_difficulty_check
+      CHECK (difficulty IS NULL OR difficulty IN ('easy', 'medium', 'hard'));
+  END IF;
+END
+$$;
+
 -- Borrar un problema no borra las rondas que lo usaron: quedan con problem_id
 -- NULL y conservan número, estado, tiempos, participantes y envíos. Para que el
 -- historial siga siendo legible se guarda el nombre del problema en la ronda.

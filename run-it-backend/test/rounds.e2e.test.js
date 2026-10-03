@@ -418,6 +418,61 @@ test('borrar un problema: libre, en uso por una pendiente, por una jugada y con 
 	);
 });
 
+test('plan de rondas: se guarda de una vez y "avanzar" llena la ronda planificada', { skip }, async (t) => {
+	const tournament = await ok('POST', '/tournaments', { name: `e2e rondas ${state.nonce} plan` }, state.adminToken);
+	const planned = await ok('PUT', `/tournaments/${tournament.id}/plan`, {
+		rounds: [
+			{ round_number: 1, difficulty: 'easy', problemId: state.problem.id, capacity: 2, timeLimitSeconds: 600 },
+			{ round_number: 2, difficulty: 'medium', problemId: state.problem.id, capacity: 1, timeLimitSeconds: 900 },
+		],
+	}, state.adminToken);
+	assert.deepEqual(planned.map((row) => [row.round_number, row.difficulty, row.status]), [[1, 'easy', 'pending'], [2, 'medium', 'pending']]);
+	const [first, second] = planned;
+	state.rounds.push(first.id, second.id);
+
+	// Un hueco en el plan se rechaza.
+	const gap = await api('PUT', `/tournaments/${tournament.id}/plan`, {
+		rounds: [{ round_number: 4, difficulty: 'hard', problemId: state.problem.id, capacity: 1, timeLimitSeconds: 600 }],
+	}, state.adminToken);
+	assert.equal(gap.status, 400);
+
+	// Sala de espera: se inscriben en la ronda 1 antes de que empiece.
+	const users = await register(tournament.id, ['plan-a', 'plan-b', 'plan-c']);
+	for (const user of Object.values(users)) await ok('POST', `/rounds/${first.id}/participants/join`, { character: 47 }, user.token);
+	assert.equal((await roster(first.id)).length, 3);
+	const board = await ok('GET', `/rounds/${first.id}/leaderboard`);
+	assert.equal(board[0].character, 47, 'el ranking trae el personaje');
+	const { rows: active } = await state.db.query("SELECT 1 FROM rounds WHERE status = 'active' LIMIT 1");
+	if (!active.length) {
+		const upcoming = await ok('GET', '/public/rounds/upcoming', undefined, users['plan-a'].token);
+		t.diagnostic(`sala de espera -> ${JSON.stringify(upcoming)}`);
+		assert.ok(upcoming, 'sin ronda activa debería haber una ronda que esperar');
+	}
+
+	await ok('POST', `/rounds/${first.id}/start`, {}, state.adminToken);
+	await ok('POST', `/rounds/${first.id}/close`, {}, state.adminToken);
+	const preview = await ok('GET', `/rounds/${first.id}/next`, undefined, state.adminToken);
+	t.diagnostic(`vista previa -> ${JSON.stringify(preview.existing)}`);
+	assert.equal(preview.available, true);
+	assert.equal(preview.existing.planned, true);
+	assert.equal(preview.existing.id, second.id);
+
+	const filled = await api('POST', `/rounds/${first.id}/next`, { problemId: state.problem.id, timeLimitSeconds: 900 }, state.adminToken);
+	assert.equal(filled.status, 201);
+	assert.equal(filled.body.round.id, second.id, 'llenó la ronda planificada, no creó otra');
+	assert.equal((await roster(second.id)).length, 2);
+	const again = await api('POST', `/rounds/${first.id}/next`, { problemId: state.problem.id, timeLimitSeconds: 900 }, state.adminToken);
+	assert.equal(again.status, 409);
+});
+
+test('los códigos invalidados no aparecen en la lista', { skip }, async () => {
+	const tournament = await ok('POST', '/tournaments', { name: `e2e rondas ${state.nonce} codigos` }, state.adminToken);
+	const { codes } = await ok('POST', '/access-codes/generate', { count: 2, tournamentId: tournament.id }, state.adminToken);
+	await ok('POST', '/access-codes/revoke', { codes: [codes[0].code] }, state.adminToken);
+	const listed = await ok('GET', `/access-codes?tournamentId=${tournament.id}`, undefined, state.adminToken);
+	assert.deepEqual(listed.map((row) => row.code), [codes[1].code]);
+});
+
 test.after(async () => {
 	if (!enabled) return;
 	// Ninguna ronda de la prueba queda activa: /public/rounds/active las mostraría.

@@ -29,7 +29,14 @@ function objectKeys(source, declaration) {
 }
 
 const frontendLanguages = objectKeys(participantView, 'const LANGUAGES = {');
-const placeholders = objectKeys(participantView, 'const PLACEHOLDERS: Record<Language, string> = {');
+const templateKeys = objectKeys(participantView, 'const TEMPLATES: Record<Language, string> = {');
+
+// Contenido de cada plantilla tal como está en ParticipantView (template literal).
+function templateSource(language) {
+	const match = participantView.match(new RegExp(`\\n  ${language}: \`([\\s\\S]*?)\`,\\n`));
+	assert.ok(match, `No se encontró la plantilla de ${language}`);
+	return match[1].replace(/\\`/g, '`').replace(/\\\$\{/g, '${').replace(/\\\\/g, '\\');
+}
 
 async function capturedLanguageId(language) {
 	const originalFetch = globalThis.fetch;
@@ -92,13 +99,28 @@ test('POST /rounds/:id/submissions rechaza variantes en mayúscula o con símbol
 	}
 });
 
-test('el placeholder depende del lenguaje y nunca se inyecta como valor', () => {
-	assert.deepEqual(placeholders, frontendLanguages);
-	assert.match(participantView, /placeholder=\{PLACEHOLDERS\[language\]\}/);
+test('cada lenguaje tiene su plantilla, idéntica a plantillas_lenguajes/*.md', () => {
+	assert.deepEqual(templateKeys, frontendLanguages);
+	for (const language of frontendLanguages) {
+		const file = fs.readFileSync(path.join(__dirname, `../../plantillas_lenguajes/${language}.md`), 'utf8');
+		assert.equal(templateSource(language), file, `La plantilla de ${language} no coincide con ${language}.md`);
+	}
+});
+
+test('la plantilla es el código inicial y cambiar de lenguaje no pisa lo escrito', () => {
+	assert.match(participantView, /useState\(TEMPLATES\.python\)/);
 	assert.match(participantView, /value=\{code\}/);
-	// El único setCode es el onChange del textarea: cambiar de lenguaje no toca el código.
-	assert.deepEqual(participantView.match(/setCode\(/g), ['setCode(']);
-	assert.match(participantView, /onChange=\{\(e\) => setCode\(e\.target\.value\)\}/);
+	assert.match(participantView, /onChange=\{\(value\) => setCode\(value\)\}/);
+	// Solo dos escrituras del código: lo que teclea y el cambio de lenguaje, que
+	// únicamente reemplaza la plantilla intacta o el editor vacío.
+	assert.equal(participantView.match(/setCode\(/g).length, 2);
+	assert.match(participantView, /isUntouchedTemplate\(current\) \|\| !current\.trim\(\) \? TEMPLATES\[next\] : current/);
+	assert.doesNotMatch(participantView, /PLACEHOLDERS/);
+});
+
+test('probar o enviar la plantilla sin cambios se rechaza en el cliente', () => {
+	const guards = participantView.match(/if \(isUntouchedTemplate\(code\)\)/g) || [];
+	assert.equal(guards.length, 2, 'falta el chequeo en send o en run');
 });
 
 test('las plantillas de C y C++ leen de stdin sin /dev/stdin', () => {

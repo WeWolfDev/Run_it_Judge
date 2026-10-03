@@ -5,6 +5,8 @@ import { parseCodeforcesZip } from "@/lib/test-case-parser";
 import { ProblemStatement } from "@/components/ProblemStatement";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RowCheckbox, SelectAllCheckbox } from "@/components/BulkSelect";
+import { PixelIcon, type PixelIconName } from "@/components/PixelIcon";
+import { Sprite } from "@/components/Sprite";
 import {
   apiUrl,
   closeRound,
@@ -34,6 +36,7 @@ import {
   previewProblemsDelete,
   previewTournamentsDelete,
   revokeAccessCodes,
+  saveTournamentPlan,
   startRound,
   toggleRoundPause,
   updateProblem,
@@ -45,6 +48,7 @@ import {
   type OrphanUser,
   type ProblemDeletePreview,
   type ProblemDetail,
+  type ProblemDifficulty,
   type ProblemTestCase,
   type TournamentDeletePreview,
 } from "@/lib/api";
@@ -76,6 +80,46 @@ type RankingEntry = {
 };
 
 const EMPTY_CASE: ProblemTestCase = { stdin: "", expected: "", is_sample: false };
+
+// etiqueta de dificultad de una ronda; filtra los problemas del editor.
+const DIFFICULTY_LABEL: Record<ProblemDifficulty, string> = {
+  easy: "Fácil",
+  medium: "Intermedio",
+  hard: "Difícil",
+};
+
+const DIFFICULTY_CLASS: Record<ProblemDifficulty, string> = {
+  easy: "bg-success-soft text-success",
+  medium: "bg-info-soft text-info",
+  hard: "bg-danger-soft text-danger",
+};
+
+// una fila del plan de rondas del torneo (pestaña Rondas).
+type PlanRow = {
+  id: string | null;
+  round_number: number;
+  difficulty: ProblemDifficulty;
+  problemId: string;
+  capacity: number;
+  minutes: number;
+  status: string;
+};
+
+// copia al portapapeles; si el navegador no deja, selecciona un textarea.
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    document.body.appendChild(area);
+    area.select();
+    const done = document.execCommand("copy");
+    area.remove();
+    return done;
+  }
+}
 
 const ROUND_STATUS_LABEL: Record<string, string> = {
   pending: "Pendiente",
@@ -365,6 +409,18 @@ export function AdminPanel({
   // Sube con cada round:closed para volver a pedir la vista previa y el progreso.
   const [closedVersion, setClosedVersion] = useState(0);
   const [roundsProgress, setRoundsProgress] = useState<TournamentRoundProgress[] | null>(null);
+  // torneo que se administra en "Control de ronda".
+  const [controlTournamentId, setControlTournamentId] = useState("");
+  // participantes de la ronda que se muestra en Control (unidos y ranking).
+  const [board, setBoard] = useState<RankingEntry[]>([]);
+  // plan de rondas del torneo elegido en la pestaña Rondas.
+  const [planTournamentId, setPlanTournamentId] = useState("");
+  const [plan, setPlan] = useState<PlanRow[]>([]);
+  const [planIndex, setPlanIndex] = useState(0);
+  const [planDirty, setPlanDirty] = useState(false);
+  const [savingPlan, setSavingPlan] = useState(false);
+  const [newTournamentInput, setNewTournamentInput] = useState("");
+  const [copiedKey, setCopiedKey] = useState("");
   const displayedRound = liveRound;
   const serverOffsetMs = useServerClockOffset(setMessage);
   const remaining = useRoundTimer(displayedRound?.ends_at ?? 0, serverOffsetMs);
@@ -381,6 +437,15 @@ export function AdminPanel({
     [liveParticipants, query],
   );
   const solved = liveParticipants.filter((p) => p.solved).length;
+  // los vencidos o invalidados no se muestran, aunque el servidor los mande.
+  const visibleCodes = codes.filter(
+    (code) =>
+      code.status !== "expired" &&
+      !(code.status === "unused" && code.expires_at && Date.parse(code.expires_at) <= Date.now()),
+  );
+  const unusedCodes = visibleCodes
+    .filter((code) => code.status === "unused")
+    .map((code) => code.code);
   const active = liveParticipants.filter((p) => p.status === "racing").length;
 
   const refreshCodes = useMemo(
@@ -444,6 +509,9 @@ export function AdminPanel({
 
   useEffect(() => {
     void refreshCodes();
+    // así un código que vence desaparece de la lista sin recargar.
+    const id = setInterval(() => void refreshCodes(), 15000);
+    return () => clearInterval(id);
   }, [refreshCodes]);
 
   const loadActiveRound = useMemo(
@@ -495,10 +563,20 @@ export function AdminPanel({
 
   // Rondas reales del torneo en juego; si no hay ronda activa, las del torneo
   // elegido en el formulario.
+  // el progreso es el del torneo elegido en Control de ronda.
   const progressTournamentId =
+    controlTournamentId ||
     liveTournamentId ||
     tournaments.find((t) => t.name === tournamentName.trim() && t.status !== "finished")?.id ||
     "";
+
+  // si no hay torneo elegido (o se terminó), se toma el de la ronda en
+  // curso, o el primero abierto.
+  useEffect(() => {
+    if (controlTournamentId && tournaments.some((t) => t.id === controlTournamentId)) return;
+    const fallback = liveTournamentId || tournaments[0]?.id || "";
+    if (fallback !== controlTournamentId) setControlTournamentId(fallback);
+  }, [tournaments, liveTournamentId, controlTournamentId]);
 
   const refreshRoundsProgress = useMemo(
     () => () => {
@@ -516,6 +594,27 @@ export function AdminPanel({
   useEffect(() => {
     refreshRoundsProgress();
   }, [refreshRoundsProgress, closedVersion]);
+
+  // la ronda del torneo elegido que se controla.
+  const currentRound = useMemo(() => {
+    if (!roundsProgress?.length) return null;
+    return (
+      roundsProgress.find((r) => r.status === "active" || r.status === "closing") ??
+      roundsProgress.find((r) => r.status === "pending") ??
+      roundsProgress[roundsProgress.length - 1] ??
+      null
+    );
+  }, [roundsProgress]);
+  const currentRoundId = currentRound?.id ?? "";
+  const ctrlRemaining = useRoundTimer(
+    currentRound?.ends_at ? Date.parse(currentRound.ends_at) : 0,
+    serverOffsetMs,
+  );
+  const ctrlUntilStart = useRoundTimer(
+    currentRound?.starts_at ? Date.parse(currentRound.starts_at) : 0,
+    serverOffsetMs,
+  );
+  const ctrlCountingDown = currentRound?.status === "active" && ctrlUntilStart > 0;
 
   // Cerrar la última ronda puede terminar el torneo: sale de los selectores y
   // entra al historial.
@@ -575,6 +674,21 @@ export function AdminPanel({
         // El cupo por defecto es "clasifican todos". El admin puede bajarlo
         // para eliminar más, nunca subirlo.
         setNextRoundCapacity(preview.advancingCount);
+        // la ronda siguiente ya planificada trae su problema, cupo y tiempo.
+        const planned = preview.existing as
+          | (NonNullable<NextRoundPreview["existing"]> & {
+              planned?: boolean;
+              problem_id?: string | null;
+              capacity?: number;
+              time_limit_seconds?: number;
+            })
+          | null;
+        if (planned?.planned) {
+          if (planned.problem_id) setSelectedProblem(planned.problem_id);
+          if (planned.capacity)
+            setNextRoundCapacity(Math.min(planned.capacity, preview.advancingCount));
+          if (planned.time_limit_seconds) setTimeLimitMinutes(planned.time_limit_seconds / 60);
+        }
       })
       .catch(() => {
         if (!cancelled) setNextRoundPreview(null);
@@ -584,7 +698,32 @@ export function AdminPanel({
     };
   }, [advanceFromId]);
 
-  const socketRoundId = liveRound ? String(liveRound.round_id) : undefined;
+  const socketRoundId = currentRoundId || (liveRound ? String(liveRound.round_id) : undefined);
+
+  // participantes de la ronda controlada (los que ya se unieron, aunque
+  // no haya empezado) con el ranking. Se relee cada 2 s junto con el progreso.
+  useEffect(() => {
+    if (!currentRoundId) {
+      setBoard([]);
+      return;
+    }
+    let cancelled = false;
+    const load = () =>
+      void getRoundLeaderboard(currentRoundId)
+        .then((rows) => {
+          if (!cancelled) setBoard(rows);
+        })
+        .catch(() => undefined);
+    load();
+    const id = setInterval(() => {
+      load();
+      refreshProgressRef.current();
+    }, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [currentRoundId]);
 
   useEffect(() => {
     const roundId = socketRoundId ?? "";
@@ -1328,6 +1467,189 @@ export function AdminPanel({
     }
   };
 
+  // ---------- Plan de rondas (pestaña Rondas) ----------
+  const firstProblemOf = (difficulty: ProblemDifficulty) =>
+    problems.find((problem) => problem.difficulty === difficulty)?.id ?? "";
+
+  const loadPlan = useMemo(
+    () => async (tournamentId: string) => {
+      if (!tournamentId) {
+        setPlan([]);
+        return;
+      }
+      try {
+        const rows = await getTournamentRounds(tournamentId);
+        const next: PlanRow[] = rows.map((r) => ({
+          id: r.id,
+          round_number: r.round_number,
+          difficulty: (r.difficulty ?? "easy") as ProblemDifficulty,
+          problemId: r.problem_id ?? "",
+          capacity: r.capacity,
+          minutes: r.time_limit_seconds / 60,
+          status: r.status,
+        }));
+        setPlan(next);
+        setPlanDirty(false);
+        setPlanIndex((index) => Math.min(index, Math.max(0, next.length - 1)));
+      } catch {
+        setPlan([]);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    void loadPlan(planTournamentId);
+  }, [planTournamentId, loadPlan]);
+
+  // Arranca con el torneo que se administra en Control: el editor ya queda activo.
+  useEffect(() => {
+    if (!planTournamentId && controlTournamentId) setPlanTournamentId(controlTournamentId);
+  }, [planTournamentId, controlTournamentId]);
+
+  // "Crear torneo" siempre está activo: crea y lo deja elegido para configurar.
+  const createTournamentAndSelect = async () => {
+    const name = newTournamentInput.trim();
+    if (!name) {
+      setMessage("Indica un nombre para el torneo.");
+      return;
+    }
+    setSavingTournament(true);
+    try {
+      const created = await createTournament(name);
+      setNewTournamentInput("");
+      await refreshTournaments();
+      setPlanTournamentId(created.id);
+      setPlan([
+        {
+          id: null,
+          round_number: 1,
+          difficulty: "easy",
+          problemId: firstProblemOf("easy"),
+          capacity: 8,
+          minutes: 10,
+          status: "pending",
+        },
+      ]);
+      setPlanDirty(true);
+      setPlanIndex(0);
+      setMessage(`Torneo “${created.name}” creado. Configurá sus rondas y guardalas.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo crear el torneo");
+    } finally {
+      setSavingTournament(false);
+    }
+  };
+
+  const updatePlanRow = (index: number, patch: Partial<PlanRow>) => {
+    setPlan((current) => current.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+    setPlanDirty(true);
+  };
+
+  const addPlanRound = () => {
+    const last = plan[plan.length - 1];
+    const difficulty: ProblemDifficulty = !last
+      ? "easy"
+      : last.difficulty === "easy"
+        ? "medium"
+        : "hard";
+    setPlan([
+      ...plan,
+      {
+        id: null,
+        round_number: (last?.round_number ?? 0) + 1,
+        difficulty,
+        problemId: firstProblemOf(difficulty),
+        capacity: Math.max(1, Math.floor((last?.capacity ?? 8) / 2)),
+        minutes: (last?.minutes ?? 10) + 5,
+        status: "pending",
+      },
+    ]);
+    setPlanIndex(plan.length);
+    setPlanDirty(true);
+  };
+
+  const removeLastPlanRound = () => {
+    const last = plan[plan.length - 1];
+    if (!last || last.status !== "pending") return;
+    setPlan(plan.slice(0, -1));
+    setPlanIndex((index) => Math.min(index, plan.length - 2));
+    setPlanDirty(true);
+  };
+
+  // Todas las rondas de una vez. Solo viajan las pendientes.
+  const savePlan = async () => {
+    if (!planTournamentId) return;
+    const missing = plan.find((row) => row.status === "pending" && !row.problemId);
+    if (missing) {
+      setMessage(`Elegí un problema para la ronda ${missing.round_number}.`);
+      setPlanIndex(plan.indexOf(missing));
+      return;
+    }
+    setSavingPlan(true);
+    try {
+      await saveTournamentPlan(
+        planTournamentId,
+        plan
+          .filter((row) => row.status === "pending")
+          .map((row) => ({
+            round_number: row.round_number,
+            difficulty: row.difficulty,
+            problemId: row.problemId,
+            capacity: row.capacity,
+            timeLimitSeconds: Math.round(row.minutes * 60),
+          })),
+      );
+      await loadPlan(planTournamentId);
+      refreshRoundsProgress();
+      void refreshTournaments();
+      setMessage(`Se guardaron las ${countLabel(plan.length, "ronda", "rondas")} del torneo.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo guardar el plan");
+    } finally {
+      setSavingPlan(false);
+    }
+  };
+
+  // Una sola ronda: si ya existe se guarda sola; si es nueva, va con el plan.
+  const savePlanRow = async (index: number) => {
+    const row = plan[index];
+    if (!row) return;
+    if (!row.id) {
+      await savePlan();
+      return;
+    }
+    setSavingPlan(true);
+    try {
+      await updateRound(row.id, {
+        problemId: row.problemId,
+        capacity: row.capacity,
+        timeLimitSeconds: Math.round(row.minutes * 60),
+        difficulty: row.difficulty,
+      });
+      await loadPlan(planTournamentId);
+      refreshRoundsProgress();
+      setMessage(`Ronda ${row.round_number} guardada.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo guardar la ronda");
+    } finally {
+      setSavingPlan(false);
+    }
+  };
+
+  // ---------- Copiar códigos (solo los que están sin usar) ----------
+  const copyCodes = async (key: string, list: string[]) => {
+    if (list.length === 0) return;
+    const done = await copyText(list.join("\n"));
+    setCopiedKey(done ? key : "");
+    setMessage(
+      done
+        ? `${countLabel(list.length, "código copiado", "códigos copiados")}.`
+        : "No se pudo copiar.",
+    );
+    setTimeout(() => setCopiedKey((current) => (current === key ? "" : current)), 1500);
+  };
+
   // Solo hace el POST de inicio: el roster de la ronda ya lo armó quien la creó.
   const beginRound = async (roundId: string) => {
     setStartingRoundId(roundId);
@@ -1348,249 +1670,739 @@ export function AdminPanel({
   return (
     <Tabs defaultValue="control">
       <TabsList>
-        <TabsTrigger value="control">Control de ronda</TabsTrigger>
-        <TabsTrigger value="rondas">Rondas</TabsTrigger>
-        <TabsTrigger value="problemas">Problemas</TabsTrigger>
-        <TabsTrigger value="acceso">Acceso</TabsTrigger>
-        <TabsTrigger value="historial">Historial</TabsTrigger>
+        {(
+          [
+            ["control", "Control de ronda", "gamepad"],
+            ["pista", "Pista", "flag"],
+            ["rondas", "Rondas", "play"],
+            ["problemas", "Problemas", "code"],
+            ["acceso", "Acceso", "users"],
+            ["historial", "Historial", "star"],
+          ] as Array<[string, string, PixelIconName]>
+        ).map(([value, label, icon]) => (
+          <TabsTrigger key={value} value={value} className="gap-1.5">
+            <PixelIcon name={icon} className="h-4 w-4" />
+            {label}
+          </TabsTrigger>
+        ))}
       </TabsList>
 
-      <TabsContent value="control" className="space-y-5">
-        <section className="rounded-xl border border-border bg-card p-5">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <p className="text-xs uppercase tracking-widest text-muted-foreground">
-                Control de la ronda actual
-              </p>
-              <h2 className="mt-1 text-lg font-semibold text-foreground">
-                {displayedRound ? displayedRound.problem : "Sin ronda activa"}
-              </h2>
-            </div>
-            <div className="text-right">
-              <p className="font-mono text-4xl font-semibold tabular-nums text-foreground">
-                {!displayedRound
-                  ? "--:--"
-                  : roundClosed
-                    ? "Cerrada"
-                    : // Durante la cuenta regresiva, el tiempo completo de la ronda.
-                      formatClock(
-                        countingDown && displayedRound.starts_at
-                          ? displayedRound.ends_at - displayedRound.starts_at
-                          : remaining,
-                      )}
-              </p>
-              {countingDown && (
-                <p role="timer" className="mt-1 font-mono text-sm font-semibold text-info">
-                  Empieza en {formatClock(Math.ceil(untilStart / 1000) * 1000)}
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            <Stat label="Cupo" value={displayedRound ? displayedRound.capacity : "—"} />
-            <Stat label="Ya resolvieron" value={solved} />
-            <Stat label="Activos" value={active} />
-          </div>
-
-          <div className="mt-5 flex flex-wrap gap-3">
-            <button
-              disabled={!liveRoundId}
-              onClick={() => {
-                void toggleRoundPause(liveRoundId)
-                  .then(({ paused: nextPaused }) => setPaused(nextPaused))
-                  .catch((error) =>
-                    setMessage(
-                      error instanceof Error ? error.message : "No se pudo pausar la ronda",
-                    ),
-                  );
-              }}
-              className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-            >
-              {paused ? "Reanudar ronda" : "Pausar ronda"}
-            </button>
-            <button
-              disabled={!liveRoundId}
-              onClick={() => {
-                void closeRound(liveRoundId)
-                  .then(() => {
-                    setClosedRoundId(liveRoundId);
-                    setMessage("Ronda cerrada");
-                    refreshQueueStats();
-                  })
-                  .catch((error) => setMessage(error.message));
-              }}
-              className="rounded-lg bg-danger px-4 py-2 text-sm font-medium text-danger-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-            >
-              Forzar cierre
-            </button>
-            {message && <p className="mt-3 text-xs text-muted-foreground">{message}</p>}
-          </div>
-        </section>
-
-        <section className="rounded-xl border border-border bg-card">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-5">
-            <h3 className="text-sm font-semibold text-foreground">Participantes en esta ronda</h3>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Buscar participante…"
-              className="w-56 rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
-            />
-          </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <th className="px-5 py-3 font-medium">Nombre</th>
-                <th className="px-5 py-3 font-medium">Avance</th>
-                <th className="px-5 py-3 font-medium">Intentos</th>
-                <th className="px-5 py-3 font-medium">Estado</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {filtered.map((p) => {
-                const pct = Math.round((p.test_cases_passed / p.test_cases_total) * 100);
-                return (
-                  <tr key={p.participant_id}>
-                    <td className="px-5 py-3 font-mono text-foreground">
-                      <span className="flex items-center gap-2">
-                        <span
-                          className={`h-3 w-3 shrink-0 rounded-full bg-silk-${p.silk}`}
-                          aria-hidden="true"
-                        />
-                        {p.name}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="h-1.5 w-24 rounded-full bg-muted">
-                          <div
-                            className={`h-full rounded-full bg-silk-${p.silk}`}
-                            style={{ width: `${pct}%`, transition: "width 0.55s ease" }}
-                          />
-                        </div>
-                        <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                          {pct}%
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-5 py-3 font-mono tabular-nums text-muted-foreground">
-                      {p.attempts}
-                    </td>
-                    <td className="px-5 py-3">
-                      <span
-                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_CLASS[p.status]}`}
+      <TabsContent value="control">
+        {/* distribución control de ronda + cola a la izquierda, progreso a la derecha. */}
+        <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          <div className="min-w-0 space-y-5">
+            <section className="rounded-xl border border-border bg-card">
+              <div className="space-y-5 p-5">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="min-w-0 space-y-2">
+                    <label className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-widest text-muted-foreground">
+                      Torneo
+                      <select
+                        value={controlTournamentId}
+                        onChange={(event) => setControlTournamentId(event.target.value)}
+                        className="rounded-lg border border-input bg-background px-2 py-1 text-sm normal-case tracking-normal text-foreground outline-none focus:border-ring"
                       >
-                        {STATUS_LABEL[p.status]}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </section>
+                        {tournaments.length === 0 && (
+                          <option value="">No hay torneos abiertos</option>
+                        )}
+                        {tournaments.map((tournament) => (
+                          <option key={tournament.id} value={tournament.id}>
+                            {tournament.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <h2 className="text-lg font-semibold text-foreground">
+                      {currentRound
+                        ? `Ronda ${currentRound.round_number} · ${currentRound.problem_name ?? "sin problema"}`
+                        : "Sin rondas en este torneo"}
+                    </h2>
+                    {currentRound && (
+                      <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-foreground">
+                          {currentRound.paused
+                            ? "Pausada"
+                            : (ROUND_STATUS_LABEL[currentRound.status] ?? currentRound.status)}
+                        </span>
+                        {currentRound.difficulty && (
+                          <span
+                            className={`rounded-full px-2 py-0.5 font-medium ${DIFFICULTY_CLASS[currentRound.difficulty]}`}
+                          >
+                            {DIFFICULTY_LABEL[currentRound.difficulty]}
+                          </span>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <p className="font-mono text-4xl font-semibold tabular-nums text-foreground">
+                      {!currentRound
+                        ? "--:--"
+                        : currentRound.status === "closed"
+                          ? "Cerrada"
+                          : currentRound.status === "pending"
+                            ? formatClock(currentRound.time_limit_seconds * 1000)
+                            : formatClock(
+                                ctrlCountingDown && currentRound.starts_at && currentRound.ends_at
+                                  ? Date.parse(currentRound.ends_at) -
+                                      Date.parse(currentRound.starts_at)
+                                  : ctrlRemaining,
+                              )}
+                    </p>
+                    {ctrlCountingDown && (
+                      <p role="timer" className="mt-1 font-mono text-sm font-semibold text-info">
+                        Empieza en {formatClock(Math.ceil(ctrlUntilStart / 1000) * 1000)}
+                      </p>
+                    )}
+                  </div>
+                </div>
 
-        <section className="rounded-xl border border-border bg-card p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold text-foreground">Cola de evaluación</h3>
-            {/* "Cola no disponible" primero: con Redis caído nada se evalúa,
-                aunque los números de la ronda (que salen de la base) sigan ahí. */}
-            {queueError || queueStats?.queue_available === false ? (
-              <span className="inline-flex rounded-full bg-danger-soft px-2.5 py-1 text-xs font-medium text-danger">
-                Cola no disponible
-              </span>
-            ) : !queueStats ? null : !queueStats.round ? (
-              <span className="inline-flex rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                Sin ronda activa
-              </span>
-            ) : queueStats.round.pending === 0 ? (
-              <span className="inline-flex rounded-full bg-success-soft px-2.5 py-1 text-xs font-medium text-success">
-                Sin pendientes
-              </span>
-            ) : (
-              <span className="inline-flex rounded-full bg-info-soft px-2.5 py-1 text-xs font-medium text-info">
-                {queueStats.round.pending} pendientes
-              </span>
-            )}
-          </div>
-          {queueStats && !queueStats.round ? (
-            <p className="mt-4 rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
-              No hay una ronda activa. Los contadores son de los envíos de la ronda en curso: cuando
-              se inicie una, aparecen acá.
-            </p>
-          ) : (
-            <>
-              {queueStats?.round && (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Ronda {queueStats.round.round_number} de “{queueStats.round.tournament_name}” ·{" "}
-                  {countLabel(queueStats.round.total, "envío", "envíos")}
-                </p>
-              )}
-              <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                <Stat label="Pendientes" value={queueStats?.round?.pending ?? "—"} />
-                <Stat label="Evaluados" value={queueStats?.round?.completed ?? "—"} />
-                <Stat label="Fallidos" value={queueStats?.round?.failed ?? "—"} />
+                <div className="grid gap-3 sm:grid-cols-4">
+                  <Stat label="Cupo" value={currentRound ? currentRound.capacity : "—"} />
+                  <Stat
+                    label={currentRound?.status === "pending" ? "Conectados" : "Inscriptos"}
+                    value={board.length}
+                  />
+                  <Stat
+                    label="Resolvieron"
+                    value={board.filter((entry) => entry.solved_at).length}
+                  />
+                  <Stat
+                    label="Envíos"
+                    value={queueStats?.round?.id === currentRoundId ? queueStats.round.total : 0}
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  {currentRound?.status === "pending" && (
+                    <button
+                      type="button"
+                      disabled={
+                        Boolean(currentRound.start_blocked_reason) || startingRoundId !== ""
+                      }
+                      onClick={() => void beginRound(currentRound.id)}
+                      className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                    >
+                      {startingRoundId === currentRound.id
+                        ? "Iniciando..."
+                        : `Iniciar ronda ${currentRound.round_number} (cuenta de 10 s)`}
+                    </button>
+                  )}
+                  <button
+                    disabled={currentRound?.status !== "active"}
+                    onClick={() => {
+                      void toggleRoundPause(currentRoundId)
+                        .then(() => refreshRoundsProgress())
+                        .catch((error) =>
+                          setMessage(
+                            error instanceof Error ? error.message : "No se pudo pausar la ronda",
+                          ),
+                        );
+                    }}
+                    className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+                  >
+                    {currentRound?.paused ? "Reanudar ronda" : "Pausar ronda"}
+                  </button>
+                  <button
+                    disabled={currentRound?.status !== "active"}
+                    onClick={() => {
+                      void closeRound(currentRoundId)
+                        .then(() => {
+                          setMessage("Ronda cerrada");
+                          setClosedVersion((version) => version + 1);
+                          refreshQueueStats();
+                        })
+                        .catch((error) => setMessage(error.message));
+                    }}
+                    className="rounded-lg bg-danger px-4 py-2 text-sm font-medium text-danger-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                  >
+                    Forzar cierre
+                  </button>
+                  {currentRound?.status === "pending" && currentRound.start_blocked_reason && (
+                    <p className="text-xs text-muted-foreground">
+                      {currentRound.start_blocked_reason}
+                    </p>
+                  )}
+                  {message && <p className="text-xs text-muted-foreground">{message}</p>}
+                </div>
               </div>
-              <p className="mt-3 text-xs text-muted-foreground">
-                Pendientes: en cola o ejecutándose; la base no distingue entre los dos. Fallidos:
-                errores de la cola o del juez. Un programa que no compila o falla casos cuenta como
-                evaluado.
-              </p>
-            </>
-          )}
-        </section>
 
-        <section className="rounded-xl border border-border bg-card p-5">
-          <h3 className="text-sm font-semibold text-foreground">Ranking y resultados</h3>
-          <div className="mt-4 overflow-x-auto">
-            <RoundRanking entries={leaderboard} />
-          </div>
-          <div className="mt-5 border-t border-border pt-4">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Últimos envíos</p>
-            {submissions.length > 0 && (
-              <div className="mt-2 max-h-80 overflow-auto">
-                <table className="w-full text-xs">
-                  <thead className="text-left text-muted-foreground">
-                    <tr>
-                      <th className="pb-2 font-medium">Hora</th>
-                      <th className="pb-2 font-medium">Participante</th>
-                      <th className="pb-2 font-medium">Lenguaje</th>
-                      <th className="pb-2 font-medium">Estado</th>
-                      <th className="pb-2 text-right font-medium">Casos</th>
+              {/* ranking y participantes de la ronda, en una sola tabla. */}
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-3">
+                <h3 className="text-sm font-semibold text-foreground">
+                  {currentRound?.status === "pending"
+                    ? "Participantes conectados, esperando el inicio"
+                    : "Ranking y participantes"}
+                </h3>
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Buscar participante…"
+                  className="w-56 rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+                />
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-y border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className="px-5 py-3 font-medium">Pos.</th>
+                      <th className="px-5 py-3 font-medium">Participante</th>
+                      <th className="px-5 py-3 font-medium">Estado</th>
+                      <th className="px-5 py-3 font-medium">Tests</th>
+                      <th className="px-5 py-3 font-medium">Fallos</th>
+                      <th className="px-5 py-3 font-medium">Tiempo</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {submissions.map((submission) => (
-                      <tr key={submission.id}>
-                        <td className="py-1.5 font-mono tabular-nums text-muted-foreground">
-                          {formatTime(submission.submitted_at)}
-                        </td>
-                        <td className="py-1.5 font-mono text-foreground">
-                          {submission.display_name}
-                        </td>
-                        <td className="py-1.5 text-muted-foreground">
-                          {LANGUAGE_LABEL[submission.language] ?? submission.language}
-                        </td>
-                        <td
-                          className={`py-1.5 font-medium ${VERDICT_TONE_CLASS[verdictTone(submission.verdict)]}`}
-                        >
-                          {verdictLabel(submission.verdict)}
-                        </td>
-                        <td className="py-1.5 text-right font-mono tabular-nums">
-                          {submission.test_cases_total
-                            ? `${submission.test_cases_passed}/${submission.test_cases_total}`
-                            : "—"}
-                        </td>
-                      </tr>
-                    ))}
+                    {board
+                      .map((entry, index) => ({ entry, position: index + 1 }))
+                      .filter(({ entry }) =>
+                        entry.display_name.toLowerCase().includes(query.toLowerCase()),
+                      )
+                      .map(({ entry, position }) => {
+                        const silk =
+                          (entry as RankingEntry & { character?: number }).character ?? 0;
+                        const pct = Math.round(Number(entry.best_pass_percentage));
+                        const status =
+                          currentRound?.status === "pending"
+                            ? { label: "Conectado", className: "bg-muted text-muted-foreground" }
+                            : entry.final_status === "advanced"
+                              ? { label: "Clasificó", className: "bg-success-soft text-success" }
+                              : entry.final_status === "eliminated"
+                                ? { label: "Eliminado", className: "bg-danger-soft text-danger" }
+                                : entry.solved_at
+                                  ? { label: "Resolvió", className: "bg-success-soft text-success" }
+                                  : { label: "En carrera", className: "bg-info-soft text-info" };
+                        return (
+                          <tr key={entry.participant_id}>
+                            <td className="px-5 py-3 font-mono tabular-nums">
+                              {currentRound?.status === "pending" ? "—" : position}
+                            </td>
+                            <td className="px-5 py-3 font-mono text-foreground">
+                              <span className="flex items-center gap-2">
+                                <span
+                                  className={`h-3 w-3 shrink-0 rounded-full bg-silk-${silk % 10}`}
+                                  aria-hidden="true"
+                                />
+                                {entry.display_name}
+                              </span>
+                            </td>
+                            <td className="px-5 py-3">
+                              <span
+                                className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${status.className}`}
+                              >
+                                {status.label}
+                              </span>
+                            </td>
+                            <td className="px-5 py-3">
+                              <div className="flex items-center gap-2">
+                                <div className="h-1.5 w-20 rounded-full bg-muted">
+                                  <div
+                                    className={`h-full rounded-full bg-silk-${silk % 10}`}
+                                    style={{ width: `${pct}%`, transition: "width 0.55s ease" }}
+                                  />
+                                </div>
+                                <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                                  {pct}%
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-5 py-3 font-mono tabular-nums text-muted-foreground">
+                              {entry.failed_attempts_count}
+                            </td>
+                            <td className="px-5 py-3 font-mono tabular-nums">
+                              {entry.solved_at ? (
+                                formatTotalTime(entry.total_time_seconds, entry.penalty_seconds)
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                   </tbody>
                 </table>
+                {board.length === 0 && (
+                  <p className="px-5 py-4 text-sm text-muted-foreground">
+                    {currentRound
+                      ? "Todavía no se conectó nadie a esta ronda."
+                      : "Elegí un torneo con rondas para ver a sus participantes."}
+                  </p>
+                )}
+              </div>
+              <p className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
+                Orden: completó primero (por orden de llegada), después más tests y después menos
+                fallos.
+              </p>
+            </section>
+
+            <section className="rounded-xl border border-border bg-card p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold text-foreground">Cola de evaluación</h3>
+                {/* "Cola no disponible" primero: con Redis caído nada se evalúa,
+                aunque los números de la ronda (que salen de la base) sigan ahí. */}
+                {queueError || queueStats?.queue_available === false ? (
+                  <span className="inline-flex rounded-full bg-danger-soft px-2.5 py-1 text-xs font-medium text-danger">
+                    Cola no disponible
+                  </span>
+                ) : !queueStats ? null : !queueStats.round ? (
+                  <span className="inline-flex rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                    Sin ronda activa
+                  </span>
+                ) : queueStats.round.pending === 0 ? (
+                  <span className="inline-flex rounded-full bg-success-soft px-2.5 py-1 text-xs font-medium text-success">
+                    Sin pendientes
+                  </span>
+                ) : (
+                  <span className="inline-flex rounded-full bg-info-soft px-2.5 py-1 text-xs font-medium text-info">
+                    {queueStats.round.pending} pendientes
+                  </span>
+                )}
+              </div>
+              {queueStats && !queueStats.round ? (
+                <p className="mt-4 rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
+                  No hay una ronda activa. Los contadores son de los envíos de la ronda en curso:
+                  cuando se inicie una, aparecen acá.
+                </p>
+              ) : (
+                <>
+                  {queueStats?.round && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Ronda {queueStats.round.round_number} de “{queueStats.round.tournament_name}”
+                      · {countLabel(queueStats.round.total, "envío", "envíos")}
+                    </p>
+                  )}
+                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                    <Stat label="Pendientes" value={queueStats?.round?.pending ?? "—"} />
+                    <Stat label="Evaluados" value={queueStats?.round?.completed ?? "—"} />
+                    <Stat label="Fallidos" value={queueStats?.round?.failed ?? "—"} />
+                  </div>
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Pendientes: en cola o ejecutándose; la base no distingue entre los dos.
+                    Fallidos: errores de la cola o del juez. Un programa que no compila o falla
+                    casos cuenta como evaluado.
+                  </p>
+                </>
+              )}
+              <div className="mt-5 border-t border-border pt-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Últimos envíos
+                </p>
+                {submissions.length > 0 && (
+                  <div className="mt-2 max-h-80 overflow-auto">
+                    <table className="w-full text-xs">
+                      <thead className="text-left text-muted-foreground">
+                        <tr>
+                          <th className="pb-2 font-medium">Hora</th>
+                          <th className="pb-2 font-medium">Participante</th>
+                          <th className="pb-2 font-medium">Lenguaje</th>
+                          <th className="pb-2 font-medium">Estado</th>
+                          <th className="pb-2 text-right font-medium">Casos</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {submissions.map((submission) => (
+                          <tr key={submission.id}>
+                            <td className="py-1.5 font-mono tabular-nums text-muted-foreground">
+                              {formatTime(submission.submitted_at)}
+                            </td>
+                            <td className="py-1.5 font-mono text-foreground">
+                              {submission.display_name}
+                            </td>
+                            <td className="py-1.5 text-muted-foreground">
+                              {LANGUAGE_LABEL[submission.language] ?? submission.language}
+                            </td>
+                            <td
+                              className={`py-1.5 font-medium ${VERDICT_TONE_CLASS[verdictTone(submission.verdict)]}`}
+                            >
+                              {verdictLabel(submission.verdict)}
+                            </td>
+                            <td className="py-1.5 text-right font-mono tabular-nums">
+                              {submission.test_cases_total
+                                ? `${submission.test_cases_passed}/${submission.test_cases_total}`
+                                : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {submissions.length === 0 && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {liveRoundId
+                      ? "Aún no hay envíos en esta ronda."
+                      : "No hay una ronda en curso."}
+                  </p>
+                )}
+              </div>
+            </section>
+          </div>
+
+          <section className="rounded-xl border border-border bg-card p-5 lg:sticky lg:top-4">
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <PixelIcon name="trophy" className="h-4 w-4 text-primary" /> Progreso del torneo
+            </h3>
+            {!progressTournamentId ? (
+              <p className="mt-4 text-sm text-muted-foreground">
+                Elige un torneo o inicia una ronda para ver su progreso.
+              </p>
+            ) : roundsProgress === null ? (
+              <p className="mt-4 text-sm text-muted-foreground">Cargando rondas…</p>
+            ) : roundsProgress.length === 0 ? (
+              <p className="mt-4 text-sm text-muted-foreground">Sin rondas todavía</p>
+            ) : (
+              <ul className="mt-4 space-y-1">
+                {roundsProgress.map((r) => (
+                  <li
+                    key={r.id}
+                    className={`rounded-lg px-3 py-2 text-sm ${
+                      r.status === "active"
+                        ? "bg-info-soft font-medium text-foreground"
+                        : r.status === "pending"
+                          ? "text-muted-foreground"
+                          : "text-foreground"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span>
+                        Ronda {r.round_number} · {ROUND_STATUS_LABEL[r.status] ?? r.status}
+                        {r.problem_name && (
+                          <span className="ml-1 text-xs text-muted-foreground">
+                            · {r.problem_name}
+                          </span>
+                        )}
+                      </span>
+                      <span className="flex items-center gap-3">
+                        <span className="font-mono tabular-nums">
+                          {r.participants_count} → {r.status === "closed" ? r.advanced_count : "—"}
+                        </span>
+                        {r.status === "pending" && (
+                          <button
+                            type="button"
+                            disabled={Boolean(r.start_blocked_reason) || startingRoundId !== ""}
+                            onClick={() => void beginRound(r.id)}
+                            className="rounded-lg bg-primary px-3 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                          >
+                            {startingRoundId === r.id ? "Iniciando..." : "Iniciar"}
+                          </button>
+                        )}
+                      </span>
+                    </div>
+                    {r.status === "pending" && r.start_blocked_reason && (
+                      <p className="mt-1 text-xs text-muted-foreground">{r.start_blocked_reason}</p>
+                    )}
+                    {r.status === "pending" && roundEdit?.id === r.id && (
+                      <form
+                        className="mt-2 space-y-2 rounded-lg border border-border bg-background p-3 text-xs"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void saveRoundEdit();
+                        }}
+                      >
+                        <label className="block">
+                          <span className="text-muted-foreground">Problema</span>
+                          <select
+                            value={roundEdit.problemId}
+                            onChange={(event) =>
+                              setRoundEdit({ ...roundEdit, problemId: event.target.value })
+                            }
+                            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+                          >
+                            {!roundEdit.problemId && <option value="">Elegí un problema</option>}
+                            {problems.map((problem) => (
+                              <option key={problem.id} value={problem.id}>
+                                {problem.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <div className="flex gap-2">
+                          <label className="block flex-1">
+                            <span className="text-muted-foreground">
+                              Cupo
+                              {roundEdit.maxCapacity !== null
+                                ? ` (máx. ${roundEdit.maxCapacity} inscriptos)`
+                                : ""}
+                            </span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={roundEdit.maxCapacity ?? undefined}
+                              value={roundEdit.capacity}
+                              onChange={(event) =>
+                                setRoundEdit({ ...roundEdit, capacity: Number(event.target.value) })
+                              }
+                              className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+                            />
+                          </label>
+                          <label className="block flex-1">
+                            <span className="text-muted-foreground">Tiempo límite (minutos)</span>
+                            <input
+                              type="number"
+                              min={1}
+                              step="any"
+                              value={roundEdit.minutes}
+                              onChange={(event) =>
+                                setRoundEdit({ ...roundEdit, minutes: Number(event.target.value) })
+                              }
+                              className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+                            />
+                          </label>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            type="submit"
+                            disabled={savingRoundEdit}
+                            className="rounded-lg bg-primary px-3 py-1.5 font-medium text-primary-foreground disabled:opacity-50"
+                          >
+                            {savingRoundEdit ? "Guardando..." : "Guardar"}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={savingRoundEdit}
+                            onClick={() => setRoundEdit(null)}
+                            className="rounded-lg border border-border px-3 py-1.5 font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                    {r.status === "pending" &&
+                      roundEdit?.id !== r.id &&
+                      (confirmDeleteRoundId === r.id ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-danger">
+                          <span>
+                            ¿Borrar la ronda {r.round_number}? Todavía no se jugó
+                            {r.participants_count
+                              ? `; sus ${r.participants_count} inscriptos salen de ella`
+                              : ""}
+                            .
+                          </span>
+                          <button
+                            type="button"
+                            disabled={deletingRoundId !== ""}
+                            onClick={() => void removeRound(r.id, r.round_number)}
+                            className="rounded-lg bg-danger px-2 py-1 font-medium text-danger-foreground disabled:opacity-50"
+                          >
+                            {deletingRoundId === r.id ? "Borrando..." : "Borrar"}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={deletingRoundId !== ""}
+                            onClick={() => setConfirmDeleteRoundId("")}
+                            className="rounded-lg border border-danger px-2 py-1 font-medium"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="mt-1 flex gap-3">
+                          <button
+                            type="button"
+                            disabled={startingRoundId !== "" || deletingRoundId !== ""}
+                            onClick={() => openRoundEdit(r)}
+                            className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            disabled={startingRoundId !== "" || deletingRoundId !== ""}
+                            onClick={() => setConfirmDeleteRoundId(r.id)}
+                            className="text-xs text-muted-foreground underline-offset-2 hover:text-danger hover:underline disabled:opacity-50"
+                          >
+                            Borrar ronda pendiente
+                          </button>
+                        </span>
+                      ))}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {lastRound && advanceFromId && nextRoundPreview && (
+              <div className="mt-4 border-t border-border pt-4">
+                {nextRoundPreview.available ? (
+                  <>
+                    <p className="text-xs text-muted-foreground">
+                      Clasificaron {nextRoundPreview.advancingCount} de{" "}
+                      {lastRound.participants_count} en la ronda {lastRound.round_number}:
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {nextRoundPreview.advancing.map((entry) => (
+                        <span
+                          key={entry.participant_id}
+                          className="rounded-md bg-muted px-2 py-0.5 text-xs text-foreground"
+                        >
+                          {entry.final_rank}. {entry.display_name}
+                        </span>
+                      ))}
+                    </div>
+                    {!showNextForm ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowNextForm(true)}
+                        className="mt-3 w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                      >
+                        Avanzar a la siguiente ronda
+                      </button>
+                    ) : (
+                      <div className="mt-4 space-y-3">
+                        <label className="block text-sm">
+                          <span className="text-muted-foreground">Problema</span>
+                          <select
+                            value={selectedProblem}
+                            onChange={(event) => setSelectedProblem(event.target.value)}
+                            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+                          >
+                            {problems.length === 0 && (
+                              <option value="">No hay problemas disponibles</option>
+                            )}
+                            {problems.map((problem) => (
+                              <option key={problem.id} value={problem.id}>
+                                {problem.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <div className="flex gap-2">
+                          <label className="block flex-1 text-sm">
+                            <span className="text-muted-foreground">
+                              Cupo (máx. {nextRoundPreview.advancingCount})
+                            </span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={nextRoundPreview.advancingCount}
+                              value={nextRoundCapacity}
+                              onChange={(event) => setNextRoundCapacity(Number(event.target.value))}
+                              className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+                            />
+                          </label>
+                          <label className="block flex-1 text-sm">
+                            <span className="text-muted-foreground">Tiempo límite (minutos)</span>
+                            <input
+                              type="number"
+                              min={1}
+                              value={timeLimitMinutes}
+                              onChange={(event) => setTimeLimitMinutes(Number(event.target.value))}
+                              className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+                            />
+                          </label>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Los clasificados quedan inscriptos al crearla. Se crea pendiente: después
+                          hay que iniciarla.
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void saveNextRound()}
+                            disabled={savingNextRound}
+                            className="flex-1 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                          >
+                            {savingNextRound
+                              ? "Creando..."
+                              : `Crear ronda ${nextRoundPreview.nextRoundNumber}`}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={savingNextRound}
+                            onClick={() => setShowNextForm(false)}
+                            className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-xs text-muted-foreground">{nextRoundPreview.reason}</p>
+                )}
               </div>
             )}
-            {submissions.length === 0 && (
-              <p className="mt-2 text-xs text-muted-foreground">
-                {liveRoundId ? "Aún no hay envíos en esta ronda." : "No hay una ronda en curso."}
+          </section>
+        </div>
+      </TabsContent>
+
+      {/* la pista del demo animado, con los sprites de cada participante. */}
+      <TabsContent value="pista">
+        <section className="rounded-xl border border-border bg-card p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <PixelIcon name="flag" className="h-4 w-4 text-primary" />
+              {currentRound
+                ? `Pista · Ronda ${currentRound.round_number} · ${currentRound.problem_name ?? ""}`
+                : "Pista"}
+            </h3>
+            <p className="font-mono text-2xl font-semibold tabular-nums text-foreground">
+              {currentRound?.status === "active" && !ctrlCountingDown
+                ? formatClock(ctrlRemaining)
+                : currentRound?.status === "closed"
+                  ? "Cerrada"
+                  : "--:--"}
+            </p>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Avanzan según los tests que pasan; el orden de los carriles es el del ranking (completó
+            por llegada, después tests, después fallos). La línea roja marca el último que
+            clasifica.
+          </p>
+          <div className="mt-4 space-y-1">
+            {board.map((entry, index) => {
+              const silk = (entry as RankingEntry & { character?: number }).character ?? 0;
+              const pct = Math.min(100, Number(entry.best_pass_percentage));
+              const state =
+                entry.final_status === "eliminated"
+                  ? "out"
+                  : currentRound?.status === "active" && !ctrlCountingDown && !entry.solved_at
+                    ? "run"
+                    : "idle";
+              const cut = currentRound ? index === currentRound.capacity - 1 : false;
+              return (
+                <div
+                  key={entry.participant_id}
+                  className={`relative h-20 border-b-2 ${cut ? "border-danger" : "border-dashed border-border"}`}
+                >
+                  <span className="absolute left-1 top-1 z-10 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <b className="font-mono text-foreground">{index + 1}.º</b>
+                    <span
+                      className={`h-2.5 w-2.5 rounded-sm bg-silk-${silk % 10}`}
+                      aria-hidden="true"
+                    />
+                    {entry.display_name}
+                    {entry.solved_at && (
+                      <span className="font-semibold text-success">· completó</span>
+                    )}
+                    {entry.final_status === "eliminated" && (
+                      <span className="font-semibold text-danger">· eliminado</span>
+                    )}
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    className="absolute bottom-0 right-0 top-0 w-2 opacity-60"
+                    style={{
+                      background:
+                        "repeating-linear-gradient(0deg, var(--foreground) 0 6px, var(--background) 6px 12px)",
+                    }}
+                  />
+                  <div
+                    className="absolute bottom-0 flex items-end"
+                    style={{
+                      left: `calc((100% - 6rem) * ${pct / 100})`,
+                      transition: "left 0.7s steps(6, end)",
+                    }}
+                  >
+                    <Sprite index={silk} state={state} scale={0.5} />
+                  </div>
+                </div>
+              );
+            })}
+            {board.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                Todavía no hay participantes en la ronda de este torneo.
               </p>
             )}
           </div>
@@ -1606,430 +2418,243 @@ export function AdminPanel({
             {message}
           </p>
         )}
-        <section className="rounded-xl border border-border bg-card p-5">
-          <h3 className="text-sm font-semibold text-foreground">Configurar ronda</h3>
-          <p className="mt-2 text-xs text-muted-foreground">
-            Crea la primera ronda de un torneo. Crear no la inicia: queda pendiente y se inicia
-            desde Progreso del torneo. Las rondas siguientes se crean con los clasificados, desde
-            ahí mismo.
-          </p>
-          <div className="mt-4 space-y-4">
-            <label className="block text-sm">
-              <span className="text-muted-foreground">Nombre del torneo</span>
+        {/* crear torneo y elegirlo a la izquierda; editor de ronda a la derecha. */}
+        <div className="grid items-start gap-5 lg:grid-cols-2">
+          <div className="space-y-5">
+            <section className="rounded-xl border border-border bg-card p-5">
+              <h3 className="text-sm font-semibold text-foreground">Crear torneo</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Siempre disponible. El torneo nuevo queda elegido para configurar sus rondas.
+              </p>
+              <div className="mt-4 space-y-3">
+                <input
+                  value={newTournamentInput}
+                  onChange={(event) => setNewTournamentInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void createTournamentAndSelect();
+                  }}
+                  placeholder="Nombre del torneo"
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+                />
+                <button
+                  type="button"
+                  disabled={savingTournament}
+                  onClick={() => void createTournamentAndSelect()}
+                  className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                >
+                  {savingTournament ? "Creando..." : "Crear torneo"}
+                </button>
+              </div>
+            </section>
+
+            <section className="rounded-xl border border-border bg-card p-5">
+              <h3 className="text-sm font-semibold text-foreground">Rondas del torneo</h3>
               <select
-                value={creatingTournament ? NEW_TOURNAMENT_OPTION : tournamentName}
+                value={planTournamentId}
                 onChange={(event) => {
-                  const value = event.target.value;
-                  if (value === NEW_TOURNAMENT_OPTION) {
-                    // Sin torneo elegido mientras se crea: si el admin guarda la
-                    // ronda antes, saveRound pide el nombre en vez de usar el
-                    // anterior en silencio.
-                    setTournamentName("");
-                    setCreatingTournament(true);
-                    return;
-                  }
-                  setCreatingTournament(false);
-                  setTournamentName(value);
+                  setPlanTournamentId(event.target.value);
+                  setPlanIndex(0);
                 }}
-                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+                className="mt-3 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
               >
-                <option value="">
-                  {tournaments.length === 0
-                    ? "No hay torneos. Creá el primero para empezar."
-                    : "Sin torneo seleccionado"}
-                </option>
-                {/* Solo torneos abiertos: los terminados están en Historial. */}
+                <option value="">Elegí un torneo para configurar sus rondas</option>
                 {tournaments.map((tournament) => (
-                  <option key={tournament.id} value={tournament.name}>
+                  <option key={tournament.id} value={tournament.id}>
                     {tournament.name}
                   </option>
                 ))}
-                <option value={NEW_TOURNAMENT_OPTION}>+ Crear nuevo torneo</option>
               </select>
-            </label>
-            {(creatingTournament || tournaments.length === 0) && (
-              <div className="space-y-2">
-                <input
-                  value={newTournamentName}
-                  onChange={(event) => setNewTournamentName(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") void saveTournament();
-                  }}
-                  placeholder="Nombre del nuevo torneo"
-                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
-                />
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    disabled={savingTournament}
-                    onClick={() => void saveTournament()}
-                    className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-opacity hover:opacity-70 disabled:opacity-50"
-                  >
-                    {savingTournament ? "Creando..." : "Crear"}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={savingTournament}
-                    onClick={() => {
-                      setNewTournamentName("");
-                      setCreatingTournament(false);
-                    }}
-                    className="rounded-lg border border-danger px-3 py-1.5 text-xs font-medium text-danger transition-opacity hover:opacity-70 disabled:opacity-50"
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              </div>
-            )}
-            <label className="block text-sm">
-              <span className="text-muted-foreground">Problema</span>
-              <select
-                value={selectedProblem}
-                onChange={(event) => setSelectedProblem(event.target.value)}
-                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
-              >
-                {problems.length === 0 && (
-                  <option value="">No hay problemas: crealos en la pestaña Problemas</option>
-                )}
-                {problems.map((problem) => (
-                  <option key={problem.id} value={problem.id}>
-                    {problem.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block text-sm">
-              <span className="text-muted-foreground">Número de ronda</span>
-              <input
-                type="number"
-                min={1}
-                value={roundNumber}
-                onChange={(event) => setRoundNumber(Number(event.target.value))}
-                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
-              />
-            </label>
-            <label className="block text-sm">
-              <span className="text-muted-foreground">Cupo</span>
-              <input
-                type="number"
-                min={1}
-                value={capacity}
-                onChange={(event) => setCapacity(Number(event.target.value))}
-                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
-              />
-            </label>
-            <label className="block text-sm">
-              <span className="text-muted-foreground">Tiempo límite (minutos)</span>
-              <input
-                type="number"
-                min={1}
-                value={timeLimitMinutes}
-                onChange={(event) => setTimeLimitMinutes(Number(event.target.value))}
-                className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
-              />
-            </label>
-            <button
-              type="button"
-              onClick={() => void saveRound()}
-              disabled={savingRound || formTournamentRounds !== 0}
-              className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-            >
-              {savingRound ? "Creando..." : "Crear ronda"}
-            </button>
-            {formTournamentRounds !== null && formTournamentRounds > 0 && (
-              <p role="status" className="text-xs text-muted-foreground">
-                “{tournamentName.trim()}” ya tiene{" "}
-                {formTournamentRounds === 1 ? "1 ronda" : `${formTournamentRounds} rondas`}. La
-                siguiente se crea con “Avanzar a la siguiente ronda” en Progreso del torneo, que
-                inscribe a los clasificados. Para un evento nuevo, elegí o creá otro torneo.
-              </p>
-            )}
-          </div>
-        </section>
-
-        <section className="rounded-xl border border-border bg-card p-5">
-          <h3 className="text-sm font-semibold text-foreground">Progreso del torneo</h3>
-          {!progressTournamentId ? (
-            <p className="mt-4 text-sm text-muted-foreground">
-              Elige un torneo o inicia una ronda para ver su progreso.
-            </p>
-          ) : roundsProgress === null ? (
-            <p className="mt-4 text-sm text-muted-foreground">Cargando rondas…</p>
-          ) : roundsProgress.length === 0 ? (
-            <p className="mt-4 text-sm text-muted-foreground">Sin rondas todavía</p>
-          ) : (
-            <ul className="mt-4 space-y-1">
-              {roundsProgress.map((r) => (
-                <li
-                  key={r.id}
-                  className={`rounded-lg px-3 py-2 text-sm ${
-                    r.status === "active"
-                      ? "bg-info-soft font-medium text-foreground"
-                      : r.status === "pending"
-                        ? "text-muted-foreground"
-                        : "text-foreground"
-                  }`}
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                <button
+                  type="button"
+                  disabled={
+                    !planTournamentId || savingPlan || plan[plan.length - 1]?.status !== "pending"
+                  }
+                  onClick={removeLastPlanRound}
+                  className="rounded-lg border border-danger px-3 py-1.5 text-xs font-medium text-danger hover:opacity-70 disabled:opacity-40"
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <span>
-                      Ronda {r.round_number} · {ROUND_STATUS_LABEL[r.status] ?? r.status}
-                      {r.problem_name && (
-                        <span className="ml-1 text-xs text-muted-foreground">
-                          · {r.problem_name}
-                        </span>
-                      )}
-                    </span>
-                    <span className="flex items-center gap-3">
-                      <span className="font-mono tabular-nums">
-                        {r.participants_count} → {r.status === "closed" ? r.advanced_count : "—"}
-                      </span>
-                      {r.status === "pending" && (
-                        <button
-                          type="button"
-                          disabled={Boolean(r.start_blocked_reason) || startingRoundId !== ""}
-                          onClick={() => void beginRound(r.id)}
-                          className="rounded-lg bg-primary px-3 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-                        >
-                          {startingRoundId === r.id ? "Iniciando..." : "Iniciar"}
-                        </button>
-                      )}
-                    </span>
-                  </div>
-                  {r.status === "pending" && r.start_blocked_reason && (
-                    <p className="mt-1 text-xs text-muted-foreground">{r.start_blocked_reason}</p>
-                  )}
-                  {r.status === "pending" && roundEdit?.id === r.id && (
-                    <form
-                      className="mt-2 space-y-2 rounded-lg border border-border bg-background p-3 text-xs"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        void saveRoundEdit();
-                      }}
-                    >
-                      <label className="block">
-                        <span className="text-muted-foreground">Problema</span>
-                        <select
-                          value={roundEdit.problemId}
-                          onChange={(event) =>
-                            setRoundEdit({ ...roundEdit, problemId: event.target.value })
-                          }
-                          className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
-                        >
-                          {!roundEdit.problemId && <option value="">Elegí un problema</option>}
-                          {problems.map((problem) => (
-                            <option key={problem.id} value={problem.id}>
-                              {problem.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <div className="flex gap-2">
-                        <label className="block flex-1">
-                          <span className="text-muted-foreground">
-                            Cupo
-                            {roundEdit.maxCapacity !== null
-                              ? ` (máx. ${roundEdit.maxCapacity} inscriptos)`
-                              : ""}
-                          </span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={roundEdit.maxCapacity ?? undefined}
-                            value={roundEdit.capacity}
-                            onChange={(event) =>
-                              setRoundEdit({ ...roundEdit, capacity: Number(event.target.value) })
-                            }
-                            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
-                          />
-                        </label>
-                        <label className="block flex-1">
-                          <span className="text-muted-foreground">Tiempo límite (minutos)</span>
-                          <input
-                            type="number"
-                            min={1}
-                            step="any"
-                            value={roundEdit.minutes}
-                            onChange={(event) =>
-                              setRoundEdit({ ...roundEdit, minutes: Number(event.target.value) })
-                            }
-                            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
-                          />
-                        </label>
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          type="submit"
-                          disabled={savingRoundEdit}
-                          className="rounded-lg bg-primary px-3 py-1.5 font-medium text-primary-foreground disabled:opacity-50"
-                        >
-                          {savingRoundEdit ? "Guardando..." : "Guardar"}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={savingRoundEdit}
-                          onClick={() => setRoundEdit(null)}
-                          className="rounded-lg border border-border px-3 py-1.5 font-medium text-foreground hover:bg-muted disabled:opacity-50"
-                        >
-                          Cancelar
-                        </button>
-                      </div>
-                    </form>
-                  )}
-                  {r.status === "pending" &&
-                    roundEdit?.id !== r.id &&
-                    (confirmDeleteRoundId === r.id ? (
-                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-danger">
-                        <span>
-                          ¿Borrar la ronda {r.round_number}? Todavía no se jugó
-                          {r.participants_count
-                            ? `; sus ${r.participants_count} inscriptos salen de ella`
-                            : ""}
-                          .
-                        </span>
-                        <button
-                          type="button"
-                          disabled={deletingRoundId !== ""}
-                          onClick={() => void removeRound(r.id, r.round_number)}
-                          className="rounded-lg bg-danger px-2 py-1 font-medium text-danger-foreground disabled:opacity-50"
-                        >
-                          {deletingRoundId === r.id ? "Borrando..." : "Borrar"}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={deletingRoundId !== ""}
-                          onClick={() => setConfirmDeleteRoundId("")}
-                          className="rounded-lg border border-danger px-2 py-1 font-medium"
-                        >
-                          Cancelar
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="mt-1 flex gap-3">
-                        <button
-                          type="button"
-                          disabled={startingRoundId !== "" || deletingRoundId !== ""}
-                          onClick={() => openRoundEdit(r)}
-                          className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
-                        >
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          disabled={startingRoundId !== "" || deletingRoundId !== ""}
-                          onClick={() => setConfirmDeleteRoundId(r.id)}
-                          className="text-xs text-muted-foreground underline-offset-2 hover:text-danger hover:underline disabled:opacity-50"
-                        >
-                          Borrar ronda pendiente
-                        </button>
-                      </span>
-                    ))}
-                </li>
-              ))}
-            </ul>
-          )}
-          {lastRound && advanceFromId && nextRoundPreview && (
-            <div className="mt-4 border-t border-border pt-4">
-              {nextRoundPreview.available ? (
-                <>
-                  <p className="text-xs text-muted-foreground">
-                    Clasificaron {nextRoundPreview.advancingCount} de {lastRound.participants_count}{" "}
-                    en la ronda {lastRound.round_number}:
-                  </p>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {nextRoundPreview.advancing.map((entry) => (
-                      <span
-                        key={entry.participant_id}
-                        className="rounded-md bg-muted px-2 py-0.5 text-xs text-foreground"
+                  − Quitar última
+                </button>
+                <button
+                  type="button"
+                  disabled={!planTournamentId || savingPlan}
+                  onClick={addPlanRound}
+                  className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-40"
+                >
+                  + Agregar ronda
+                </button>
+                <button
+                  type="button"
+                  disabled={!planTournamentId || savingPlan || !planDirty}
+                  onClick={() => void savePlan()}
+                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
+                >
+                  {savingPlan ? "Guardando..." : "Guardar todas"}
+                </button>
+              </div>
+              {planTournamentId && (
+                <ul className="mt-4 space-y-1.5">
+                  {plan.map((row, index) => (
+                    <li key={`${row.round_number}-${row.id ?? "nueva"}`}>
+                      <button
+                        type="button"
+                        onClick={() => setPlanIndex(index)}
+                        className={`flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm ${
+                          index === planIndex
+                            ? "border-primary bg-primary/10"
+                            : "border-border hover:bg-muted"
+                        }`}
                       >
-                        {entry.final_rank}. {entry.display_name}
-                      </span>
-                    ))}
-                  </div>
-                  {!showNextForm ? (
-                    <button
-                      type="button"
-                      onClick={() => setShowNextForm(true)}
-                      className="mt-3 w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-                    >
-                      Avanzar a la siguiente ronda
-                    </button>
-                  ) : (
-                    <div className="mt-4 space-y-3">
-                      <label className="block text-sm">
-                        <span className="text-muted-foreground">Problema</span>
-                        <select
-                          value={selectedProblem}
-                          onChange={(event) => setSelectedProblem(event.target.value)}
-                          className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
-                        >
-                          {problems.length === 0 && (
-                            <option value="">No hay problemas disponibles</option>
-                          )}
-                          {problems.map((problem) => (
-                            <option key={problem.id} value={problem.id}>
-                              {problem.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <div className="flex gap-2">
-                        <label className="block flex-1 text-sm">
-                          <span className="text-muted-foreground">
-                            Cupo (máx. {nextRoundPreview.advancingCount})
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="font-mono font-semibold">R{row.round_number}</span>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-xs font-medium ${DIFFICULTY_CLASS[row.difficulty]}`}
+                          >
+                            {DIFFICULTY_LABEL[row.difficulty]}
                           </span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={nextRoundPreview.advancingCount}
-                            value={nextRoundCapacity}
-                            onChange={(event) => setNextRoundCapacity(Number(event.target.value))}
-                            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
-                          />
-                        </label>
-                        <label className="block flex-1 text-sm">
-                          <span className="text-muted-foreground">Tiempo límite (minutos)</span>
-                          <input
-                            type="number"
-                            min={1}
-                            value={timeLimitMinutes}
-                            onChange={(event) => setTimeLimitMinutes(Number(event.target.value))}
-                            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
-                          />
-                        </label>
+                          <span className="truncate text-muted-foreground">
+                            {problems.find((problem) => problem.id === row.problemId)?.name ??
+                              "Sin problema"}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {row.id ? (ROUND_STATUS_LABEL[row.status] ?? row.status) : "Sin guardar"}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                  {plan.length === 0 && (
+                    <li className="text-xs text-muted-foreground">
+                      Este torneo todavía no tiene rondas. Agregá la primera.
+                    </li>
+                  )}
+                </ul>
+              )}
+              {planDirty && (
+                <p className="mt-3 text-xs text-info">Hay cambios sin guardar en el plan.</p>
+              )}
+            </section>
+          </div>
+
+          {(() => {
+            const row = plan[planIndex];
+            const enabled = Boolean(planTournamentId && row);
+            const editable = enabled && row?.status === "pending";
+            const filtered = row
+              ? problems.filter((problem) => problem.difficulty === row.difficulty)
+              : [];
+            return (
+              <section
+                aria-disabled={!enabled}
+                className={`rounded-xl border border-border bg-card p-5 ${enabled ? "" : "opacity-50"}`}
+              >
+                <h3 className="text-sm font-semibold text-foreground">Ronda</h3>
+                {!enabled ? (
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    Elegí o creá un torneo para configurar sus rondas.
+                  </p>
+                ) : (
+                  <div className="mt-4 space-y-4">
+                    <div className="flex items-center gap-4">
+                      <div className="grid h-16 w-16 shrink-0 place-items-center rounded-xl bg-muted font-mono text-2xl font-bold text-foreground">
+                        {row!.round_number}
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        Los clasificados quedan inscriptos al crearla. Se crea pendiente: después
-                        hay que iniciarla.
+                        {editable
+                          ? "Ronda pendiente: se puede editar sola o junto con las demás."
+                          : "Esta ronda ya empezó: no se puede editar."}
                       </p>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => void saveNextRound()}
-                          disabled={savingNextRound}
-                          className="flex-1 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-                        >
-                          {savingNextRound
-                            ? "Creando..."
-                            : `Crear ronda ${nextRoundPreview.nextRoundNumber}`}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={savingNextRound}
-                          onClick={() => setShowNextForm(false)}
-                          className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50"
-                        >
-                          Cancelar
-                        </button>
-                      </div>
                     </div>
-                  )}
-                </>
-              ) : (
-                <p className="text-xs text-muted-foreground">{nextRoundPreview.reason}</p>
-              )}
-            </div>
-          )}
-        </section>
+                    <label className="block text-sm">
+                      <span className="text-muted-foreground">Nivel de dificultad</span>
+                      <select
+                        value={row!.difficulty}
+                        disabled={!editable}
+                        onChange={(event) => {
+                          const difficulty = event.target.value as ProblemDifficulty;
+                          updatePlanRow(planIndex, {
+                            difficulty,
+                            problemId: firstProblemOf(difficulty),
+                          });
+                        }}
+                        className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+                      >
+                        {(Object.keys(DIFFICULTY_LABEL) as ProblemDifficulty[]).map((key) => (
+                          <option key={key} value={key}>
+                            {DIFFICULTY_LABEL[key]}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block text-sm">
+                      <span className="text-muted-foreground">
+                        Problema ({countLabel(filtered.length, "disponible", "disponibles")} en{" "}
+                        {DIFFICULTY_LABEL[row!.difficulty].toLowerCase()})
+                      </span>
+                      <select
+                        value={row!.problemId}
+                        disabled={!editable}
+                        onChange={(event) =>
+                          updatePlanRow(planIndex, { problemId: event.target.value })
+                        }
+                        className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+                      >
+                        {filtered.length === 0 && (
+                          <option value="">No hay problemas con esta dificultad</option>
+                        )}
+                        {filtered.map((problem) => (
+                          <option key={problem.id} value={problem.id}>
+                            {problem.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="flex gap-3">
+                      <label className="block flex-1 text-sm">
+                        <span className="text-muted-foreground">Cupo (clasifican)</span>
+                        <input
+                          type="number"
+                          min={1}
+                          disabled={!editable}
+                          value={row!.capacity}
+                          onChange={(event) =>
+                            updatePlanRow(planIndex, { capacity: Number(event.target.value) })
+                          }
+                          className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+                        />
+                      </label>
+                      <label className="block flex-1 text-sm">
+                        <span className="text-muted-foreground">Tiempo (minutos)</span>
+                        <input
+                          type="number"
+                          min={1}
+                          disabled={!editable}
+                          value={row!.minutes}
+                          onChange={(event) =>
+                            updatePlanRow(planIndex, { minutes: Number(event.target.value) })
+                          }
+                          className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+                        />
+                      </label>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!editable || savingPlan}
+                      onClick={() => void savePlanRow(planIndex)}
+                      className="w-full rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                    >
+                      {savingPlan ? "Guardando..." : `Guardar solo la ronda ${row!.round_number}`}
+                    </button>
+                    <p className="text-xs text-muted-foreground">
+                      Las rondas se inician desde Control de ronda, en orden. La siguiente recibe a
+                      los clasificados de la anterior.
+                    </p>
+                  </div>
+                )}
+              </section>
+            );
+          })()}
+        </div>
       </TabsContent>
 
       <TabsContent value="problemas" className="space-y-5">
@@ -2041,238 +2666,7 @@ export function AdminPanel({
             {message}
           </p>
         )}
-        <section className="rounded-xl border border-border bg-card p-5">
-          <h3 className="text-sm font-semibold text-foreground">Problemas</h3>
-          {problems.length === 0 ? (
-            <p className="mt-2 text-xs text-muted-foreground">Todavía no hay problemas.</p>
-          ) : (
-            <>
-              <div className="mt-3 flex flex-wrap items-center gap-3 border-b border-border pb-3 text-xs">
-                <label className="flex items-center gap-2 text-muted-foreground">
-                  <SelectAllCheckbox
-                    label="Seleccionar todos los problemas"
-                    selectableIds={problemIds}
-                    selected={selectedProblemIds}
-                    onChange={changeProblemSelection}
-                    disabled={problemBulkBusy}
-                  />
-                  Todos
-                </label>
-                <span className="text-muted-foreground">
-                  {countLabel(selectedProblemIds.size, "seleccionado", "seleccionados")}
-                </span>
-                <button
-                  type="button"
-                  disabled={selectedProblemIds.size === 0 || problemBulkBusy}
-                  onClick={() => void askBulkDeleteProblems()}
-                  className="rounded-lg border border-danger px-3 py-1 font-medium text-danger hover:opacity-70 disabled:opacity-50"
-                >
-                  {problemBulkBusy && !problemBulkPreview
-                    ? "Revisando..."
-                    : `Borrar ${countLabel(selectedProblemIds.size, "problema", "problemas")}`}
-                </button>
-              </div>
-              {problemBulkPreview && (
-                <div
-                  role="alertdialog"
-                  aria-label="Borrar problemas seleccionados"
-                  className="mt-3 space-y-2 rounded-lg border border-danger bg-danger-soft p-3 text-xs text-danger"
-                >
-                  <p className="font-medium">
-                    De{" "}
-                    {countLabel(
-                      selectedProblemIds.size,
-                      "problema seleccionado",
-                      "problemas seleccionados",
-                    )}{" "}
-                    se van a borrar {problemBulkPreview.deletable.length} y quedan afuera{" "}
-                    {problemBulkPreview.blocked.length + problemBulkPreview.missing.length}. Todavía
-                    no se borró nada.
-                  </p>
-                  {problemBulkPreview.deletable.length > 0 && (
-                    <ul className="list-disc pl-5">
-                      {problemBulkPreview.deletable.map((problem) => (
-                        <li key={problem.id}>
-                          “{problem.name}”
-                          {problem.rounds_kept > 0 &&
-                            ` · ${countLabel(problem.rounds_kept, "ronda de un torneo terminado conserva", "rondas de torneos terminados conservan")} el nombre, sin enunciado ni casos`}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {problemBulkPreview.blocked.length > 0 && (
-                    <>
-                      <p>Quedan afuera, porque los usa un torneo que no terminó:</p>
-                      <ul className="list-disc pl-5">
-                        {problemBulkPreview.blocked.map((problem) => (
-                          <li key={problem.id}>
-                            “{problem.name}”:{" "}
-                            {problem.blocking
-                              .map(
-                                (r) =>
-                                  `ronda ${r.round_number} de “${r.tournament_name}” (${(ROUND_STATUS_LABEL[r.status] ?? r.status).toLowerCase()})`,
-                              )
-                              .join(", ")}
-                          </li>
-                        ))}
-                      </ul>
-                    </>
-                  )}
-                  {problemBulkPreview.missing.length > 0 && (
-                    <p>{problemBulkPreview.missing.length} ya no existían.</p>
-                  )}
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={problemBulkBusy || problemBulkPreview.deletable.length === 0}
-                      onClick={() => void confirmBulkDeleteProblems()}
-                      className="rounded-lg bg-danger px-3 py-1.5 font-medium text-danger-foreground disabled:opacity-50"
-                    >
-                      {problemBulkBusy
-                        ? "Borrando..."
-                        : problemBulkPreview.deletable.length === 0
-                          ? "No hay nada que borrar"
-                          : `Borrar ${countLabel(problemBulkPreview.deletable.length, "problema", "problemas")} definitivamente`}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={problemBulkBusy}
-                      onClick={() => setProblemBulkPreview(null)}
-                      className="rounded-lg border border-danger px-3 py-1.5 font-medium"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              )}
-              <ul className="mt-1 divide-y divide-border text-sm">
-                {problems.map((problem) => (
-                  <li key={problem.id} className="py-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="flex items-center gap-3 text-foreground">
-                        <RowCheckbox
-                          id={problem.id}
-                          label={`Seleccionar ${problem.name}`}
-                          selected={selectedProblemIds}
-                          onChange={changeProblemSelection}
-                          disabled={problemBulkBusy}
-                        />
-                        {problem.name}
-                        {editingProblem?.id === problem.id && (
-                          <span className="text-xs text-info">en edición</span>
-                        )}
-                      </span>
-                      <span className="flex gap-2">
-                        <button
-                          type="button"
-                          disabled={loadingProblemId !== "" || savingProblem}
-                          onClick={() => void editProblem(problem.id)}
-                          className="rounded-lg border border-border px-3 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
-                        >
-                          {loadingProblemId === problem.id ? "Cargando..." : "Editar"}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={deletingProblem}
-                          onClick={() => void askDeleteProblem(problem)}
-                          className="rounded-lg border border-danger px-3 py-1 text-xs font-medium text-danger hover:opacity-70 disabled:opacity-50"
-                        >
-                          Eliminar
-                        </button>
-                      </span>
-                    </div>
-                    {deleteTarget?.id === problem.id && (
-                      <div
-                        role="alertdialog"
-                        aria-label={`Eliminar ${problem.name}`}
-                        className="mt-2 space-y-2 rounded-lg border border-danger bg-danger-soft p-3 text-xs text-danger"
-                      >
-                        {!deleteTarget.detail ? (
-                          <p>Consultando qué rondas usan este problema…</p>
-                        ) : deleteTarget.detail.rounds.length === 0 ? (
-                          <p>Ninguna ronda usa este problema: no hay historial que perder.</p>
-                        ) : (
-                          <>
-                            <p>
-                              {deleteTarget.detail.rounds.length === 1
-                                ? "Lo usa 1 ronda:"
-                                : `Lo usan ${deleteTarget.detail.rounds.length} rondas:`}
-                            </p>
-                            <ul className="list-disc pl-5">
-                              {deleteTarget.detail.rounds.map((r) => (
-                                <li key={r.id}>
-                                  Ronda {r.round_number} de “{r.tournament_name}” ·{" "}
-                                  {(ROUND_STATUS_LABEL[r.status] ?? r.status).toLowerCase()}
-                                  {r.tournament_status === "finished" ? " · torneo terminado" : ""}
-                                </li>
-                              ))}
-                            </ul>
-                            {deleteTarget.detail.rounds.some(
-                              (r) => r.tournament_status === "finished",
-                            ) && (
-                              <p>
-                                Las rondas de torneos terminados se conservan con su número, estado,
-                                participantes y envíos, y guardan el nombre del problema. Lo que se
-                                pierde es el enunciado y los casos: no se va a poder auditar qué se
-                                juzgó.
-                              </p>
-                            )}
-                            {deleteTarget.detail.rounds.some(
-                              (r) => r.tournament_status !== "finished" && r.status !== "pending",
-                            ) && (
-                              <p>
-                                Una ronda ya jugada de un torneo que sigue abierto bloquea el
-                                borrado hasta que el torneo termine.
-                              </p>
-                            )}
-                            {deleteTarget.detail.rounds
-                              .filter(
-                                (r) => r.status === "pending" && r.tournament_status !== "finished",
-                              )
-                              .map((r) => (
-                                <p key={r.id} className="flex flex-wrap items-center gap-2">
-                                  La ronda {r.round_number} de “{r.tournament_name}” todavía no se
-                                  jugó: cambiale el problema con “Editar” en Progreso del torneo, o
-                                  borrala.
-                                  <button
-                                    type="button"
-                                    disabled={deletingProblem}
-                                    onClick={() => void removePendingRound(r.id, r.round_number)}
-                                    className="rounded-lg border border-danger px-2 py-1 font-medium disabled:opacity-50"
-                                  >
-                                    Borrar la ronda {r.round_number} pendiente
-                                  </button>
-                                </p>
-                              ))}
-                          </>
-                        )}
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            disabled={deletingProblem || !deleteTarget.detail}
-                            onClick={() => void confirmDeleteProblem()}
-                            className="rounded-lg bg-danger px-3 py-1.5 font-medium text-danger-foreground disabled:opacity-50"
-                          >
-                            {deletingProblem ? "Eliminando..." : "Eliminar problema"}
-                          </button>
-                          <button
-                            type="button"
-                            disabled={deletingProblem}
-                            onClick={() => setDeleteTarget(null)}
-                            className="rounded-lg border border-danger px-3 py-1.5 font-medium"
-                          >
-                            Cancelar
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </section>
-
+        {/* una sola caja: formulario arriba, lista y borrado al final. */}
         <section ref={problemFormRef} className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground">
             {editingProblem ? `Editar problema “${editingProblem.name}”` : "Crear problema"}
@@ -2513,6 +2907,243 @@ export function AdminPanel({
               </p>
             )}
           </form>
+
+          <div className="mt-6 border-t border-border pt-4">
+            <h3 className="text-sm font-semibold text-foreground">
+              Problemas guardados ({problems.length})
+            </h3>
+            {problems.length === 0 ? (
+              <p className="mt-2 text-xs text-muted-foreground">Todavía no hay problemas.</p>
+            ) : (
+              <>
+                <ul className="mt-1 divide-y divide-border text-sm">
+                  {problems.map((problem) => (
+                    <li key={problem.id} className="py-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="flex items-center gap-3 text-foreground">
+                          <RowCheckbox
+                            id={problem.id}
+                            label={`Seleccionar ${problem.name}`}
+                            selected={selectedProblemIds}
+                            onChange={changeProblemSelection}
+                            disabled={problemBulkBusy}
+                          />
+                          {problem.name}
+                          {editingProblem?.id === problem.id && (
+                            <span className="text-xs text-info">en edición</span>
+                          )}
+                        </span>
+                        <span className="flex gap-2">
+                          <button
+                            type="button"
+                            disabled={loadingProblemId !== "" || savingProblem}
+                            onClick={() => void editProblem(problem.id)}
+                            className="rounded-lg border border-border px-3 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                          >
+                            {loadingProblemId === problem.id ? "Cargando..." : "Editar"}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={deletingProblem}
+                            onClick={() => void askDeleteProblem(problem)}
+                            className="rounded-lg border border-danger px-3 py-1 text-xs font-medium text-danger hover:opacity-70 disabled:opacity-50"
+                          >
+                            Eliminar
+                          </button>
+                        </span>
+                      </div>
+                      {deleteTarget?.id === problem.id && (
+                        <div
+                          role="alertdialog"
+                          aria-label={`Eliminar ${problem.name}`}
+                          className="mt-2 space-y-2 rounded-lg border border-danger bg-danger-soft p-3 text-xs text-danger"
+                        >
+                          {!deleteTarget.detail ? (
+                            <p>Consultando qué rondas usan este problema…</p>
+                          ) : deleteTarget.detail.rounds.length === 0 ? (
+                            <p>Ninguna ronda usa este problema: no hay historial que perder.</p>
+                          ) : (
+                            <>
+                              <p>
+                                {deleteTarget.detail.rounds.length === 1
+                                  ? "Lo usa 1 ronda:"
+                                  : `Lo usan ${deleteTarget.detail.rounds.length} rondas:`}
+                              </p>
+                              <ul className="list-disc pl-5">
+                                {deleteTarget.detail.rounds.map((r) => (
+                                  <li key={r.id}>
+                                    Ronda {r.round_number} de “{r.tournament_name}” ·{" "}
+                                    {(ROUND_STATUS_LABEL[r.status] ?? r.status).toLowerCase()}
+                                    {r.tournament_status === "finished"
+                                      ? " · torneo terminado"
+                                      : ""}
+                                  </li>
+                                ))}
+                              </ul>
+                              {deleteTarget.detail.rounds.some(
+                                (r) => r.tournament_status === "finished",
+                              ) && (
+                                <p>
+                                  Las rondas de torneos terminados se conservan con su número,
+                                  estado, participantes y envíos, y guardan el nombre del problema.
+                                  Lo que se pierde es el enunciado y los casos: no se va a poder
+                                  auditar qué se juzgó.
+                                </p>
+                              )}
+                              {deleteTarget.detail.rounds.some(
+                                (r) => r.tournament_status !== "finished" && r.status !== "pending",
+                              ) && (
+                                <p>
+                                  Una ronda ya jugada de un torneo que sigue abierto bloquea el
+                                  borrado hasta que el torneo termine.
+                                </p>
+                              )}
+                              {deleteTarget.detail.rounds
+                                .filter(
+                                  (r) =>
+                                    r.status === "pending" && r.tournament_status !== "finished",
+                                )
+                                .map((r) => (
+                                  <p key={r.id} className="flex flex-wrap items-center gap-2">
+                                    La ronda {r.round_number} de “{r.tournament_name}” todavía no se
+                                    jugó: cambiale el problema con “Editar” en Progreso del torneo,
+                                    o borrala.
+                                    <button
+                                      type="button"
+                                      disabled={deletingProblem}
+                                      onClick={() => void removePendingRound(r.id, r.round_number)}
+                                      className="rounded-lg border border-danger px-2 py-1 font-medium disabled:opacity-50"
+                                    >
+                                      Borrar la ronda {r.round_number} pendiente
+                                    </button>
+                                  </p>
+                                ))}
+                            </>
+                          )}
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              disabled={deletingProblem || !deleteTarget.detail}
+                              onClick={() => void confirmDeleteProblem()}
+                              className="rounded-lg bg-danger px-3 py-1.5 font-medium text-danger-foreground disabled:opacity-50"
+                            >
+                              {deletingProblem ? "Eliminando..." : "Eliminar problema"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={deletingProblem}
+                              onClick={() => setDeleteTarget(null)}
+                              className="rounded-lg border border-danger px-3 py-1.5 font-medium"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-border pt-3 text-xs">
+                  <label className="flex items-center gap-2 text-muted-foreground">
+                    <SelectAllCheckbox
+                      label="Seleccionar todos los problemas"
+                      selectableIds={problemIds}
+                      selected={selectedProblemIds}
+                      onChange={changeProblemSelection}
+                      disabled={problemBulkBusy}
+                    />
+                    Todos
+                  </label>
+                  <span className="text-muted-foreground">
+                    {countLabel(selectedProblemIds.size, "seleccionado", "seleccionados")}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={selectedProblemIds.size === 0 || problemBulkBusy}
+                    onClick={() => void askBulkDeleteProblems()}
+                    className="rounded-lg border border-danger px-3 py-1 font-medium text-danger hover:opacity-70 disabled:opacity-50"
+                  >
+                    {problemBulkBusy && !problemBulkPreview
+                      ? "Revisando..."
+                      : `Borrar ${countLabel(selectedProblemIds.size, "problema", "problemas")}`}
+                  </button>
+                </div>
+                {problemBulkPreview && (
+                  <div
+                    role="alertdialog"
+                    aria-label="Borrar problemas seleccionados"
+                    className="mt-3 space-y-2 rounded-lg border border-danger bg-danger-soft p-3 text-xs text-danger"
+                  >
+                    <p className="font-medium">
+                      De{" "}
+                      {countLabel(
+                        selectedProblemIds.size,
+                        "problema seleccionado",
+                        "problemas seleccionados",
+                      )}{" "}
+                      se van a borrar {problemBulkPreview.deletable.length} y quedan afuera{" "}
+                      {problemBulkPreview.blocked.length + problemBulkPreview.missing.length}.
+                      Todavía no se borró nada.
+                    </p>
+                    {problemBulkPreview.deletable.length > 0 && (
+                      <ul className="list-disc pl-5">
+                        {problemBulkPreview.deletable.map((problem) => (
+                          <li key={problem.id}>
+                            “{problem.name}”
+                            {problem.rounds_kept > 0 &&
+                              ` · ${countLabel(problem.rounds_kept, "ronda de un torneo terminado conserva", "rondas de torneos terminados conservan")} el nombre, sin enunciado ni casos`}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {problemBulkPreview.blocked.length > 0 && (
+                      <>
+                        <p>Quedan afuera, porque los usa un torneo que no terminó:</p>
+                        <ul className="list-disc pl-5">
+                          {problemBulkPreview.blocked.map((problem) => (
+                            <li key={problem.id}>
+                              “{problem.name}”:{" "}
+                              {problem.blocking
+                                .map(
+                                  (r) =>
+                                    `ronda ${r.round_number} de “${r.tournament_name}” (${(ROUND_STATUS_LABEL[r.status] ?? r.status).toLowerCase()})`,
+                                )
+                                .join(", ")}
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    {problemBulkPreview.missing.length > 0 && (
+                      <p>{problemBulkPreview.missing.length} ya no existían.</p>
+                    )}
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={problemBulkBusy || problemBulkPreview.deletable.length === 0}
+                        onClick={() => void confirmBulkDeleteProblems()}
+                        className="rounded-lg bg-danger px-3 py-1.5 font-medium text-danger-foreground disabled:opacity-50"
+                      >
+                        {problemBulkBusy
+                          ? "Borrando..."
+                          : problemBulkPreview.deletable.length === 0
+                            ? "No hay nada que borrar"
+                            : `Borrar ${countLabel(problemBulkPreview.deletable.length, "problema", "problemas")} definitivamente`}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={problemBulkBusy}
+                        onClick={() => setProblemBulkPreview(null)}
+                        className="rounded-lg border border-danger px-3 py-1.5 font-medium"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </section>
       </TabsContent>
 
@@ -2521,7 +3152,8 @@ export function AdminPanel({
           <h3 className="text-sm font-semibold text-foreground">Códigos de acceso</h3>
           <p className="mt-2 text-xs text-muted-foreground">
             Cada código se puede canjear una sola vez. Si lo asocias a un torneo, se invalida solo
-            cuando el torneo termina o cuando vence el plazo.
+            cuando el torneo termina o cuando vence el plazo. Los vencidos o invalidados se quitan
+            solos de la lista.
           </p>
 
           <div className="mt-4 space-y-3">
@@ -2598,37 +3230,68 @@ export function AdminPanel({
           </div>
 
           {generatedCodes.length > 0 && (
-            <textarea
-              readOnly
-              value={generatedCodes.join("\n")}
-              className="mt-3 h-32 w-full resize-none rounded-lg border border-input bg-background p-3 font-mono text-xs text-foreground outline-none"
-              aria-label="Códigos generados"
-            />
+            <div className="mt-3 space-y-2">
+              <textarea
+                readOnly
+                value={generatedCodes.join("\n")}
+                className="h-32 w-full resize-none rounded-lg border border-input bg-background p-3 font-mono text-xs text-foreground outline-none"
+                aria-label="Códigos generados"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  // Solo los que siguen sin usar: si alguno se canjeó o venció, no se copia.
+                  const unused = new Set(
+                    visibleCodes.filter((c) => c.status === "unused").map((c) => c.code),
+                  );
+                  void copyCodes(
+                    "generated",
+                    generatedCodes.filter((code) => unused.has(code)),
+                  );
+                }}
+                className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+              >
+                {copiedKey === "generated" ? "Copiados ✓" : "Copiar los generados"}
+              </button>
+            </div>
           )}
 
-          <div className="mt-4 flex items-center justify-between">
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
             <h4 className="text-xs font-semibold text-foreground">Códigos emitidos</h4>
-            <button
-              type="button"
-              onClick={() => void refreshCodes()}
-              className="text-xs text-primary hover:underline"
-            >
-              Actualizar
-            </button>
+            <span className="flex items-center gap-3">
+              <button
+                type="button"
+                disabled={unusedCodes.length === 0}
+                onClick={() => void copyCodes("all", unusedCodes)}
+                className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
+              >
+                {copiedKey === "all"
+                  ? "Copiados ✓"
+                  : `Copiar todos sin usar (${unusedCodes.length})`}
+              </button>
+              <button
+                type="button"
+                onClick={() => void refreshCodes()}
+                className="text-xs text-primary hover:underline"
+              >
+                Actualizar
+              </button>
+            </span>
           </div>
 
-          {codes.length > 0 && (
-            <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-border">
+          {visibleCodes.length > 0 && (
+            <div className="mt-2 max-h-72 overflow-y-auto rounded-lg border border-border">
               <table className="w-full text-left text-xs">
                 <thead className="sticky top-0 bg-muted text-muted-foreground">
                   <tr>
                     <th className="px-2 py-1.5 font-medium">Código</th>
                     <th className="px-2 py-1.5 font-medium">Estado</th>
                     <th className="px-2 py-1.5 font-medium">Vence</th>
+                    <th className="px-2 py-1.5 text-right font-medium">Copiar</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {codes.map((item) => (
+                  {visibleCodes.map((item) => (
                     <tr key={item.id} className="border-t border-border">
                       <td className="px-2 py-1.5 font-mono text-foreground">
                         {item.code}
@@ -2646,6 +3309,19 @@ export function AdminPanel({
                       <td className="px-2 py-1.5 text-muted-foreground">
                         {item.expires_at ? formatExpiry(item.expires_at) : "—"}
                       </td>
+                      <td className="px-2 py-1.5 text-right">
+                        {item.status === "unused" ? (
+                          <button
+                            type="button"
+                            onClick={() => void copyCodes(item.id, [item.code])}
+                            className="rounded-md border border-border px-2 py-0.5 font-medium text-foreground hover:bg-muted"
+                          >
+                            {copiedKey === item.id ? "✓" : "Copiar"}
+                          </button>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -2653,7 +3329,7 @@ export function AdminPanel({
             </div>
           )}
           {loadingCodes && <p className="mt-2 text-xs text-muted-foreground">Cargando…</p>}
-          {!loadingCodes && codes.length === 0 && (
+          {!loadingCodes && visibleCodes.length === 0 && (
             <p className="mt-2 text-xs text-muted-foreground">Todavía no hay códigos emitidos.</p>
           )}
 

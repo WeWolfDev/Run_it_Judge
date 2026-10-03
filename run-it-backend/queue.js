@@ -44,4 +44,4 @@ function startSubmissionWorker(loadTestCases, processSubmission) {
   );
 }
 
-module.exports = { submissionQueue, startSubmissionWorker };
+module.exports = { submissionQueue, startSubmissionWorker, judge0Slots };

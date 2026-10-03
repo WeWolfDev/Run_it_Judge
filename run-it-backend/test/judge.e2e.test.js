@@ -314,9 +314,14 @@ test('preparación: torneo, tres rondas y cinco participantes en run_it_dev', { 
 	state.hundredRound = await createRound('cien', { name: 'cien casos', testCases: HUNDRED_CASES }, 50);
 	state.penaltyRound = await createRound('penal', { name: 'suma un caso', testCases: SUM_CASES.slice(0, 1) }, 5);
 	state.orderRound = await createRound('orden', { name: 'orden de casos', testCases: ORDER_CASES }, 50);
+	// Probar código: un caso público y uno privado, para ver que solo corre el público.
+	state.runRound = await createRound('probar', {
+		name: 'probar',
+		testCases: [{ ...SUM_CASES[0], is_sample: true }, SUM_CASES[1]],
+	}, 50);
 
 	const { codes } = await api('POST', '/access-codes/generate', {
-		count: 6,
+		count: 7,
 		tournamentId: state.tournament.id,
 	}, state.adminToken);
 	state.participants = {};
@@ -326,6 +331,7 @@ test('preparación: torneo, tres rondas y cinco participantes en run_it_dev', { 
 	state.participants.hundred = await enroll('cien', codes[3].code, [state.hundredRound.id]);
 	state.participants.penalty = await enroll('penal', codes[4].code, [state.penaltyRound.id]);
 	state.participants.order = await enroll('orden', codes[5].code, [state.orderRound.id]);
+	state.participants.run = await enroll('probar', codes[6].code, [state.runRound.id]);
 
 	// POST /rounds/:id/start abre una cuenta regresiva: hasta starts_at el
 	// backend rechaza los envíos con 409. Mismo host, mismo reloj.
@@ -467,6 +473,56 @@ test('penalización: WA, TLE, AC y un fallo posterior que no suma', { skip }, as
 	assert.equal(row.penalty_seconds, 60, 'un fallo posterior al AC subió la penalización');
 	assert.equal(row.failed_attempts_count, 2, 'un fallo posterior al AC subió el contador');
 	assert.equal(row.solved_at.toISOString(), solvedAt);
+});
+
+// POST /rounds/:id/run espera RUN_INTERVAL_MS (3 s) entre pruebas del mismo usuario.
+async function tryRun(participant, roundId, language, code, stdin) {
+	const last = state.lastSubmitAt.get(`run:${participant.token}`) || 0;
+	const wait = 3100 - (Date.now() - last);
+	if (wait > 0) await sleep(wait);
+	const body = { participantId: participant.participantId, code, language };
+	if (stdin !== undefined) body.stdin = stdin;
+	const result = await api('POST', `/rounds/${roundId}/run`, body, participant.token);
+	state.lastSubmitAt.set(`run:${participant.token}`, Date.now());
+	return result;
+}
+
+test('probar código: corre solo los ejemplos, acepta entrada propia y no deja rastro', { skip }, async (t) => {
+	const participant = state.participants.run;
+	const roundId = state.runRound.id;
+
+	const ok = await tryRun(participant, roundId, 'python', PROGRAMS.python.accepted);
+	t.diagnostic(`ejemplos AC: ${JSON.stringify(ok)}`);
+	assert.equal(ok.mode, 'samples');
+	assert.equal(ok.total, 1, 'corrió un caso que no es de ejemplo');
+	assert.equal(ok.passed, 1);
+	assert.equal(ok.results[0].expected, SUM_CASES[0].expected);
+
+	const wrong = await tryRun(participant, roundId, 'python', PROGRAMS.python.wrong);
+	assert.equal(wrong.passed, 0);
+	assert.equal(wrong.results[0].status, 'Wrong Answer');
+
+	const broken = await tryRun(participant, roundId, 'c', 'int main() { return 0 }');
+	t.diagnostic(`C sin punto y coma: ${broken.results[0].status}`);
+	assert.equal(broken.results[0].status, 'Compilation Error');
+	assert.ok(broken.results[0].compile_output.length > 0, 'sin compile_output');
+
+	const custom = await tryRun(participant, roundId, 'cpp', PROGRAMS.cpp.accepted, '7 8\n');
+	assert.equal(custom.mode, 'custom');
+	assert.equal(custom.results[0].stdout.trim(), '15');
+	assert.equal('passed' in custom.results[0], false);
+
+	// Dos pruebas seguidas: la segunda espera.
+	await assert.rejects(
+		api('POST', `/rounds/${roundId}/run`, { participantId: participant.participantId, code: 'print(1)', language: 'python' }, participant.token),
+		/429/,
+	);
+
+	const { rows } = await state.db.query('SELECT count(*)::int AS n FROM submissions WHERE participant_id = $1', [participant.participantId]);
+	assert.equal(rows[0].n, 0, 'probar guardó envíos');
+	const row = await roundParticipant(roundId, participant.participantId);
+	assert.equal(row.penalty_seconds, 0, 'probar sumó penalización');
+	assert.equal(row.failed_attempts_count, 0);
 });
 
 test.after(async () => {
