@@ -19,6 +19,7 @@ const { initDb, query, withTransaction } = require('./db');
 const { submissionQueue, startSubmissionWorker, judge0Slots } = require('./queue');
 const { createSubmission, waitForSubmission } = require('./judge0-client');
 const { createLimiter, runTestCases } = require('./case-runner');
+const { computeAwards } = require('./awards');
 const {
   setSession,
   getSession,
@@ -1177,7 +1178,111 @@ fastify.post('/tournaments/:id/finish', async (request, reply) => {
 		return { tournament: finished.rows[0], expiredAccessCodes: expired };
 	});
 	if (!result) return reply.code(404).send({ error: 'Torneo no encontrado' });
+	fastify.io?.emit('ceremony:update', { tournament_id: request.params.id });
 	return result;
+});
+
+// Ceremonia de premios (awards.js). Los premios se calculan con lo guardado; el
+// ganador de cada uno viaja solo cuando ya se mostró, así nadie se adelanta.
+async function loadCeremony(tournamentId) {
+	const tournament = await query(
+		`SELECT id, name, status, ceremony_step, ceremony_updated_at FROM tournaments WHERE id = $1`,
+		[tournamentId],
+	);
+	if (!tournament.rowCount || tournament.rows[0].status !== 'finished') return null;
+	const rounds = await query(
+		`SELECT r.id, r.round_number, r.capacity,
+		        COALESCE(r.starts_at, r.started_at) AS started_at,
+		        LEAST(COALESCE(r.ends_at, now()),
+		              COALESCE((SELECT max(s.submitted_at) FROM submissions s WHERE s.round_id = r.id), now())) AS ended_at
+		 FROM rounds r WHERE r.tournament_id = $1 AND r.status = 'closed' AND r.started_at IS NOT NULL
+		 ORDER BY r.round_number`,
+		[tournamentId],
+	);
+	const rows = await query(
+		`SELECT rp.round_id, rp.participant_id, p.display_name, p.character, rp.final_rank,
+		        rp.final_status, rp.solved_at, rp.failed_attempts_count
+		 FROM round_participants rp
+		 JOIN participants p ON p.id = rp.participant_id
+		 JOIN rounds r ON r.id = rp.round_id
+		 WHERE r.tournament_id = $1 AND rp.final_rank IS NOT NULL`,
+		[tournamentId],
+	);
+	const submissions = await query(
+		`SELECT s.participant_id, r.round_number, s.submitted_at, s.verdict,
+		        s.test_cases_passed AS passed, s.test_cases_total AS total, s.exec_ms
+		 FROM submissions s JOIN rounds r ON r.id = s.round_id
+		 WHERE r.tournament_id = $1
+		   AND s.verdict NOT IN ('queued', 'queue_error', 'judge_error', 'round_unavailable')`,
+		[tournamentId],
+	);
+	const awards = computeAwards(
+		rounds.rows.map((round) => ({
+			...round,
+			rows: rows.rows.filter((row) => row.round_id === round.id),
+		})),
+		submissions.rows.map((sub) => ({ ...sub, verdict: sub.verdict === 'accepted' ? 'accepted' : 'rejected' })),
+	);
+	const winner = await query(
+		`SELECT id AS participant_id, display_name, character FROM participants
+		 WHERE tournament_id = $1 AND status = 'winner' LIMIT 1`,
+		[tournamentId],
+	);
+	const row = tournament.rows[0];
+	const step = row.ceremony_step;
+	return {
+		tournament: { id: row.id, name: row.name },
+		// null = pantalla del ganador, 0 = presentación, 1..N = premio, N + 1 = fin.
+		step,
+		updated_at: row.ceremony_updated_at,
+		champion: winner.rows[0] ?? null,
+		awards: awards.map((award, index) => (step !== null && index < step
+			? award
+			: { id: award.id, title: award.title, description: award.description })),
+	};
+}
+
+// Pista y participantes: la ceremonia del último torneo, si ya terminó.
+fastify.get('/public/ceremony', async () => {
+	const latest = await query('SELECT id FROM tournaments ORDER BY created_at DESC LIMIT 1');
+	if (!latest.rowCount) return null;
+	return loadCeremony(latest.rows[0].id);
+});
+
+fastify.get('/tournaments/:id/ceremony', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const ceremony = await loadCeremony(request.params.id);
+	if (!ceremony) return reply.code(409).send({ error: 'El torneo todavía no terminó' });
+	return ceremony;
+});
+
+// Avanza un paso: ganador -> presentación -> cada premio -> fin.
+fastify.post('/tournaments/:id/ceremony/next', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const ceremony = await loadCeremony(request.params.id);
+	if (!ceremony) return reply.code(409).send({ error: 'El torneo todavía no terminó' });
+	const last = ceremony.awards.length + 1;
+	const updated = await query(
+		`UPDATE tournaments SET ceremony_step = COALESCE(ceremony_step, -1) + 1, ceremony_updated_at = now()
+		 WHERE id = $1 AND COALESCE(ceremony_step, -1) < $2 RETURNING ceremony_step`,
+		[request.params.id, last],
+	);
+	if (!updated.rowCount) return reply.code(409).send({ error: 'La ceremonia ya terminó' });
+	fastify.io?.emit('ceremony:update', { tournament_id: request.params.id });
+	return loadCeremony(request.params.id);
+});
+
+// Vuelve a la pantalla del ganador (para repetir la ceremonia o probarla).
+fastify.post('/tournaments/:id/ceremony/reset', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const updated = await query(
+		`UPDATE tournaments SET ceremony_step = NULL, ceremony_updated_at = now()
+		 WHERE id = $1 AND status = 'finished' RETURNING id`,
+		[request.params.id],
+	);
+	if (!updated.rowCount) return reply.code(409).send({ error: 'El torneo todavía no terminó' });
+	fastify.io?.emit('ceremony:update', { tournament_id: request.params.id });
+	return loadCeremony(request.params.id);
 });
 
 fastify.post('/access-codes/:code/claim', async (request, reply) => {
@@ -2094,6 +2199,9 @@ async function start() {
 		});
 		const total = caseResults.length;
 		const passed = caseResults.filter((caseResult) => caseResult.passed).length;
+		// Judge0 da el tiempo de cada caso en segundos (texto). Se guarda el mayor.
+		const times = results.map(({ result }) => Number.parseFloat(result.time)).filter(Number.isFinite);
+		const execMs = times.length ? Math.round(Math.max(...times) * 1000) : null;
 		const solved = total > 0 && passed === total;
 		// Accepted solo con todos los casos. Si no, el veredicto es el del primer caso fallido.
 		const verdict = solved
@@ -2101,9 +2209,9 @@ async function start() {
 			: (caseResults.find((caseResult) => !caseResult.passed)?.status || 'no_test_cases');
 		const updated = await query(
 			`UPDATE submissions SET verdict = $1, judge0_token = $2,
-				test_cases_passed = $3, test_cases_total = $4, case_results = $5::jsonb
+				test_cases_passed = $3, test_cases_total = $4, case_results = $5::jsonb, exec_ms = $7
 			 WHERE id = $6 AND verdict = 'queued' RETURNING *`,
-			[verdict, results.at(-1)?.token ?? null, passed, total, JSON.stringify(caseResults), submissionId],
+			[verdict, results.at(-1)?.token ?? null, passed, total, JSON.stringify(caseResults), submissionId, execMs],
 		);
 		if (!updated.rowCount) return null;
 
@@ -2260,6 +2368,7 @@ async function closeRound(roundId) {
 			// transaction that declares the winner.
 			await expireTournamentAccessCodes(client, round.tournament_id);
 			fastify.io?.emit('tournament:winner', { participant_id: advanced[0].participant_id });
+			fastify.io?.emit('ceremony:update', { tournament_id: round.tournament_id });
 		}
 		fastify.io?.emit('round:closed', {
 			// Aditivo: sin el id, un cliente no sabe qué ronda se cerró.

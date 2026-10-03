@@ -254,6 +254,17 @@ CREATE TABLE IF NOT EXISTS submissions (
 -- Detalle por caso: [{ "passed": bool, "status": text }], sin stdin ni expected.
 ALTER TABLE submissions ADD COLUMN IF NOT EXISTS case_results JSONB NOT NULL DEFAULT '[]'::jsonb;
 
+-- Tiempo de ejecución del juez en ms: el mayor entre los casos. NULL en envíos
+-- anteriores a la columna o sin tiempo. Lo usa el premio "Compilador O(1) Humano".
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS exec_ms INTEGER;
+
+-- Ceremonia de premios al terminar el torneo (awards.js). ceremony_step: NULL =
+-- pantalla del ganador, 0 = presentación, 1..N = premio N, N+1 = fin.
+-- ceremony_updated_at marca cuándo avanzó el admin: la revelación de cada premio
+-- se calcula desde ahí, así quien entra tarde lo ve ya revelado.
+ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS ceremony_step INTEGER;
+ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS ceremony_updated_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS rounds_active_idx ON rounds(status);
 CREATE INDEX IF NOT EXISTS submissions_participant_idx ON submissions(participant_id, submitted_at);
 -- /queue/stats y la lista de envíos del panel cuentan y filtran por ronda.

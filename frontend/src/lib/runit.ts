@@ -227,6 +227,9 @@ export interface RunItEvents {
   "round:closed": RoundClosedEvent;
   "round:paused": RoundPausedEvent;
   "tournament:winner": TournamentWinnerEvent;
+  // El admin avanzó la ceremonia de premios (o terminó el torneo): hay que
+  // volver a pedir GET /public/ceremony.
+  "ceremony:update": { tournament_id: string };
   "submission:queued": SubmissionQueuedEvent;
   "submission:judged": SubmissionJudgedEvent;
   // Local, no lo emite el servidor: cada conexión y reconexión del socket. Lo

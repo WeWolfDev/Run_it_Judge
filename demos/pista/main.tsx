@@ -11,10 +11,10 @@ if (pending && !demo.activeRound()) demo.start(pending.id);
 const { createRoot } = await import("react-dom/client");
 const { DemoShell, applyPalette, storedPalette } = await import("../shell/DemoShell");
 applyPalette(storedPalette());
-const { default: RaceTrack } = await import("@/components/RaceTrack");
+const { default: ProjectedRace } = await import("@/components/ProjectedRace");
+await import("../proyeccion/proyeccion.css");
 
-createRoot(document.getElementById("root")!).render(
-  <DemoShell role="admin">
-    <RaceTrack />
-  </DemoShell>,
-);
+// La pista del repo (ProjectedRace) con el backend simulado: se proyecta a
+// pantalla completa, sin la barra de la app.
+createRoot(document.getElementById("root")!).render(<ProjectedRace />);
+void DemoShell;

@@ -1,0 +1,32 @@
+/* DEMO: pantalla CRT de la ceremonia. Colores de la paleta activa; oro fijo. */
+:root {
+  --gold: #ffd34d;
+}
+
+.cer-crt {
+  --cer-ink: color-mix(in oklch, var(--foreground) 92%, var(--accent));
+  border-radius: 4% / 6%;
+  border: 8px solid #050304;
+  outline: 3px solid color-mix(in oklch, var(--primary) 45%, #050304);
+  background:
+    radial-gradient(ellipse at center, color-mix(in oklch, var(--background), var(--primary) 14%) 0%, color-mix(in oklch, var(--background), black 30%) 75%);
+  filter: drop-shadow(0 0 28px color-mix(in oklch, var(--primary) 55%, transparent));
+}
+.cer-compact {
+  min-height: 26rem;
+  border-radius: 22px;
+}
+.cer-scan {
+  background: repeating-linear-gradient(rgb(0 0 0 / 0.18) 0 1px, transparent 1px 3px);
+  border-radius: inherit;
+}
+.cer-title {
+  text-shadow:
+    4px 4px 0 color-mix(in oklch, var(--primary) 30%, black),
+    0 0 26px color-mix(in oklch, var(--primary) 50%, transparent);
+}
+.cer-detail {
+  border: 2px solid color-mix(in oklch, var(--gold) 70%, transparent);
+  background: color-mix(in oklch, var(--gold) 12%, transparent);
+  color: var(--foreground);
+}
