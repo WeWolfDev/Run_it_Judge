@@ -155,8 +155,9 @@
   --muted-foreground: oklch(0.65 0.05 265);
   --accent: oklch(0.75 0.19 195);
   --accent-foreground: oklch(0.15 0.02 265);
-  --destructive: oklch(0.65 0.22 25);
-  --destructive-foreground: oklch(0.95 0.01 265);
+  /* Rojo un poco más claro para que se lea sobre las tarjetas, con texto oscuro encima. */
+  --destructive: oklch(0.7 0.2 25);
+  --destructive-foreground: oklch(0.18 0.03 25);
   --border: oklch(0.35 0.08 265);
   --input: oklch(0.35 0.08 265);
   --ring: oklch(0.75 0.19 195);
@@ -175,8 +176,8 @@
   --sidebar-ring: oklch(0.75 0.19 195);
   --success: oklch(0.7 0.17 145);
   --success-soft: oklch(0.25 0.05 145);
-  --danger: oklch(0.65 0.22 25);
-  --danger-foreground: oklch(0.95 0.01 265);
+  --danger: oklch(0.7 0.2 25);
+  --danger-foreground: oklch(0.18 0.03 25);
   --danger-soft: oklch(0.25 0.05 25);
   --info: oklch(0.75 0.19 195);
   --info-foreground: oklch(0.15 0.02 265);
@@ -241,6 +242,27 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
   }
+
+  /* Campos de texto: color propio en vez de heredado. Safari puede dejar el
+     texto en el negro del navegador (transición congelada o autocompletado),
+     y sobre los fondos oscuros no se lee. */
+  input,
+  textarea,
+  select {
+    color: var(--color-foreground);
+    caret-color: var(--color-primary);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-muted-foreground);
+    opacity: 1;
+  }
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--color-foreground);
+    -webkit-box-shadow: 0 0 0 1000px var(--color-card) inset;
+  }
 }
 
 /* hoja de sprites de 4 columnas (ver CharacterSprite). */
@@ -262,8 +284,10 @@ body,
   font-family: "Pixelify Sans", "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 
-/* Paletas elegibles por cada usuario (1, 14 y 19 de la propuesta). Solo
-   redefinen colores de marca: silks, éxito/peligro y los veredictos no cambian. */
+/* Paletas elegibles por cada usuario (1, 2, 5 y 12 de la propuesta). Solo
+   redefinen colores de marca: silks, éxito/peligro y los veredictos no cambian.
+   Todo texto sobre su fondo da al menos 4.5:1 (WCAG AA) en las cuatro paletas y
+   en los colores base de :root; al cambiar un valor, volver a medir el contraste. */
 :root[data-palette] {
   --foreground: color-mix(in oklch, white 93%, var(--pal-acc));
   --card: color-mix(in oklch, var(--pal-bg), white 6%);
@@ -275,7 +299,7 @@ body,
   --secondary: var(--pal-acc);
   --secondary-foreground: color-mix(in oklch, var(--pal-bg), black 30%);
   --muted: color-mix(in oklch, var(--pal-bg), white 11%);
-  --muted-foreground: color-mix(in oklch, var(--pal-bg), white 60%);
+  --muted-foreground: color-mix(in oklch, var(--pal-bg), white 64%);
   --accent: var(--pal-acc);
   --accent-foreground: color-mix(in oklch, var(--pal-bg), black 30%);
   --border: color-mix(in oklch, var(--pal-bg), white 20%);
@@ -287,7 +311,7 @@ body,
   --info-soft: color-mix(in oklch, var(--pal-acc) 18%, var(--pal-bg));
   --editor: color-mix(in oklch, var(--pal-bg), black 40%);
   --editor-foreground: color-mix(in oklch, white 90%, var(--pal-acc));
-  --editor-muted: color-mix(in oklch, var(--pal-bg), white 50%);
+  --editor-muted: color-mix(in oklch, var(--pal-bg), white 55%);
   --editor-border: color-mix(in oklch, var(--pal-bg), white 16%);
 }
 /* 1 · Arcade Neón */
@@ -296,17 +320,23 @@ body,
   --pal-pri: oklch(0.7 0.23 345);
   --pal-acc: oklch(0.86 0.14 195);
 }
-/* 14 · Marquesina */
-:root[data-palette="marquesina"] {
-  --pal-bg: oklch(0.24 0.11 305);
-  --pal-pri: oklch(0.86 0.12 75);
-  --pal-acc: oklch(0.62 0.17 258);
+/* 2 · Atardecer Synthwave */
+:root[data-palette="synthwave"] {
+  --pal-bg: oklch(0.2 0.08 300);
+  --pal-pri: oklch(0.72 0.18 45);
+  --pal-acc: oklch(0.86 0.17 95);
 }
-/* 19 · Lavanda Koala */
-:root[data-palette="lavanda"] {
-  --pal-bg: oklch(0.22 0.05 285);
-  --pal-pri: oklch(0.82 0.08 285);
-  --pal-acc: oklch(0.64 0.17 255);
+/* 5 · Ficha Dorada */
+:root[data-palette="dorada"] {
+  --pal-bg: oklch(0.22 0.07 265);
+  --pal-pri: oklch(0.84 0.16 85);
+  --pal-acc: oklch(0.7 0.13 230);
+}
+/* 12 · Pantalla CRT */
+:root[data-palette="crt"] {
+  --pal-bg: oklch(0.2 0.09 300);
+  --pal-pri: oklch(0.78 0.11 222);
+  --pal-acc: oklch(0.72 0.16 45);
 }
 
 /* Cursor pixel (lo dibuja src/lib/pixel-cursor.ts con los colores de la paleta). */
@@ -500,4 +530,119 @@ html.pixel-cursor :is(button, a, label, select, [role="button"], [role="tab"]) {
   .run-it-spinner i {
     animation: none !important;
   }
+}
+
+/* ================= Login: gabinete arcade (routes/login.tsx) ================= */
+
+/* Los colores salen de la paleta activa. */
+.login-cabinet {
+  --glow: color-mix(in oklch, var(--primary) 70%, transparent);
+  background: #0b0709;
+}
+
+/* Marco de la pantalla: negro con el resplandor de la paleta en los bordes. */
+.login-bezel {
+  background:
+    radial-gradient(120% 90% at 50% 50%, transparent 55%, color-mix(in oklch, var(--primary) 35%, transparent) 100%),
+    linear-gradient(#1a1014, #0d080a);
+}
+
+/* Pantalla CRT: esquinas abombadas, aro negro y brillo alrededor. */
+.login-screen {
+  border-radius: 5% / 8%;
+  background: var(--background);
+  /* Aro negro, filo de color y brillo. Con box-shadow y radio en % Safari deja
+     cuadros en las esquinas; borde, outline y drop-shadow siguen la curva. */
+  border: 6px solid #050304;
+  outline: 3px solid color-mix(in oklch, var(--primary) 45%, #050304);
+  filter: drop-shadow(0 0 22px var(--glow));
+}
+@media (max-width: 640px) {
+  .login-screen { border-radius: 18px; }
+  .login-glass { clip-path: inset(0 round 18px); }
+}
+
+/* Capa del vidrio. Safari no recorta con overflow+radius las capas animadas
+   (barrido, parpadeo); clip-path sí, y deja afuera el aro y el brillo. */
+.login-glass {
+  clip-path: inset(0 round 5% / 8%);
+}
+
+.login-scanlines {
+  background: repeating-linear-gradient(rgb(0 0 0 / 0.22) 0 1px, transparent 1px 3px);
+}
+.login-vignette {
+  background: radial-gradient(ellipse at center, transparent 55%, rgb(0 0 0 / 0.6) 100%);
+}
+
+.login-title {
+  text-shadow:
+    4px 4px 0 color-mix(in oklch, var(--primary) 35%, black),
+    0 0 24px var(--glow);
+}
+
+/* Campos del formulario: fondo más sólido que la tarjeta para que el texto se lea
+   aunque detrás pase el barrido del CRT. */
+.login-field {
+  background-color: color-mix(in oklch, var(--background) 80%, transparent);
+  color: var(--foreground);
+}
+.login-field:focus-visible {
+  border-color: var(--primary);
+}
+
+.login-start {
+  box-shadow: inset -3px -3px 0 rgb(0 0 0 / 0.3), inset 3px 3px 0 rgb(255 255 255 / 0.25);
+}
+.login-start:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: inset 3px 3px 0 rgb(0 0 0 / 0.3);
+}
+
+/* Panel de controles: tapa con el color de la paleta y borde superior iluminado. */
+.login-deck {
+  background:
+    linear-gradient(rgb(255 255 255 / 0.18), transparent 6px),
+    linear-gradient(color-mix(in oklch, var(--primary) 85%, #2a0a12), color-mix(in oklch, var(--primary) 45%, #12040a));
+  border-top: 3px solid #050304;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-cabinet .run-it-crt-sweep,
+  .login-cabinet .animate-run-it-flicker { animation: none; }
+}
+
+/* Fondos con parallax (components/LoginBackdrop.tsx): cada capa se repite y corre a la
+   izquierda; --tile es el ancho de una repetición, así el bucle no salta. */
+.login-backdrop-layer {
+  background-repeat: repeat-x;
+  background-position: 0 100%;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+@keyframes login-backdrop-scroll {
+  to { background-position-x: var(--tile); }
+}
+.login-backdrop-drift {
+  left: 100%;
+  animation-name: login-backdrop-drift;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+@keyframes login-backdrop-drift {
+  from { left: 100%; transform: translateX(0); }
+  to { left: 0%; transform: translateX(-100%); }
+}
+/* Las naves flotan un poco mientras cruzan. */
+.login-backdrop-bob {
+  animation: login-backdrop-bob 1.2s steps(4) infinite alternate;
+}
+@keyframes login-backdrop-bob {
+  to { transform: translateY(6px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .login-backdrop-layer,
+  .login-backdrop-drift,
+  .login-backdrop-bob { animation: none !important; }
+  .login-backdrop-drift { left: 60%; }
 }

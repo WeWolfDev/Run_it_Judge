@@ -7,7 +7,7 @@ demo = sys.argv[1]
 here = os.path.dirname(os.path.abspath(__file__))
 dist = os.path.join(here, "dist", demo)
 html = open(os.path.join(dist, "index.html")).read()
-titles = {"admin": "Panel Admin Run It", "participante": "Vista Participante Run It", "pista": "Pista Run It"}
+titles = {"admin": "Panel Admin Run It", "participante": "Vista Participante Run It", "pista": "Pista Run It", "login": "Login Run It"}
 
 css_files = re.findall(r'<link rel="stylesheet" crossorigin href="\./(assets/[^"]+\.css)">', html)
 css = "".join(open(os.path.join(dist, f)).read() for f in css_files)
@@ -51,7 +51,8 @@ open(os.path.join(dist, "page.html"), "w", encoding="utf8").write(page)
 
 files = {f"assets/{n}": os.path.join(dist, "assets", n) for n in os.listdir(os.path.join(dist, "assets")) if not n.endswith(".css")}
 # Las hojas de personajes se piden con rutas armadas en tiempo de ejecución.
-used_public |= {n for n in public if n.startswith("chars/")}
+if demo != "login":
+    used_public |= {n for n in public if n.startswith("chars/")}
 files.update({n: os.path.join(dist, n) for n in used_public})
 json.dump(files, open(os.path.join(dist, "files.json"), "w"), indent=1)
 print(demo, "página", len(page) // 1024, "KB ·", len(files), "archivos ·", sorted(used_public))

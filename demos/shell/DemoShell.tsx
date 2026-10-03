@@ -7,15 +7,17 @@ import { onSoundChange, setSoundOn, soundOn } from "@/lib/sfx";
 // DEMO: paletas elegibles por cada usuario. Se guardan en su navegador.
 export const PALETTES = [
   { id: "arcade", name: "Arcade Neón" },
-  { id: "marquesina", name: "Marquesina" },
-  { id: "lavanda", name: "Lavanda Koala" },
-  { id: "", name: "Original" },
+  { id: "synthwave", name: "Atardecer Synthwave" },
+  { id: "dorada", name: "Ficha Dorada" },
+  { id: "crt", name: "Pantalla CRT" },
 ] as const;
 const PALETTE_KEY = "run-it-palette";
 
 export function storedPalette() {
   try {
-    return localStorage.getItem(PALETTE_KEY) ?? "arcade";
+    // Una paleta que ya no existe (p. ej. "marquesina") vuelve a la de siempre.
+    const id = localStorage.getItem(PALETTE_KEY);
+    return PALETTES.some((p) => p.id === id) ? (id as string) : "arcade";
   } catch {
     return "arcade";
   }

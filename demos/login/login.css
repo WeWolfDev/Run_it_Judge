@@ -1,0 +1,119 @@
+/* DEMO: gabinete arcade del login. Los colores salen de la paleta activa. */
+.login-cabinet {
+  --glow: color-mix(in oklch, var(--primary) 70%, transparent);
+  background: #0b0709;
+}
+
+/* Marco de la pantalla: negro con el resplandor de la paleta en los bordes. */
+.login-bezel {
+  background:
+    radial-gradient(120% 90% at 50% 50%, transparent 55%, color-mix(in oklch, var(--primary) 35%, transparent) 100%),
+    linear-gradient(#1a1014, #0d080a);
+}
+
+/* Pantalla CRT: esquinas abombadas, aro negro y brillo alrededor. */
+.login-screen {
+  border-radius: 5% / 8%;
+  background: var(--background);
+  /* Aro negro, filo de color y brillo. Con box-shadow y radio en % Safari deja
+     cuadros en las esquinas; borde, outline y drop-shadow siguen la curva. */
+  border: 6px solid #050304;
+  outline: 3px solid color-mix(in oklch, var(--primary) 45%, #050304);
+  filter: drop-shadow(0 0 22px var(--glow));
+}
+@media (max-width: 640px) {
+  .login-screen { border-radius: 18px; }
+  .login-glass { clip-path: inset(0 round 18px); }
+}
+
+/* Capa del vidrio. Safari no recorta con overflow+radius las capas animadas
+   (barrido, parpadeo); clip-path sí, y deja afuera el aro y el brillo. */
+.login-glass {
+  clip-path: inset(0 round 5% / 8%);
+}
+
+.login-scanlines {
+  background: repeating-linear-gradient(rgb(0 0 0 / 0.22) 0 1px, transparent 1px 3px);
+}
+.login-vignette {
+  background: radial-gradient(ellipse at center, transparent 55%, rgb(0 0 0 / 0.6) 100%);
+}
+
+.login-title {
+  text-shadow:
+    4px 4px 0 color-mix(in oklch, var(--primary) 35%, black),
+    0 0 24px var(--glow);
+}
+
+/* Campos del formulario: fondo más sólido que la tarjeta para que el texto se lea
+   aunque detrás pase el barrido del CRT. */
+.login-field {
+  background-color: color-mix(in oklch, var(--background) 80%, transparent);
+  color: var(--foreground);
+}
+.login-field:focus-visible {
+  border-color: var(--primary);
+}
+
+.login-start {
+  box-shadow: inset -3px -3px 0 rgb(0 0 0 / 0.3), inset 3px 3px 0 rgb(255 255 255 / 0.25);
+}
+.login-start:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: inset 3px 3px 0 rgb(0 0 0 / 0.3);
+}
+
+/* Panel de controles: tapa con el color de la paleta y borde superior iluminado. */
+.login-deck {
+  background:
+    linear-gradient(rgb(255 255 255 / 0.18), transparent 6px),
+    linear-gradient(color-mix(in oklch, var(--primary) 85%, #2a0a12), color-mix(in oklch, var(--primary) 45%, #12040a));
+  border-top: 3px solid #050304;
+}
+
+/* Placa empotrada con los logos de los organizadores. */
+.login-plate {
+  background: #161214;
+  border: 2px solid #050304;
+  box-shadow: inset 0 2px 0 rgb(255 255 255 / 0.08), 0 3px 0 rgb(0 0 0 / 0.45);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-cabinet .run-it-crt-sweep,
+  .login-cabinet .animate-run-it-flicker { animation: none; }
+}
+
+/* Fondos con parallax (login/Backdrop.tsx): cada capa se repite y corre a la
+   izquierda; --tile es el ancho de una repetición, así el bucle no salta. */
+.login-backdrop-layer {
+  background-repeat: repeat-x;
+  background-position: 0 100%;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+@keyframes login-backdrop-scroll {
+  to { background-position-x: var(--tile); }
+}
+.login-backdrop-drift {
+  left: 100%;
+  animation-name: login-backdrop-drift;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+@keyframes login-backdrop-drift {
+  from { left: 100%; transform: translateX(0); }
+  to { left: 0%; transform: translateX(-100%); }
+}
+/* Las naves flotan un poco mientras cruzan. */
+.login-backdrop-bob {
+  animation: login-backdrop-bob 1.2s steps(4) infinite alternate;
+}
+@keyframes login-backdrop-bob {
+  to { transform: translateY(6px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .login-backdrop-layer,
+  .login-backdrop-drift,
+  .login-backdrop-bob { animation: none !important; }
+  .login-backdrop-drift { left: 60%; }
+}
