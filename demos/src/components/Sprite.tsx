@@ -17,7 +17,15 @@ function image(src: string) {
   return img;
 }
 
-type Entry = { canvas: HTMLCanvasElement; anim: SpriteAnim; fw: number; fh: number; t0: number; last: string };
+type Entry = {
+  canvas: HTMLCanvasElement;
+  anim: SpriteAnim;
+  fw: number;
+  fh: number;
+  t0: number;
+  last: string;
+  speed: number;
+};
 const entries = new Set<Entry>();
 let running = false;
 const reduced = () =>
@@ -28,7 +36,7 @@ function loop(now: number) {
     const { anim, canvas, fw, fh } = entry;
     const img = image(anim.sheet);
     if (!img.complete || !img.naturalWidth) return;
-    let frame = Math.floor(((now - entry.t0) * anim.fps) / 1000);
+    let frame = Math.floor(((now - entry.t0) * anim.fps * entry.speed) / 1000);
     frame = anim.once ? Math.min(frame, anim.frames - 1) : reduced() ? 0 : frame % anim.frames;
     const key = `${anim.sheet}:${anim.row}:${frame}`;
     if (key === entry.last) return;
@@ -55,11 +63,14 @@ export function Sprite({
   state = "idle",
   scale = 1,
   className = "",
+  speed = 1,
 }: {
   index: number;
   state?: SpriteState;
   scale?: number;
   className?: string;
+  /** Multiplica la velocidad de la animación (0.5 = la mitad de rápido). */
+  speed?: number;
 }) {
   const character = characterAt(index);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -70,7 +81,7 @@ export function Sprite({
     const canvas = canvasRef.current;
     if (!canvas || !character.anims) return;
     const anim = (state === "out" ? character.anims.out : character.anims[state]) ?? character.anims.idle;
-    const entry: Entry = { canvas, anim, fw: character.fw, fh: character.fh, t0: performance.now(), last: "" };
+    const entry: Entry = { canvas, anim, fw: character.fw, fh: character.fh, t0: performance.now(), last: "", speed };
     entries.add(entry);
     if (!running) {
       running = true;
@@ -79,7 +90,7 @@ export function Sprite({
     return () => {
       entries.delete(entry);
     };
-  }, [character, state]);
+  }, [character, state, speed]);
 
   const style = {
     width: character.fw * factor,

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import {
   createSocketFeed,
   formatClock,
@@ -19,6 +20,7 @@ import { confetti } from "@/lib/confetti";
 import { play } from "@/lib/sfx";
 import { ProblemStatement } from "@/components/ProblemStatement";
 import { Ceremony } from "@/components/Ceremony";
+import { Eliminated } from "@/components/Eliminated";
 import { useCeremony } from "@/hooks/use-ceremony";
 import {
   getActiveRound,
@@ -26,12 +28,14 @@ import {
   getRoundLeaderboard,
   getUpcomingRound,
   joinRound,
+  logout,
   runCode,
   submitRound,
   type MySubmission,
   type RunResult,
 } from "@/lib/api";
 import {
+  clearSession,
   getCharacterConfirmed,
   getSelectedCharacter,
   getSession,
@@ -165,6 +169,7 @@ type Load = "loading" | "none" | "error" | "ready";
 type RunTab = "samples" | "custom";
 
 export function ParticipantView() {
+  const navigate = useNavigate();
   const [load, setLoad] = useState<Load>("loading");
   const [reloadKey, setReloadKey] = useState(0);
   const [round, setRound] = useState<RoundInfo | null>(null);
@@ -626,7 +631,8 @@ export function ParticipantView() {
 
   const character = getSelectedCharacter(username);
 
-  if (ceremony && (load === "none" || !round || closed)) {
+  const eliminated = closed && myStanding?.advanced === false;
+  if (ceremony && !eliminated && (load === "none" || !round || closed)) {
     return <Ceremony ceremony={ceremony} compact />;
   }
 
@@ -643,6 +649,33 @@ export function ParticipantView() {
             ? undefined
             : "Todavía no hay una ronda para vos. La pantalla se actualiza sola cuando haya una."
         }
+      />
+    );
+  }
+
+  // No clasificó: animación de eliminado y pantalla de despedida con salida al
+  // login. Desde ahí puede seguir mirando la carrera (y la ceremonia) en /pista.
+  if (eliminated && myStanding) {
+    const mine = liveStandings.find((entry) => entry.participant_id === participantId);
+    return (
+      <Eliminated
+        name={myStanding.name || username}
+        character={character}
+        roundNumber={round.number ?? 0}
+        rank={myStanding.rank}
+        total={standings?.length ?? liveStandings.length}
+        capacity={round.capacity}
+        bestPct={Math.round(Number(mine?.best_pass_percentage ?? 0))}
+        fails={mine?.failed_attempts_count ?? 0}
+        onExit={() => {
+          void logout()
+            .catch(() => undefined)
+            .finally(() => {
+              clearSession();
+              void navigate({ to: "/login" });
+            });
+        }}
+        onSpectate={() => void navigate({ to: "/pista" })}
       />
     );
   }

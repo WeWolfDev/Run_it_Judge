@@ -925,3 +925,92 @@ html.pixel-cursor :is(button, a, label, select, [role="button"], [role="tab"]) {
 .proj-sprite img {
   image-rendering: pixelated;
 }
+
+/* ================= Eliminado (components/Eliminated.tsx) ================= */
+
+/* La animación usa el rojo de peligro; el CRT, la paleta activa. */
+.elim-stage {
+  background: radial-gradient(ellipse at center, color-mix(in oklch, var(--danger) 18%, var(--background)) 0%, color-mix(in oklch, var(--background), black 35%) 75%);
+  border: 2px solid color-mix(in oklch, var(--danger) 45%, transparent);
+}
+
+/* El personaje cae un poco mientras hace su animación de derrota. */
+.elim-fall {
+  animation: elim-fall 2.4s steps(12) both;
+}
+@keyframes elim-fall {
+  0% { transform: translateY(-24px); }
+  60% { transform: translateY(6px); }
+  100% { transform: translateY(0); }
+}
+
+/* GAME OVER con parpadeo de señal: dos copias corridas en rojo y cian. */
+.elim-glitch {
+  position: relative;
+  text-shadow: 4px 4px 0 color-mix(in oklch, var(--danger) 35%, black);
+  animation: elim-in 0.5s steps(4) 0.4s both;
+}
+.elim-glitch::before,
+.elim-glitch::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.elim-glitch::before {
+  color: var(--accent);
+  animation: elim-jitter 1.6s steps(1) 0.4s infinite;
+  mix-blend-mode: screen;
+  opacity: 0.6;
+}
+.elim-glitch::after {
+  color: var(--danger);
+  animation: elim-jitter 1.6s steps(1) 0.6s infinite reverse;
+}
+@keyframes elim-in {
+  from { transform: scale(1.4); }
+}
+@keyframes elim-jitter {
+  0%, 80%, 100% { transform: translate(0, 0); clip-path: inset(0 0 0 0); }
+  84% { transform: translate(-4px, 1px); clip-path: inset(10% 0 55% 0); }
+  88% { transform: translate(5px, -1px); clip-path: inset(60% 0 10% 0); }
+  92% { transform: translate(-2px, 0); clip-path: inset(35% 0 35% 0); }
+}
+
+/* Pantalla CRT de despedida, con el brillo en rojo. */
+.elim-crt {
+  border-radius: 22px;
+  border: 8px solid #050304;
+  outline: 3px solid color-mix(in oklch, var(--danger) 40%, #050304);
+  background: radial-gradient(ellipse at center, color-mix(in oklch, var(--background), var(--danger) 10%) 0%, color-mix(in oklch, var(--background), black 30%) 75%);
+  filter: drop-shadow(0 0 24px color-mix(in oklch, var(--danger) 45%, transparent));
+}
+.elim-scan {
+  background: repeating-linear-gradient(rgb(0 0 0 / 0.18) 0 1px, transparent 1px 3px);
+  border-radius: inherit;
+}
+.elim-title {
+  text-shadow: 4px 4px 0 color-mix(in oklch, var(--danger) 30%, black), 0 0 24px color-mix(in oklch, var(--danger) 50%, transparent);
+}
+.elim-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.6rem;
+  background: color-mix(in oklch, var(--card) 80%, transparent);
+}
+.elim-exit {
+  box-shadow: inset -3px -3px 0 rgb(0 0 0 / 0.3), inset 3px 3px 0 rgb(255 255 255 / 0.25), 4px 4px 0 color-mix(in oklch, var(--primary) 40%, black);
+}
+.elim-exit:active {
+  transform: translate(2px, 2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .elim-fall,
+  .elim-glitch,
+  .elim-glitch::before,
+  .elim-glitch::after { animation: none; }
+}
