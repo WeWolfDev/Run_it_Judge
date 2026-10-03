@@ -36,10 +36,10 @@ export function WaitingScreen({
       className="rounded-[28px] border-8 border-[color-mix(in_oklch,var(--primary)_35%,var(--background))] bg-[color-mix(in_oklch,var(--background),black_20%)] p-4 shadow-2xl sm:p-6"
     >
       <div
-        className="relative flex min-h-[26rem] flex-col items-center justify-center gap-3 overflow-hidden rounded-[22px] px-4 py-10 text-center text-[oklch(0.42_0.2_262)]"
+        className="relative flex min-h-[26rem] flex-col items-center justify-center gap-3 overflow-hidden rounded-[22px] px-4 py-10 text-center text-[oklch(0.28_0.15_262)]"
         style={{
           background:
-            "radial-gradient(ellipse at center, oklch(0.93 0.06 215) 0%, oklch(0.8 0.11 222) 55%, oklch(0.6 0.12 235) 100%)",
+            "radial-gradient(ellipse at center, oklch(0.93 0.06 215) 0%, oklch(0.84 0.1 222) 55%, oklch(0.72 0.11 235) 100%)",
           boxShadow: "inset 0 0 60px rgb(0 0 0 / 0.45)",
         }}
       >

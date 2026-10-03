@@ -3,6 +3,7 @@
 @import "tailwindcss" source(none);
 @source "../src";
 @source "../shell";
+@source "../login";
 @import "tw-animate-css";
 
 @source inline("{bg,text}-silk-{0,1,2,3,4,5,6,7,8,9}");
@@ -156,8 +157,9 @@
   --muted-foreground: oklch(0.65 0.05 265);
   --accent: oklch(0.75 0.19 195);
   --accent-foreground: oklch(0.15 0.02 265);
-  --destructive: oklch(0.65 0.22 25);
-  --destructive-foreground: oklch(0.95 0.01 265);
+  /* Rojo un poco más claro para que se lea sobre las tarjetas, con texto oscuro encima. */
+  --destructive: oklch(0.7 0.2 25);
+  --destructive-foreground: oklch(0.18 0.03 25);
   --border: oklch(0.35 0.08 265);
   --input: oklch(0.35 0.08 265);
   --ring: oklch(0.75 0.19 195);
@@ -176,8 +178,8 @@
   --sidebar-ring: oklch(0.75 0.19 195);
   --success: oklch(0.7 0.17 145);
   --success-soft: oklch(0.25 0.05 145);
-  --danger: oklch(0.65 0.22 25);
-  --danger-foreground: oklch(0.95 0.01 265);
+  --danger: oklch(0.7 0.2 25);
+  --danger-foreground: oklch(0.18 0.03 25);
   --danger-soft: oklch(0.25 0.05 25);
   --info: oklch(0.75 0.19 195);
   --info-foreground: oklch(0.15 0.02 265);
@@ -242,6 +244,27 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
   }
+
+  /* Campos de texto: color propio en vez de heredado. Safari puede dejar el
+     texto en el negro del navegador (transición congelada o autocompletado),
+     y sobre los fondos oscuros no se lee. */
+  input,
+  textarea,
+  select {
+    color: var(--color-foreground);
+    caret-color: var(--color-primary);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-muted-foreground);
+    opacity: 1;
+  }
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--color-foreground);
+    -webkit-box-shadow: 0 0 0 1000px var(--color-card) inset;
+  }
 }
 
 /* DEMO: hoja de sprites de 4 columnas (ver CharacterSprite). */
@@ -264,8 +287,10 @@ body,
   font-family: "Pixelify Sans", "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 
-/* Paletas elegibles por cada usuario (1, 14 y 19 de la propuesta). Solo
-   redefinen colores de marca: silks, éxito/peligro y los veredictos no cambian. */
+/* Paletas elegibles por cada usuario (1, 2, 5 y 12 de la propuesta). Solo
+   redefinen colores de marca: silks, éxito/peligro y los veredictos no cambian.
+   Todo texto sobre su fondo da al menos 4.5:1 (WCAG AA) en las cuatro paletas y
+   en los colores base de :root; al cambiar un valor, volver a medir el contraste. */
 :root[data-palette] {
   --foreground: color-mix(in oklch, white 93%, var(--pal-acc));
   --card: color-mix(in oklch, var(--pal-bg), white 6%);
@@ -277,7 +302,7 @@ body,
   --secondary: var(--pal-acc);
   --secondary-foreground: color-mix(in oklch, var(--pal-bg), black 30%);
   --muted: color-mix(in oklch, var(--pal-bg), white 11%);
-  --muted-foreground: color-mix(in oklch, var(--pal-bg), white 60%);
+  --muted-foreground: color-mix(in oklch, var(--pal-bg), white 64%);
   --accent: var(--pal-acc);
   --accent-foreground: color-mix(in oklch, var(--pal-bg), black 30%);
   --border: color-mix(in oklch, var(--pal-bg), white 20%);
@@ -289,7 +314,7 @@ body,
   --info-soft: color-mix(in oklch, var(--pal-acc) 18%, var(--pal-bg));
   --editor: color-mix(in oklch, var(--pal-bg), black 40%);
   --editor-foreground: color-mix(in oklch, white 90%, var(--pal-acc));
-  --editor-muted: color-mix(in oklch, var(--pal-bg), white 50%);
+  --editor-muted: color-mix(in oklch, var(--pal-bg), white 55%);
   --editor-border: color-mix(in oklch, var(--pal-bg), white 16%);
 }
 /* 1 · Arcade Neón */
@@ -298,17 +323,23 @@ body,
   --pal-pri: oklch(0.7 0.23 345);
   --pal-acc: oklch(0.86 0.14 195);
 }
-/* 14 · Marquesina */
-:root[data-palette="marquesina"] {
-  --pal-bg: oklch(0.24 0.11 305);
-  --pal-pri: oklch(0.86 0.12 75);
-  --pal-acc: oklch(0.62 0.17 258);
+/* 2 · Atardecer Synthwave */
+:root[data-palette="synthwave"] {
+  --pal-bg: oklch(0.2 0.08 300);
+  --pal-pri: oklch(0.72 0.18 45);
+  --pal-acc: oklch(0.86 0.17 95);
 }
-/* 19 · Lavanda Koala */
-:root[data-palette="lavanda"] {
-  --pal-bg: oklch(0.22 0.05 285);
-  --pal-pri: oklch(0.82 0.08 285);
-  --pal-acc: oklch(0.64 0.17 255);
+/* 5 · Ficha Dorada */
+:root[data-palette="dorada"] {
+  --pal-bg: oklch(0.22 0.07 265);
+  --pal-pri: oklch(0.84 0.16 85);
+  --pal-acc: oklch(0.7 0.13 230);
+}
+/* 12 · Pantalla CRT */
+:root[data-palette="crt"] {
+  --pal-bg: oklch(0.2 0.09 300);
+  --pal-pri: oklch(0.78 0.11 222);
+  --pal-acc: oklch(0.72 0.16 45);
 }
 
 /* Cursor pixel (lo dibuja src/lib/pixel-cursor.ts con los colores de la paleta). */

@@ -141,7 +141,7 @@ export function CharacterCarousel({ username, onSelect }: CharacterCarouselProps
                     type="button"
                     onClick={() => jumpTo(index)}
                     aria-pressed={index === selected}
-                    className={`flex aspect-square w-full flex-col items-center justify-end overflow-hidden rounded-xl border-2 p-3 text-center transition-all ${
+                    className={`flex aspect-square w-full flex-col items-center justify-end overflow-hidden rounded-xl border-2 p-3 text-center transition-[transform,opacity] ${
                       index === viewing
                         ? `border-primary bg-primary/10 ring-4 ring-primary/20 ${popping ? "animate-run-it-pop" : ""}`
                         : "scale-95 border-border bg-card opacity-70 hover:opacity-100"

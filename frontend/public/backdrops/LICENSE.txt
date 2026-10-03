@@ -1,0 +1,15 @@
+Fondos animados del login
+
+Autor: Luis Zuno (@ansimuz) · ansimuz.com
+Licencia: CC0 1.0 (dominio público). Se puede copiar, modificar y distribuir,
+incluso con fines comerciales, sin pedir permiso ni dar crédito.
+
+space/ <- "Space Background"
+          https://opengameart.org/content/space-background-3
+neon/  <- "Warped City" (solo imágenes: fondo y vehículos)
+          https://opengameart.org/content/warped-city
+          La música del paquete (Pascal Belisle) tiene otra licencia que pide
+          crédito: no se usa. Tampoco se usa banner-coke (imita una marca).
+
+El fondo "Arcade retro" se dibuja por código en src/components/LoginBackdrop.tsx (propio).
+Los archivos se renombraron; el contenido es el original de cada paquete.
