@@ -27,6 +27,7 @@ import {
   getMySubmissions,
   getRoundLeaderboard,
   getUpcomingRound,
+  getMyParticipation,
   joinRound,
   logout,
   runCode,
@@ -40,6 +41,7 @@ import {
   getSelectedCharacter,
   getSession,
   setCharacterConfirmed,
+  setSelectedCharacter,
 } from "@/lib/session";
 
 // Las claves coinciden con LANGUAGE_IDS de judge0-client.js. "cpp", no "c++".
@@ -168,6 +170,26 @@ type Load = "loading" | "none" | "error" | "ready";
 // Pestañas del panel de prueba, debajo del editor.
 type RunTab = "samples" | "custom";
 
+// Si ya eligió personaje, según el servidor: está inscripto en el torneo de la
+// ronda, o la ronda no es la primera (el personaje quedó fijo en la primera y
+// el join decide si juega). El aviso de este navegador solo cuenta si el
+// servidor no responde: guardado por nombre de usuario, salteaba el carrusel en
+// otro torneo o a otra persona con el mismo nombre.
+async function characterChosen(roundId: string, username: string) {
+  try {
+    const me = await getMyParticipation(roundId);
+    if (me.participant) {
+      // El personaje que cuenta es el del servidor; el local se alinea.
+      setSelectedCharacter(username, me.participant.character);
+      setCharacterConfirmed(username);
+      return true;
+    }
+    return me.has_previous;
+  } catch {
+    return getCharacterConfirmed(username);
+  }
+}
+
 export function ParticipantView() {
   const navigate = useNavigate();
   const [load, setLoad] = useState<Load>("loading");
@@ -213,9 +235,9 @@ export function ParticipantView() {
 
   const reload = () => setReloadKey((key) => key + 1);
 
-  useEffect(() => {
-    setConfirmedState(getCharacterConfirmed(username));
-  }, [username]);
+  // Eligió en el carrusel durante esta visita: una recarga de la ronda no lo
+  // vuelve a mostrar aunque la inscripción todavía no haya llegado al servidor.
+  const choseNowRef = useRef(false);
 
   // Detecta la ronda activa y se inscribe en ella. Sin la inscripción el socket
   // devuelve un snapshot null y el participante no aparece en la pista.
@@ -230,7 +252,10 @@ export function ParticipantView() {
       try {
         remote = await getActiveRound();
       } catch {
-        if (!cancelled) setLoad("error");
+        if (!cancelled) {
+          setConfirmedState(true);
+          setLoad("error");
+        }
         return;
       }
       if (cancelled) return;
@@ -241,9 +266,13 @@ export function ParticipantView() {
         // inscribe ya, así el admin lo ve conectado antes de iniciar.
         const next = await getUpcomingRound().catch(() => null);
         if (cancelled) return;
+        // Sin ninguna ronda todavía no hay torneo donde elegir: espera.
+        const chosen = next ? await characterChosen(next.id, username) : true;
+        if (cancelled) return;
+        setConfirmedState(chosen || choseNowRef.current);
         setUpcoming(next);
         setLoad("none");
-        if (next && getCharacterConfirmed(username)) {
+        if (next && chosen) {
           void joinRound(next.id, username, getSelectedCharacter(username)).catch(() => undefined);
         }
         return;
@@ -265,11 +294,13 @@ export function ParticipantView() {
         endsAt: new Date(remote.ends_at).getTime(),
         startsAt: toMs(remote.starts_at),
       });
-      setLoad("ready");
-      // Sin personaje confirmado no se inscribe: lo hace confirmCharacter. Así el
+      // Sin personaje elegido no se inscribe: lo hace confirmCharacter. Así el
       // admin nunca ve un inscripto con el personaje 0 que en realidad no eligió.
-      // Se lee acá, después del await, por si confirmó mientras cargaba la ronda.
-      if (!getCharacterConfirmed(username)) return;
+      const chosen = await characterChosen(remote.id, username);
+      if (cancelled) return;
+      setConfirmedState(chosen || choseNowRef.current);
+      setLoad("ready");
+      if (!chosen) return;
       try {
         // Idempotente en el backend: ON CONFLICT en participants y en round_participants.
         const joined = await joinRound(remote.id, username, getSelectedCharacter(username));
@@ -489,6 +520,7 @@ export function ParticipantView() {
 
   // CharacterCarousel ya guardó el personaje en localStorage antes de llamar acá.
   const confirmCharacter = (character: number) => {
+    choseNowRef.current = true;
     setCharacterConfirmed(username);
     setConfirmedState(true);
     // Sin ronda activa no hay dónde inscribirse: el efecto de carga lo hace con
