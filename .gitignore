@@ -10,3 +10,7 @@ frontend/.output.next/
 
 # Builds generados de las demos (demos/publish.py los rehace)
 demos/dist/
+
+# Paquetes de assets originales: sus licencias prohíben redistribuirlos (ver CREDITS.md).
+frontend/Run_it_Asset 3/
+frontend/public/Login.mp4

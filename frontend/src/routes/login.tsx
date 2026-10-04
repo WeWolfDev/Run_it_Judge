@@ -192,6 +192,12 @@ function LoginScreen({ onKey }: { onKey: (side: DeckSide) => void }) {
           >
             Ver la pista como espectador
           </Link>
+          <Link
+            to="/creditos"
+            className="block text-center text-xs text-muted-foreground hover:text-foreground hover:underline"
+          >
+            Créditos
+          </Link>
         </form>
       </div>
     </section>

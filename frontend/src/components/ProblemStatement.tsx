@@ -30,7 +30,7 @@ function remarkLineBreaks() {
 
 export function ProblemStatement({ statement }: { statement: string }) {
   return (
-    <div className="mt-3 space-y-2 text-sm leading-relaxed text-muted-foreground">
+    <div className="run-it-statement mt-3 space-y-2 text-sm leading-relaxed text-muted-foreground">
       <ReactMarkdown remarkPlugins={[remarkMath, remarkLineBreaks]} rehypePlugins={[rehypeKatex]}>
         {statement}
       </ReactMarkdown>

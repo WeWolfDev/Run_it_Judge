@@ -2757,7 +2757,7 @@ export function AdminPanel({
               <textarea
                 value={problemStatement}
                 onChange={(event) => setProblemStatement(event.target.value)}
-                className="mt-1 min-h-20 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 outline-none focus:border-ring"
+                className="run-it-statement mt-1 min-h-20 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 outline-none focus:border-ring"
                 placeholder="Imprime el saludo solicitado."
                 maxLength={4000}
               />
