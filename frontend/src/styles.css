@@ -283,6 +283,11 @@ body,
 .font-sans {
   font-family: "Pixelify Sans", "Inter", ui-sans-serif, system-ui, sans-serif;
 }
+/* Enunciados en la fuente de lectura: la pixel cansa en textos largos y no
+   trae símbolos matemáticos (≤, ≠, ∑, subíndices). KaTeX usa su propia fuente. */
+.run-it-statement {
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
 
 /* Paletas elegibles por cada usuario (1, 2, 5 y 12 de la propuesta). Solo
    redefinen colores de marca: silks, éxito/peligro y los veredictos no cambian.
