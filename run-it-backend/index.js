@@ -992,6 +992,26 @@ async function roundMember(roundId, userId) {
 	return result.rows[0] || null
 }
 
+// Si el participante ya está en el torneo de esta ronda, con el personaje que
+// eligió. El navegador no alcanza para saberlo: guardaba "ya eligió" por nombre
+// de usuario para siempre, y otro torneo (u otra persona con el mismo nombre en
+// el mismo navegador) se salteaba la elección y entraba con un personaje ajeno.
+fastify.get('/rounds/:id/me', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'participant'))) return;
+	const result = await query(
+		`SELECT EXISTS (
+		   SELECT 1 FROM rounds prev
+		   WHERE prev.tournament_id = r.tournament_id AND prev.round_number < r.round_number
+		 ) AS has_previous,
+		 (SELECT json_build_object('id', p.id, 'character', p.character, 'status', p.status)
+		  FROM participants p WHERE p.tournament_id = r.tournament_id AND p.user_id = $2) AS participant
+		 FROM rounds r WHERE r.id = $1`,
+		[request.params.id, request.user.id],
+	);
+	if (!result.rowCount) return reply.code(404).send({ error: 'La ronda no existe' });
+	return result.rows[0]
+});
+
 fastify.post('/rounds/:id/participants/join', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'participant'))) return;
 	const round = await query(
