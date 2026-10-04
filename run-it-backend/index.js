@@ -195,7 +195,7 @@ function startBlockReason(row) {
 	// Una ronda siguiente sin roster es de antes de estas reglas (el panel la
 	// creaba con POST /rounds): nadie puede entrar, así que no se juega.
 	if (row.has_previous && !row.has_roster) {
-		return `La ronda ${row.round_number} no tiene participantes: solo la juegan los clasificados de la anterior. Borrala y creala con "Avanzar a la siguiente ronda".`;
+		return `La ronda ${row.round_number} no tiene participantes: solo la juegan los clasificados de la anterior. Pasalos con "Avanzar a la siguiente ronda" en Progreso del torneo.`;
 	}
 	return null
 }
@@ -1548,6 +1548,15 @@ async function nextRoundPreview(roundId) {
 	if (tournamentStatus === 'finished') {
 		return { ...preview, available: false, reason: 'El torneo ya terminó' };
 	}
+	if (advancing.rows.length === 0) {
+		// Nadie se inscribió: no hay ganador ni a quién pasar. Sin esta salida el
+		// torneo quedaba abierto para siempre.
+		return {
+			...preview,
+			available: false,
+			reason: `Nadie jugó la ronda ${round.round_number}: no hay a quién pasar. Terminá el torneo.`,
+		};
+	}
 	if (advancing.rows.length < 2) {
 		// Un solo clasificado significa que closeRound ya declaró ganador.
 		return { ...preview, available: false, reason: 'No hay suficientes clasificados para otra ronda' };
@@ -2336,11 +2345,24 @@ async function start() {
 			}
 		});
 	});
+	// Cada ronda vencida se cierra por separado y su error se registra: sin el
+	// try, una ronda que falla al cerrar (o la base caída) rechazaba la promesa
+	// del intervalo, Node terminaba el proceso y las demás no se cerraban nunca.
 	setInterval(async () => {
-		const expired = await query(
-			`SELECT id FROM rounds WHERE status = 'active' AND ends_at <= now()`,
-		);
-		for (const round of expired.rows) await closeRound(round.id);
+		let expired;
+		try {
+			expired = await query(`SELECT id FROM rounds WHERE status = 'active' AND ends_at <= now()`);
+		} catch (error) {
+			fastify.log.error({ err: error }, 'No se pudieron buscar las rondas vencidas');
+			return;
+		}
+		for (const round of expired.rows) {
+			try {
+				await closeRound(round.id);
+			} catch (error) {
+				fastify.log.error({ err: error, roundId: round.id }, 'No se pudo cerrar la ronda vencida');
+			}
+		}
 	}, 1000).unref();
 }
 

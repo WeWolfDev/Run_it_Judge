@@ -1161,6 +1161,23 @@ export function AdminPanel({
     }
   };
 
+  const [finishingTournament, setFinishingTournament] = useState(false);
+  const finishFromProgress = async (tournamentId: string) => {
+    if (!window.confirm("¿Terminar el torneo? No se pueden jugar más rondas.")) return;
+    setFinishingTournament(true);
+    try {
+      await finishTournament(tournamentId);
+      setNextRoundPreview(null);
+      refreshRoundsProgress();
+      setMessage("Torneo terminado. Pasó a Historial.");
+      await Promise.all([refreshTournaments(), refreshFinishedTournaments()]);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo terminar el torneo");
+    } finally {
+      setFinishingTournament(false);
+    }
+  };
+
   const saveNextRound = async () => {
     if (!selectedProblem) {
       setMessage("Elegí un problema para la ronda siguiente.");
@@ -2304,6 +2321,12 @@ export function AdminPanel({
                             />
                           </label>
                         </div>
+                        {nextRoundCapacity >= nextRoundPreview.advancingCount && (
+                          <p className="text-xs text-danger">
+                            Con este cupo pasan todos y nadie queda eliminado. Bajalo para que el
+                            torneo avance hacia un ganador (cupo 1 en la final).
+                          </p>
+                        )}
                         <p className="text-xs text-muted-foreground">
                           Los clasificados quedan inscriptos al crearla. Se crea pendiente: después
                           hay que iniciarla.
@@ -2334,7 +2357,22 @@ export function AdminPanel({
                     )}
                   </>
                 ) : (
-                  <p className="text-xs text-muted-foreground">{nextRoundPreview.reason}</p>
+                  <>
+                    <p className="text-xs text-muted-foreground">{nextRoundPreview.reason}</p>
+                    {/* Sin clasificados no hay ganador ni ronda siguiente: la única
+                        salida es terminarlo a mano, acá y no escondida en Códigos. */}
+                    {nextRoundPreview.advancingCount === 0 &&
+                      nextRoundPreview.tournamentStatus !== "finished" && (
+                        <button
+                          type="button"
+                          disabled={finishingTournament}
+                          onClick={() => void finishFromProgress(nextRoundPreview.tournamentId)}
+                          className="mt-3 w-full rounded-lg border border-danger px-4 py-2 text-sm font-medium text-danger transition-opacity hover:opacity-70 disabled:opacity-50"
+                        >
+                          {finishingTournament ? "Terminando..." : "Terminar torneo"}
+                        </button>
+                      )}
+                  </>
                 )}
               </div>
             )}
