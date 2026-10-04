@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
+import { Route as CreditosRouteImport } from './routes/creditos'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ParticipanteRouteImport } from './routes/participante'
 import { Route as PistaRouteImport } from './routes/pista'
@@ -25,6 +26,11 @@ const IndexRoute = IndexRouteImport.update({
 const AdminRoute = AdminRouteImport.update({
   id: '/admin',
   path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CreditosRoute = CreditosRouteImport.update({
+  id: '/creditos',
+  path: '/creditos',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -56,6 +62,7 @@ const ReglasRoute = ReglasRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/creditos': typeof CreditosRoute
   '/login': typeof LoginRoute
   '/participante': typeof ParticipanteRoute
   '/pista': typeof PistaRoute
@@ -65,6 +72,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/creditos': typeof CreditosRoute
   '/login': typeof LoginRoute
   '/participante': typeof ParticipanteRoute
   '/pista': typeof PistaRoute
@@ -75,6 +83,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/creditos': typeof CreditosRoute
   '/login': typeof LoginRoute
   '/participante': typeof ParticipanteRoute
   '/pista': typeof PistaRoute
@@ -86,6 +95,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/admin'
+    | '/creditos'
     | '/login'
     | '/participante'
     | '/pista'
@@ -95,6 +105,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/admin'
+    | '/creditos'
     | '/login'
     | '/participante'
     | '/pista'
@@ -104,6 +115,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/admin'
+    | '/creditos'
     | '/login'
     | '/participante'
     | '/pista'
@@ -114,6 +126,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRoute
+  CreditosRoute: typeof CreditosRoute
   LoginRoute: typeof LoginRoute
   ParticipanteRoute: typeof ParticipanteRoute
   PistaRoute: typeof PistaRoute
@@ -135,6 +148,13 @@ declare module '@tanstack/react-router' {
       path: '/admin'
       fullPath: '/admin'
       preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/creditos': {
+      id: '/creditos'
+      path: '/creditos'
+      fullPath: '/creditos'
+      preLoaderRoute: typeof CreditosRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -178,6 +198,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
+  CreditosRoute: CreditosRoute,
   LoginRoute: LoginRoute,
   ParticipanteRoute: ParticipanteRoute,
   PistaRoute: PistaRoute,
