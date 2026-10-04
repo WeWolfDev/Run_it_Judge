@@ -655,11 +655,21 @@ export function AdminPanel({
   const refreshProgressRef = useRef(refreshRoundsProgress);
   refreshProgressRef.current = refreshRoundsProgress;
 
-  // Se avanza desde la última ronda del torneo y solo cuando cerró: con la ronda
-  // en curso no hay a quién pasar. Sale del progreso y no de la ronda activa, así
-  // el botón sigue ahí aunque el admin recargue el panel después del cierre.
-  const lastRound = roundsProgress?.length ? roundsProgress[roundsProgress.length - 1] : null;
-  const advanceFromId = lastRound?.status === "closed" ? lastRound.id : "";
+  // Se avanza desde la última ronda cerrada: con la ronda en curso no hay a quién
+  // pasar. No es la última del torneo: con un plan, las rondas siguientes ya
+  // existen pendientes y vacías, y mirar solo la última escondía el botón. Si
+  // alguna posterior ya tiene roster o empezó, ya se avanzó. Sale del progreso y
+  // no de la ronda activa, así el botón sigue ahí aunque el admin recargue.
+  const lastRound = roundsProgress?.filter((round) => round.status === "closed").at(-1) ?? null;
+  const advanced = Boolean(
+    lastRound &&
+    roundsProgress?.some(
+      (round) =>
+        round.round_number > lastRound.round_number &&
+        (round.status !== "pending" || Number(round.participants_count) > 0),
+    ),
+  );
+  const advanceFromId = lastRound && !advanced ? lastRound.id : "";
 
   useEffect(() => {
     setShowNextForm(false);
@@ -1148,6 +1158,23 @@ export function AdminPanel({
       setMessage(error instanceof Error ? error.message : "No se pudo crear el torneo");
     } finally {
       setSavingTournament(false);
+    }
+  };
+
+  const [finishingTournament, setFinishingTournament] = useState(false);
+  const finishFromProgress = async (tournamentId: string) => {
+    if (!window.confirm("¿Terminar el torneo? No se pueden jugar más rondas.")) return;
+    setFinishingTournament(true);
+    try {
+      await finishTournament(tournamentId);
+      setNextRoundPreview(null);
+      refreshRoundsProgress();
+      setMessage("Torneo terminado. Pasó a Historial.");
+      await Promise.all([refreshTournaments(), refreshFinishedTournaments()]);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo terminar el torneo");
+    } finally {
+      setFinishingTournament(false);
     }
   };
 
@@ -2294,6 +2321,12 @@ export function AdminPanel({
                             />
                           </label>
                         </div>
+                        {nextRoundCapacity >= nextRoundPreview.advancingCount && (
+                          <p className="text-xs text-danger">
+                            Con este cupo pasan todos y nadie queda eliminado. Bajalo para que el
+                            torneo avance hacia un ganador (cupo 1 en la final).
+                          </p>
+                        )}
                         <p className="text-xs text-muted-foreground">
                           Los clasificados quedan inscriptos al crearla. Se crea pendiente: después
                           hay que iniciarla.
@@ -2307,7 +2340,9 @@ export function AdminPanel({
                           >
                             {savingNextRound
                               ? "Creando..."
-                              : `Crear ronda ${nextRoundPreview.nextRoundNumber}`}
+                              : nextRoundPreview.existing?.planned
+                                ? `Pasar clasificados a la ronda ${nextRoundPreview.nextRoundNumber}`
+                                : `Crear ronda ${nextRoundPreview.nextRoundNumber}`}
                           </button>
                           <button
                             type="button"
@@ -2322,7 +2357,22 @@ export function AdminPanel({
                     )}
                   </>
                 ) : (
-                  <p className="text-xs text-muted-foreground">{nextRoundPreview.reason}</p>
+                  <>
+                    <p className="text-xs text-muted-foreground">{nextRoundPreview.reason}</p>
+                    {/* Sin clasificados no hay ganador ni ronda siguiente: la única
+                        salida es terminarlo a mano, acá y no escondida en Códigos. */}
+                    {nextRoundPreview.advancingCount === 0 &&
+                      nextRoundPreview.tournamentStatus !== "finished" && (
+                        <button
+                          type="button"
+                          disabled={finishingTournament}
+                          onClick={() => void finishFromProgress(nextRoundPreview.tournamentId)}
+                          className="mt-3 w-full rounded-lg border border-danger px-4 py-2 text-sm font-medium text-danger transition-opacity hover:opacity-70 disabled:opacity-50"
+                        >
+                          {finishingTournament ? "Terminando..." : "Terminar torneo"}
+                        </button>
+                      )}
+                  </>
                 )}
               </div>
             )}

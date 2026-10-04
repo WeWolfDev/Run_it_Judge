@@ -613,7 +613,9 @@ export type NextRoundPreview = {
   roundStatus?: string;
   advancingCount: number;
   advancing: NextRoundAdvancing[];
-  existing: { id: string; round_number: number; status: string } | null;
+  // planned: la ronda siguiente ya existe por el plan, pendiente y sin roster;
+  // avanzar la llena en vez de crearla.
+  existing: { id: string; round_number: number; status: string; planned?: boolean } | null;
 };
 
 export async function getNextRound(roundId: string) {
@@ -733,6 +735,20 @@ export async function getActiveRound() {
 
 // `character` es obligatorio: el backend conserva el primero que recibe, y un
 // cliente que no lo mande quedaría con el 0 por defecto para todo el torneo.
+export type MyParticipation = {
+  /** Ronda 2 en adelante: el personaje ya quedó fijo en la primera. */
+  has_previous: boolean;
+  participant: { id: string; character: number; status: string } | null;
+};
+
+/** Si ya está inscripto en el torneo de la ronda, con el personaje que eligió. */
+export async function getMyParticipation(roundId: string) {
+  const response = await fetch(`${API_URL}/rounds/${roundId}/me`, { headers: authHeaders() });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudo consultar tu inscripción");
+  return body as MyParticipation;
+}
+
 export async function joinRound(roundId: string, displayName: string, character: number) {
   const response = await fetch(`${API_URL}/rounds/${roundId}/participants/join`, {
     method: "POST",

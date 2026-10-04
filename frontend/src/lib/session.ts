@@ -16,7 +16,8 @@ const SESSION_KEY = "run-it-session";
 // torneo en la primera inscripción. Quien ya eligió conserva su personaje.
 const CHARACTER_KEY_PREFIX = "run-it-character:";
 // Clave aparte: el personaje guardado no alcanza para saber si ya eligió,
-// porque 0 (ausente) y 0 (eligió Aurora) son el mismo valor.
+// porque 0 (ausente) y 0 (eligió Aurora) son el mismo valor. Es solo un respaldo:
+// quien decide si ya eligió es el servidor (GET /rounds/:id/me, ParticipantView).
 const CHARACTER_CONFIRMED_KEY_PREFIX = "run-it-character-confirmed:";
 // un índice por personaje de src/lib/characters.ts.
 export const CHARACTER_COUNT = 48;
