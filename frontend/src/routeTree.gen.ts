@@ -12,10 +12,14 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as CreditosRouteImport } from './routes/creditos'
+import { Route as LegalRouteImport } from './routes/legal'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ParticipanteRouteImport } from './routes/participante'
 import { Route as PistaRouteImport } from './routes/pista'
 import { Route as ReglasRouteImport } from './routes/reglas'
+import { Route as LegalIndexRouteImport } from './routes/legal.index'
+import { Route as LegalCreditosRouteImport } from './routes/legal.creditos'
+import { Route as LegalPrivacidadRouteImport } from './routes/legal.privacidad'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -30,6 +34,11 @@ const AdminRoute = AdminRouteImport.update({
 const CreditosRoute = CreditosRouteImport.update({
   id: '/creditos',
   path: '/creditos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LegalRoute = LegalRouteImport.update({
+  id: '/legal',
+  path: '/legal',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -52,15 +61,34 @@ const ReglasRoute = ReglasRouteImport.update({
   path: '/reglas',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LegalIndexRoute = LegalIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => LegalRoute,
+} as any)
+const LegalCreditosRoute = LegalCreditosRouteImport.update({
+  id: '/creditos',
+  path: '/creditos',
+  getParentRoute: () => LegalRoute,
+} as any)
+const LegalPrivacidadRoute = LegalPrivacidadRouteImport.update({
+  id: '/privacidad',
+  path: '/privacidad',
+  getParentRoute: () => LegalRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/creditos': typeof CreditosRoute
+  '/legal': typeof LegalRouteWithChildren
   '/login': typeof LoginRoute
   '/participante': typeof ParticipanteRoute
   '/pista': typeof PistaRoute
   '/reglas': typeof ReglasRoute
+  '/legal/creditos': typeof LegalCreditosRoute
+  '/legal/privacidad': typeof LegalPrivacidadRoute
+  '/legal/': typeof LegalIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -70,16 +98,23 @@ export interface FileRoutesByTo {
   '/participante': typeof ParticipanteRoute
   '/pista': typeof PistaRoute
   '/reglas': typeof ReglasRoute
+  '/legal/creditos': typeof LegalCreditosRoute
+  '/legal/privacidad': typeof LegalPrivacidadRoute
+  '/legal': typeof LegalIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/creditos': typeof CreditosRoute
+  '/legal': typeof LegalRouteWithChildren
   '/login': typeof LoginRoute
   '/participante': typeof ParticipanteRoute
   '/pista': typeof PistaRoute
   '/reglas': typeof ReglasRoute
+  '/legal/creditos': typeof LegalCreditosRoute
+  '/legal/privacidad': typeof LegalPrivacidadRoute
+  '/legal/': typeof LegalIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -87,10 +122,14 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/creditos'
+    | '/legal'
     | '/login'
     | '/participante'
     | '/pista'
     | '/reglas'
+    | '/legal/creditos'
+    | '/legal/privacidad'
+    | '/legal/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -100,21 +139,29 @@ export interface FileRouteTypes {
     | '/participante'
     | '/pista'
     | '/reglas'
+    | '/legal/creditos'
+    | '/legal/privacidad'
+    | '/legal'
   id:
     | '__root__'
     | '/'
     | '/admin'
     | '/creditos'
+    | '/legal'
     | '/login'
     | '/participante'
     | '/pista'
     | '/reglas'
+    | '/legal/creditos'
+    | '/legal/privacidad'
+    | '/legal/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRoute
   CreditosRoute: typeof CreditosRoute
+  LegalRoute: typeof LegalRouteWithChildren
   LoginRoute: typeof LoginRoute
   ParticipanteRoute: typeof ParticipanteRoute
   PistaRoute: typeof PistaRoute
@@ -142,6 +189,13 @@ declare module '@tanstack/react-router' {
       path: '/creditos'
       fullPath: '/creditos'
       preLoaderRoute: typeof CreditosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/legal': {
+      id: '/legal'
+      path: '/legal'
+      fullPath: '/legal'
+      preLoaderRoute: typeof LegalRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -172,13 +226,49 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReglasRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/legal/': {
+      id: '/legal/'
+      path: '/'
+      fullPath: '/legal/'
+      preLoaderRoute: typeof LegalIndexRouteImport
+      parentRoute: typeof LegalRoute
+    }
+    '/legal/creditos': {
+      id: '/legal/creditos'
+      path: '/creditos'
+      fullPath: '/legal/creditos'
+      preLoaderRoute: typeof LegalCreditosRouteImport
+      parentRoute: typeof LegalRoute
+    }
+    '/legal/privacidad': {
+      id: '/legal/privacidad'
+      path: '/privacidad'
+      fullPath: '/legal/privacidad'
+      preLoaderRoute: typeof LegalPrivacidadRouteImport
+      parentRoute: typeof LegalRoute
+    }
   }
 }
+
+interface LegalRouteChildren {
+  LegalCreditosRoute: typeof LegalCreditosRoute
+  LegalPrivacidadRoute: typeof LegalPrivacidadRoute
+  LegalIndexRoute: typeof LegalIndexRoute
+}
+
+const LegalRouteChildren: LegalRouteChildren = {
+  LegalCreditosRoute: LegalCreditosRoute,
+  LegalPrivacidadRoute: LegalPrivacidadRoute,
+  LegalIndexRoute: LegalIndexRoute,
+}
+
+const LegalRouteWithChildren = LegalRoute._addFileChildren(LegalRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
   CreditosRoute: CreditosRoute,
+  LegalRoute: LegalRouteWithChildren,
   LoginRoute: LoginRoute,
   ParticipanteRoute: ParticipanteRoute,
   PistaRoute: PistaRoute,
