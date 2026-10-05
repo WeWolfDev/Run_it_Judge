@@ -16,6 +16,7 @@ import { Route as LegalRouteImport } from './routes/legal'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ParticipanteRouteImport } from './routes/participante'
 import { Route as PistaRouteImport } from './routes/pista'
+import { Route as PublicoRouteImport } from './routes/publico'
 import { Route as ReglasRouteImport } from './routes/reglas'
 import { Route as LegalIndexRouteImport } from './routes/legal.index'
 import { Route as LegalCreditosRouteImport } from './routes/legal.creditos'
@@ -56,6 +57,11 @@ const PistaRoute = PistaRouteImport.update({
   path: '/pista',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PublicoRoute = PublicoRouteImport.update({
+  id: '/publico',
+  path: '/publico',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ReglasRoute = ReglasRouteImport.update({
   id: '/reglas',
   path: '/reglas',
@@ -85,6 +91,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/participante': typeof ParticipanteRoute
   '/pista': typeof PistaRoute
+  '/publico': typeof PublicoRoute
   '/reglas': typeof ReglasRoute
   '/legal/creditos': typeof LegalCreditosRoute
   '/legal/privacidad': typeof LegalPrivacidadRoute
@@ -97,6 +104,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/participante': typeof ParticipanteRoute
   '/pista': typeof PistaRoute
+  '/publico': typeof PublicoRoute
   '/reglas': typeof ReglasRoute
   '/legal/creditos': typeof LegalCreditosRoute
   '/legal/privacidad': typeof LegalPrivacidadRoute
@@ -111,6 +119,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/participante': typeof ParticipanteRoute
   '/pista': typeof PistaRoute
+  '/publico': typeof PublicoRoute
   '/reglas': typeof ReglasRoute
   '/legal/creditos': typeof LegalCreditosRoute
   '/legal/privacidad': typeof LegalPrivacidadRoute
@@ -126,6 +135,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/participante'
     | '/pista'
+    | '/publico'
     | '/reglas'
     | '/legal/creditos'
     | '/legal/privacidad'
@@ -138,6 +148,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/participante'
     | '/pista'
+    | '/publico'
     | '/reglas'
     | '/legal/creditos'
     | '/legal/privacidad'
@@ -151,6 +162,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/participante'
     | '/pista'
+    | '/publico'
     | '/reglas'
     | '/legal/creditos'
     | '/legal/privacidad'
@@ -165,6 +177,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   ParticipanteRoute: typeof ParticipanteRoute
   PistaRoute: typeof PistaRoute
+  PublicoRoute: typeof PublicoRoute
   ReglasRoute: typeof ReglasRoute
 }
 
@@ -217,6 +230,13 @@ declare module '@tanstack/react-router' {
       path: '/pista'
       fullPath: '/pista'
       preLoaderRoute: typeof PistaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/publico': {
+      id: '/publico'
+      path: '/publico'
+      fullPath: '/publico'
+      preLoaderRoute: typeof PublicoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reglas': {
@@ -272,6 +292,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   ParticipanteRoute: ParticipanteRoute,
   PistaRoute: PistaRoute,
+  PublicoRoute: PublicoRoute,
   ReglasRoute: ReglasRoute,
 }
 export const routeTree = rootRouteImport

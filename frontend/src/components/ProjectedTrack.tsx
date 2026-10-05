@@ -237,13 +237,16 @@ function Track({
             </span>
 
             <div className="proj-runway absolute inset-y-0">
+              {/* Lo que avanza es solo la casilla del personaje (ancho fijo): al 100 %
+                  su borde toca la meta, sea cual sea el largo del nombre. El nombre cuelga
+                  de la casilla: a la derecha, y del lado de adentro cerca de la meta. */}
               <div
-                className="absolute flex items-end gap-[0.4vw]"
+                className="absolute"
                 style={{
                   bottom: 4,
-                  left: `${pct}%`,
-                  transform: `translateX(-${pct}%)`,
-                  transition: `left ${MOVE_MS}ms linear, transform ${MOVE_MS}ms linear`,
+                  width: laneH * 0.9,
+                  left: `calc((100% - ${laneH * 0.9}px) * ${pct / 100})`,
+                  transition: `left ${MOVE_MS}ms linear`,
                 }}
               >
                 {(() => {
@@ -276,8 +279,13 @@ function Track({
                   );
                 })()}
                 <span
-                  className="proj-tag mb-[0.4em] whitespace-nowrap"
-                  style={{ fontSize: Math.max(11, Math.min(laneH * 0.3, 24)) }}
+                  className="proj-tag absolute bottom-0 mb-[0.4em] whitespace-nowrap"
+                  style={{
+                    fontSize: Math.max(11, Math.min(laneH * 0.3, 24)),
+                    ...(pct < 60
+                      ? { left: "100%", marginLeft: "0.4vw" }
+                      : { right: "100%", marginRight: "0.4vw" }),
+                  }}
                 >
                   <b>{entry.display_name}</b> <span className="opacity-75">{pct}%</span>
                 </span>
