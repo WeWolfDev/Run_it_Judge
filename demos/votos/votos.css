@@ -1,0 +1,29 @@
+/* DEMO: voto del público. Malo en naranja, bueno en amarillo, como el mockup. */
+.vot-card {
+  border: 3px solid var(--accent);
+  border-radius: 10px;
+  background: color-mix(in oklch, var(--card), black 10%);
+  box-shadow: 6px 6px 0 color-mix(in oklch, var(--accent) 40%, black);
+}
+.vot-card.vot-bueno { border-color: #ffd34d; box-shadow: 6px 6px 0 #6b5410; }
+.vot-card.vot-malo { border-color: #f08a4b; box-shadow: 6px 6px 0 #6b2f10; }
+.vot-bar-bad { background: #f08a4b; color: #2a1206; transition: width 0.4s steps(4); }
+.vot-bar-good { background: #ffd34d; color: #2a2006; transition: width 0.4s steps(4); }
+.vot-blackout { background: #000; }
+.vot-phone {
+  min-height: 760px;
+  border: 3px solid #3a2f55;
+  border-radius: 28px;
+  background: #1a0f2e;
+  box-shadow: 0 0 0 10px #050308, 0 20px 60px rgb(0 0 0 / 0.6);
+  color: #f4ecff;
+}
+.vot-timer { border: 3px solid #ffd34d; background: #22163a; }
+.vot-option { border: 3px solid; border-radius: 4px; transition: transform 0.1s; }
+.vot-option:active:not(:disabled) { transform: translate(2px, 2px); }
+.vot-option-malo { border-color: #f08a4b; background: #4a1f16; }
+.vot-option-bueno { border-color: #ffd34d; background: #3a3018; }
+.vot-option-picked { box-shadow: 0 0 0 3px #fff, 0 0 24px rgb(255 255 255 / 0.4); }
+.vot-toast { background: var(--accent); color: #000; border-radius: 4px; }
+.vot-hint { background: color-mix(in oklch, #ffd34d 18%, var(--card)); border: 2px solid #ffd34d; }
+.vot-soon { border-style: dashed; }

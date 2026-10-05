@@ -115,7 +115,9 @@ function Header({
           Cupo
         </p>
         <p className="text-[clamp(0.7rem,1.15vw,1.6rem)]" style={PIXEL}>
-          Pasan {round.capacity} de {board.length}
+          {round.capacity >= board.length
+            ? `Pasan todos (${board.length})`
+            : `Pasan ${round.capacity} de ${board.length}`}
         </p>
       </div>
       <p
