@@ -7,7 +7,7 @@ demo = sys.argv[1]
 here = os.path.dirname(os.path.abspath(__file__))
 dist = os.path.join(here, "dist", demo)
 html = open(os.path.join(dist, "index.html")).read()
-titles = {"admin": "Panel Admin Run It", "participante": "Vista Participante Run It", "pista": "Pista Run It", "login": "Login Run It", "proyeccion": "Pista proyectada Run It", "premios": "Ceremonia de premios Run It", "eliminado": "Eliminado Run It"}
+titles = {"admin": "Panel Admin Run It", "participante": "Vista Participante Run It", "pista": "Pista Run It", "login": "Login Run It", "proyeccion": "Pista proyectada Run It", "premios": "Ceremonia de premios Run It", "eliminado": "Eliminado Run It", "publico": "Vistas del público Run It", "votos": "Voto del público Run It"}
 
 css_files = re.findall(r'<link rel="stylesheet" crossorigin href="\./(assets/[^"]+\.css)">', html)
 css = "".join(open(os.path.join(dist, f)).read() for f in css_files)

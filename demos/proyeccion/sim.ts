@@ -46,7 +46,8 @@ const NAMES = [
   "Zafiro", "Ámbar", "Brisa", "Cobra", "Dante", "Elio", "Faro", "Gala", "Hugo", "Índigo",
   "Jade", "Kiwi", "Lobo", "Mora", "Nilo", "Onix", "Pino", "Quinto", "Roca", "Salsa",
 ];
-const TESTS = 5;
+/** Estándar del torneo: 30 test cases por problema. */
+const TESTS = 30;
 
 type Runner = Entry & { skill: number; passed: number };
 
@@ -78,6 +79,8 @@ export function createSim({ participants, capacity }: { participants: number; ca
   let eventId = 0;
   let arrivals = 0;
   let speed = 1;
+  // Segundos que suma un envío fallido; los hits del público pueden cambiarlo.
+  let penalty = () => 30;
   const listeners = new Set<() => void>();
   const emit = () => listeners.forEach((listener) => listener());
 
@@ -114,9 +117,9 @@ export function createSim({ participants, capacity }: { participants: number; ca
     const pending = runners.filter((r) => !r.solved_at);
     const runner = pending[Math.floor(Math.random() * pending.length)];
     if (!runner) return close();
-    // El último test cuesta más: así la ronda dura y el pelotón se separa.
-    const odds = runner.passed === TESTS - 1 ? runner.skill * 0.35 : runner.skill;
-    const gain = Math.random() < odds ? 1 + Math.floor(Math.random() * 2) : 0;
+    // Los últimos tests cuestan más: así la ronda dura y el pelotón se separa.
+    const odds = runner.passed >= TESTS - 6 ? runner.skill * 0.35 : runner.skill;
+    const gain = Math.random() < odds ? 2 + Math.floor(Math.random() * 6) : 0;
     const passed = Math.min(TESTS, runner.passed + gain);
     // Pasar todos los tests es resolver, como en el juez real.
     if (passed === TESTS) {
@@ -132,7 +135,7 @@ export function createSim({ participants, capacity }: { participants: number; ca
       push({ kind: "progress", name: runner.display_name, character: runner.character, passed, total: TESTS });
     } else {
       runner.failed_attempts_count += 1;
-      runner.penalty_seconds += 30;
+      runner.penalty_seconds += penalty();
       push({ kind: "fail", name: runner.display_name, character: runner.character, passed: runner.passed, total: TESTS });
     }
     emit();
@@ -162,6 +165,10 @@ export function createSim({ participants, capacity }: { participants: number; ca
       restartTimer();
     },
     close,
+    setPenalty(next: () => number) {
+      penalty = next;
+    },
+    speed: () => speed,
     stop: () => clearInterval(timer),
   };
 }
