@@ -15,6 +15,7 @@ import { Route as CreditosRouteImport } from './routes/creditos'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ParticipanteRouteImport } from './routes/participante'
 import { Route as PistaRouteImport } from './routes/pista'
+import { Route as PublicoRouteImport } from './routes/publico'
 import { Route as ReglasRouteImport } from './routes/reglas'
 
 const IndexRoute = IndexRouteImport.update({
@@ -47,6 +48,11 @@ const PistaRoute = PistaRouteImport.update({
   path: '/pista',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PublicoRoute = PublicoRouteImport.update({
+  id: '/publico',
+  path: '/publico',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ReglasRoute = ReglasRouteImport.update({
   id: '/reglas',
   path: '/reglas',
@@ -60,6 +66,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/participante': typeof ParticipanteRoute
   '/pista': typeof PistaRoute
+  '/publico': typeof PublicoRoute
   '/reglas': typeof ReglasRoute
 }
 export interface FileRoutesByTo {
@@ -69,6 +76,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/participante': typeof ParticipanteRoute
   '/pista': typeof PistaRoute
+  '/publico': typeof PublicoRoute
   '/reglas': typeof ReglasRoute
 }
 export interface FileRoutesById {
@@ -79,6 +87,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/participante': typeof ParticipanteRoute
   '/pista': typeof PistaRoute
+  '/publico': typeof PublicoRoute
   '/reglas': typeof ReglasRoute
 }
 export interface FileRouteTypes {
@@ -90,6 +99,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/participante'
     | '/pista'
+    | '/publico'
     | '/reglas'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -99,6 +109,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/participante'
     | '/pista'
+    | '/publico'
     | '/reglas'
   id:
     | '__root__'
@@ -108,6 +119,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/participante'
     | '/pista'
+    | '/publico'
     | '/reglas'
   fileRoutesById: FileRoutesById
 }
@@ -118,6 +130,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   ParticipanteRoute: typeof ParticipanteRoute
   PistaRoute: typeof PistaRoute
+  PublicoRoute: typeof PublicoRoute
   ReglasRoute: typeof ReglasRoute
 }
 
@@ -165,6 +178,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PistaRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/publico': {
+      id: '/publico'
+      path: '/publico'
+      fullPath: '/publico'
+      preLoaderRoute: typeof PublicoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/reglas': {
       id: '/reglas'
       path: '/reglas'
@@ -182,6 +202,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   ParticipanteRoute: ParticipanteRoute,
   PistaRoute: PistaRoute,
+  PublicoRoute: PublicoRoute,
   ReglasRoute: ReglasRoute,
 }
 export const routeTree = rootRouteImport
