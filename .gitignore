@@ -14,3 +14,6 @@ demos/dist/
 # Paquetes de assets originales: sus licencias prohíben redistribuirlos (ver CREDITS.md).
 frontend/Run_it_Asset 3/
 frontend/public/Login.mp4
+
+# Assets de los minijuegos del público (Kenney, CC0): fuera del repo por pedido.
+demos/public/minijuegos/

@@ -37,27 +37,33 @@ type Props = {
   events: FeedEvent[];
   /** Cuántos corredores van en la pista; con más, los carriles son más delgados. */
   laneCount?: number;
+  /** Hit "Niebla": tapa el ranking con este texto (null = sin niebla). */
+  fog?: string | null;
+  /** Hit "Reloj oculto": el cronómetro no se muestra. */
+  clockHidden?: boolean;
 };
 
-export function ProjectedTrack({ round, board, events, laneCount = DEFAULT_LANES }: Props) {
+export function ProjectedTrack({ round, board, events, laneCount = DEFAULT_LANES, fog = null, clockHidden = false }: Props) {
   const now = useNow();
   const lanes = board.slice(0, laneCount);
   const rest = board.slice(laneCount);
   const solved = board.filter((e) => e.solved_at).length;
   return (
     <div className="proj fixed inset-0 grid grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-background text-foreground">
-      <Header round={round} now={now} />
+      <Header round={round} now={now} clockHidden={clockHidden} />
       <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(15rem,23vw)] gap-[1.2vw] px-[1.2vw] pb-[1.2vw]">
-        <section className="flex min-h-0 flex-col gap-[0.8vw]">
+        <section className="relative flex min-h-0 flex-col gap-[0.8vw]">
+          {fog && <Fog label={fog} />}
           <Track lanes={lanes} capacity={round.capacity} closed={round.closed} total={board.length} />
           {rest.length > 0 && <Peloton rest={rest} offset={laneCount} capacity={round.capacity} />}
         </section>
-        <aside className="flex min-h-0 flex-col gap-[0.8vw]">
+        <aside className="relative flex min-h-0 flex-col gap-[0.8vw]">
+          {fog && <Fog label="Ranking oculto" />}
           <Quota solved={solved} capacity={round.capacity} participants={board.length} />
           <Feed events={events} />
         </aside>
       </div>
-      {!round.closed && <Announcements events={events} />}
+      {!round.closed && !fog && <Announcements events={events} />}
       {round.closed && <Podium board={board} round={round} />}
       <FullscreenButton />
     </div>
@@ -73,7 +79,7 @@ function useNow() {
   return now;
 }
 
-function Header({ round, now }: { round: SimRound; now: number }) {
+function Header({ round, now, clockHidden = false }: { round: SimRound; now: number; clockHidden?: boolean }) {
   const waiting = now < round.startsAt;
   const left = waiting ? round.startsAt - now : round.endsAt - now;
   const hurry = !round.closed && !waiting && left <= 60_000;
@@ -112,7 +118,7 @@ function Header({ round, now }: { round: SimRound; now: number }) {
           )}
           style={PIXEL}
         >
-          {round.closed ? "00:00" : formatClock(left)}
+          {round.closed ? "00:00" : clockHidden && !waiting ? "??:??" : formatClock(left)}
         </p>
       </div>
     </header>
@@ -659,5 +665,16 @@ function FullscreenButton() {
     >
       Pantalla completa
     </button>
+  );
+}
+
+// Niebla del voto del público: tapa la carrera, el cupo y el feed.
+function Fog({ label }: { label: string }) {
+  return (
+    <div className="proj-fog absolute inset-0 z-30 grid place-items-center rounded-xl">
+      <p className="text-center text-[clamp(0.8rem,1.6vw,2.2rem)] text-foreground" style={PIXEL}>
+        {label}
+      </p>
+    </div>
   );
 }

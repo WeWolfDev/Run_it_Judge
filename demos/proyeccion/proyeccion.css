@@ -239,3 +239,22 @@
 .proj-sprite img {
   image-rendering: pixelated;
 }
+
+/* Niebla del voto del público: nubes que se mueven sobre el ranking. */
+.proj-fog {
+  background:
+    radial-gradient(ellipse 30% 22% at 20% 30%, rgb(220 225 240 / 0.95), transparent),
+    radial-gradient(ellipse 35% 25% at 70% 60%, rgb(210 215 235 / 0.95), transparent),
+    radial-gradient(ellipse 30% 20% at 40% 85%, rgb(225 230 245 / 0.95), transparent),
+    rgb(150 158 185 / 0.92);
+  background-size: 200% 200%;
+  animation: proj-fog 6s steps(12) infinite alternate;
+  backdrop-filter: blur(6px);
+}
+@keyframes proj-fog {
+  to { background-position: 100% 60%; }
+}
+.proj-fog p { color: #1a1d2e; }
+@media (prefers-reduced-motion: reduce) {
+  .proj-fog { animation: none; }
+}

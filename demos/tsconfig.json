@@ -1,8 +1,33 @@
 {
   "extends": "../frontend/tsconfig.json",
-  "include": ["src/**/*.ts", "src/**/*.tsx", "fake/**/*.ts", "shell/**/*.tsx", "admin/**/*.tsx", "participante/**/*.tsx", "pista/**/*.tsx", "login/**/*.tsx", "proyeccion/**/*.ts", "proyeccion/**/*.tsx", "premios/**/*.ts", "premios/**/*.tsx", "eliminado/**/*.tsx"],
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "fake/**/*.ts",
+    "shell/**/*.tsx",
+    "admin/**/*.tsx",
+    "participante/**/*.tsx",
+    "pista/**/*.tsx",
+    "login/**/*.tsx",
+    "proyeccion/**/*.ts",
+    "proyeccion/**/*.tsx",
+    "premios/**/*.ts",
+    "premios/**/*.tsx",
+    "eliminado/**/*.tsx",
+    "publico/**/*.ts",
+    "publico/**/*.tsx",
+    "votos/**/*.ts",
+    "votos/**/*.tsx"
+  ],
   "compilerOptions": {
     "noEmit": true,
-    "paths": { "@/*": ["./src/*"], "socket.io-client": ["./fake/socket.ts"] }
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ],
+      "socket.io-client": [
+        "./fake/socket.ts"
+      ]
+    }
   }
 }
