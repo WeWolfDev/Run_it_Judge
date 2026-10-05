@@ -74,7 +74,7 @@ function LoginScreen({ onKey }: { onKey: (side: DeckSide) => void }) {
     }
 
     if (!acceptedRules) {
-      setError("Acepta las reglas del torneo para continuar.");
+      setError("Acepta las reglas del torneo y el aviso de privacidad para continuar.");
       return;
     }
 
@@ -160,6 +160,10 @@ function LoginScreen({ onKey }: { onKey: (side: DeckSide) => void }) {
               Acepto las{" "}
               <Link to="/reglas" className="text-primary hover:underline">
                 reglas del torneo
+              </Link>{" "}
+              y el{" "}
+              <Link to="/legal/privacidad" className="text-primary hover:underline">
+                aviso de privacidad
               </Link>
             </Label>
           </div>
@@ -192,12 +196,15 @@ function LoginScreen({ onKey }: { onKey: (side: DeckSide) => void }) {
           >
             Ver la pista como espectador
           </Link>
-          <Link
-            to="/creditos"
-            className="block text-center text-xs text-muted-foreground hover:text-foreground hover:underline"
-          >
-            Créditos
-          </Link>
+          <p className="flex justify-center gap-3 text-xs text-muted-foreground">
+            <Link to="/legal/privacidad" className="hover:text-foreground hover:underline">
+              Privacidad
+            </Link>
+            <span aria-hidden="true">·</span>
+            <Link to="/legal/creditos" className="hover:text-foreground hover:underline">
+              Créditos y licencias
+            </Link>
+          </p>
         </form>
       </div>
     </section>

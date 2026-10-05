@@ -1,7 +1,9 @@
 # Créditos y licencias
 
-Recursos de terceros que usa Run It. La página `/creditos` muestra lo mismo:
-al agregar o quitar un recurso, actualizar los dos (`frontend/src/routes/creditos.tsx`).
+Recursos de terceros que usa Run It. La página `/legal/creditos` muestra lo mismo:
+al agregar o quitar un recurso, actualizar los dos (`frontend/src/lib/credits.ts`).
+La lista de bibliotecas de código abierto se genera con `npm run licenses`
+(`frontend/src/lib/third-party.json`).
 
 Los paquetes originales (`frontend/Run_it_Asset 3/`) **no se versionan**: varias
 licencias prohíben redistribuirlos. Se guardan fuera del repo; en el repo solo
