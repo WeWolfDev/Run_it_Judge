@@ -1408,3 +1408,16 @@ html.pixel-cursor :is(button, a, label, select, [role="button"], [role="tab"]) {
 .pub-zone .pub-name.pub-next-tag {
   background: var(--accent);
 }
+
+/* Aviso "¡Ya clasificaste!" sobre el editor: brillo verde que late despacio. */
+.run-it-qualified {
+  background: linear-gradient(90deg, color-mix(in oklch, var(--success) 22%, transparent), transparent 80%);
+  box-shadow: inset 4px 0 0 var(--success);
+  animation: run-it-qualified 2s steps(4) infinite alternate;
+}
+@keyframes run-it-qualified {
+  to { box-shadow: inset 4px 0 0 var(--success), inset 0 0 24px color-mix(in oklch, var(--success) 30%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .run-it-qualified { animation: none; }
+}
