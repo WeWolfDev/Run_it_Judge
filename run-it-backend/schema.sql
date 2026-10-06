@@ -269,3 +269,42 @@ CREATE INDEX IF NOT EXISTS rounds_active_idx ON rounds(status);
 CREATE INDEX IF NOT EXISTS submissions_participant_idx ON submissions(participant_id, submitted_at);
 -- /queue/stats y la lista de envíos del panel cuentan y filtran por ronda.
 CREATE INDEX IF NOT EXISTS submissions_round_idx ON submissions(round_id, verdict);
+
+-- Voto del público (hits.js). La grada vota por QR, sin cuenta: voter es un
+-- token anónimo del navegador y la clave primaria deja un voto por votación.
+-- Todo cuelga de la ronda con ON DELETE CASCADE: borrar el torneo se lo lleva.
+CREATE TABLE IF NOT EXISTS hit_polls (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  round_id UUID NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+  good TEXT NOT NULL,
+  bad TEXT NOT NULL,
+  announced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  opens_at TIMESTAMPTZ NOT NULL,
+  closes_at TIMESTAMPTZ NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed', 'cancelled')),
+  winner TEXT
+);
+CREATE INDEX IF NOT EXISTS hit_polls_round_idx ON hit_polls(round_id, status);
+
+CREATE TABLE IF NOT EXISTS hit_votes (
+  poll_id UUID NOT NULL REFERENCES hit_polls(id) ON DELETE CASCADE,
+  voter TEXT NOT NULL,
+  choice TEXT NOT NULL CHECK (choice IN ('good', 'bad')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (poll_id, voter)
+);
+
+-- Hits que cayeron sobre la ronda. ends_at NULL = hasta que cierre la ronda.
+CREATE TABLE IF NOT EXISTS round_hits (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  round_id UUID NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+  poll_id UUID REFERENCES hit_polls(id) ON DELETE SET NULL,
+  hit TEXT NOT NULL,
+  starts_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ends_at TIMESTAMPTZ,
+  cancelled_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS round_hits_round_idx ON round_hits(round_id);
+
+-- Pista opcional del organizador: solo se muestra si la grada vota ese hit.
+ALTER TABLE problems ADD COLUMN IF NOT EXISTS hint TEXT;
