@@ -541,6 +541,13 @@ export function ParticipantView() {
   // Bloqueo real: deja el editor en solo lectura, no solo el botón. El texto se conserva.
   const locked = !live || live.status !== "active" || live.paused || remaining <= 0 || countingDown;
   const inscribed = Boolean(participant && round && participant.roundId === round.id);
+  // Ya resolvió todos los casos: clasificó y no envía más en esta ronda (el
+  // backend también lo rechaza). Sale del historial o del ranking, así
+  // sobrevive a recargar la página.
+  const qualified =
+    inscribed &&
+    (history.some((entry) => entry.verdict === "accepted" || entry.verdict === "Accepted") ||
+      Boolean(liveStandings.find((entry) => entry.participant_id === participantId)?.solved_at));
 
   // CharacterCarousel ya guardó el personaje en localStorage antes de llamar acá.
   const confirmCharacter = (character: number) => {
@@ -571,6 +578,10 @@ export function ParticipantView() {
   };
 
   const send = async () => {
+    if (qualified) {
+      setMessage("Ya clasificaste: no hace falta enviar más en esta ronda.");
+      return;
+    }
     if (locked || !round || !participant || participant.roundId !== round.id) {
       setMessage("No puedes enviar ahora.");
       return;
@@ -608,7 +619,7 @@ export function ParticipantView() {
 
   // Probar no es enviar: no queda en el historial ni suma penalización.
   const run = async (mode: RunTab = runTab) => {
-    if (running) return;
+    if (running || qualified) return;
     if (locked || !round || !participant || participant.roundId !== round.id) {
       setRunError("No puedes probar ahora.");
       return;
@@ -913,7 +924,7 @@ export function ParticipantView() {
             <select
               value={language}
               onChange={(event) => changeLanguage(event.target.value as Language)}
-              disabled={locked}
+              disabled={locked || qualified}
               aria-label="Lenguaje"
               className="mb-1.5 rounded-md border border-editor-border bg-editor px-2 py-1 font-mono text-xs text-editor-foreground outline-none"
             >
@@ -924,11 +935,28 @@ export function ParticipantView() {
               ))}
             </select>
           </div>
+          {qualified && (
+            <div
+              role="status"
+              className="run-it-qualified flex items-center gap-4 border-b border-editor-border px-4 py-3"
+            >
+              <Sprite index={character} state="run" scale={0.6} />
+              <div className="min-w-0">
+                <p className="animate-run-it-zoom flex items-center gap-2 text-lg font-bold text-success">
+                  <PixelIcon name="trophy" className="h-5 w-5" /> ¡Ya clasificaste!
+                </p>
+                <p className="mt-0.5 text-sm text-editor-foreground">
+                  Completaste todos los casos y tu lugar está asegurado. No hace falta enviar más en
+                  esta ronda: espera el cierre.
+                </p>
+              </div>
+            </div>
+          )}
           <CodeEditor
             value={code}
             onChange={(value) => setCode(value)}
             language={language}
-            readOnly={locked}
+            readOnly={locked || qualified}
             onRunShortcut={() => void run()}
           />
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-editor-border px-4 py-3">
@@ -939,7 +967,7 @@ export function ParticipantView() {
               <button
                 type="button"
                 onClick={() => void run()}
-                disabled={running || locked || !inscribed}
+                disabled={running || locked || !inscribed || qualified}
                 className="rounded-lg border border-editor-border px-4 py-2 text-sm font-medium text-editor-foreground transition-colors hover:bg-white/5 disabled:opacity-50"
               >
                 <span className="flex items-center gap-1.5">
@@ -950,7 +978,7 @@ export function ParticipantView() {
               <button
                 type="button"
                 onClick={() => void send()}
-                disabled={sending || locked || !inscribed}
+                disabled={sending || locked || !inscribed || qualified}
                 className="rounded-lg bg-info px-4 py-2 text-sm font-medium text-info-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
               >
                 <span className="flex items-center gap-1.5">
@@ -1120,7 +1148,7 @@ export function ParticipantView() {
                 <button
                   type="button"
                   onClick={() => void run("custom")}
-                  disabled={running || locked || !inscribed}
+                  disabled={running || locked || !inscribed || qualified}
                   className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
                 >
                   Probar con esta entrada

@@ -2220,12 +2220,17 @@ fastify.post('/rounds/:id/submissions', async (request, reply) => {
 	// saldría antes que los demás. starts_at NULL (rondas viejas) da NULL y pasa.
 	if (round.rows[0].counting_down) return reply.code(409).send({ error: 'La ronda todavía no empezó' });
 	const participant = await query(
-		`SELECT p.id, p.display_name FROM participants p
+		`SELECT p.id, p.display_name, rp.solved_at FROM participants p
 		 JOIN round_participants rp ON rp.participant_id = p.id AND rp.round_id = $1
 		 WHERE p.id = $2 AND p.user_id = $3 AND p.tournament_id = $4 AND p.status = 'active'`,
 		[request.params.id, participantId, request.user.id, round.rows[0].tournament_id],
 	);
 	if (!participant.rowCount) return reply.code(403).send({ error: 'Participante no válido para esta ronda' });
+	// Quien ya resolvió todos los casos clasificó: no envía más en esta ronda.
+	// Otro envío no cambia su puesto y solo ocuparía la cola del juez.
+	if (participant.rows[0].solved_at) {
+		return reply.code(409).send({ error: 'Ya clasificaste: completaste todos los casos de esta ronda' });
+	}
 
 	const submission = await query(
 		`INSERT INTO submissions (round_id, participant_id, code, language)
