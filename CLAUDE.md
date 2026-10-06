@@ -98,6 +98,19 @@ revelada). Un premio sin candidato queda desierto. "Compilador O(1) Humano" usa
 `submissions.exec_ms` (el mayor tiempo de Judge0 entre los casos): los envíos
 anteriores a la columna no compiten.
 
+**Voto del público (hits).** Con la ronda en curso, el admin anuncia desde
+"Progreso del torneo" un par de hits (uno bueno y uno malo del mismo peso):
+15 s de "votación próxima" y 40 s para votar. La grada vota sin cuenta en
+`/votar` (QR en `/pista` y `/publico`); quien tiene sesión no vota. Máximo 2
+votaciones por ronda, ninguna en el primer minuto ni en los últimos 2. Las
+reglas están en `run-it-backend/hits.js` y los efectos se aplican en el
+servidor: la niebla vacía el ranking (`/rounds/:id/leaderboard`,
+`/public/rounds/active`) salvo para el admin, la amnistía y la penalización
+doble se miden al `submitted_at`, el minuto extra y los cupos cambian la ronda
+(`round:updated`). Reloj oculto, apagón y aliento son de pantalla. Un hit nunca
+toca el editor ni el veredicto. `closeRound` cancela las votaciones abiertas y
+termina los hits.
+
 **Quién entra a una ronda.** En la primera ronda de un torneo el participante
 se inscribe solo (paso 5). En las siguientes solo entra quien está en el roster
 que armó el paso 8. El criterio es uno solo, `roundMember()` (roster +

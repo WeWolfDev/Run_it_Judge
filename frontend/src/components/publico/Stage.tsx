@@ -28,6 +28,8 @@ export function Stage({
   board,
   events,
   serverOffsetMs,
+  fog = null,
+  clockHidden = false,
   step,
   summaryStep,
   children,
@@ -35,13 +37,17 @@ export function Stage({
   const now = useNow(serverOffsetMs);
   return (
     <div className="pub fixed inset-0 grid grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-background text-foreground">
-      <Header view={view} round={round} board={board} now={now} />
+      <Header view={view} round={round} board={board} now={now} clockHidden={clockHidden} />
       <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(15rem,23vw)] gap-[1.2vw] px-[1.2vw] pb-[1.2vw]">
         <main className="flex min-h-0 flex-col gap-[0.6vw]">
           {view.legend && <Legend items={view.legend(round.capacity)} />}
-          <div className="relative isolate min-h-0 flex-1">{children}</div>
+          <div className="relative isolate min-h-0 flex-1">
+            {children}
+            {fog && <Fog label={fog} />}
+          </div>
         </main>
-        <aside className="flex min-h-0 flex-col gap-[0.8vw]">
+        <aside className="relative flex min-h-0 flex-col gap-[0.8vw]">
+          {fog && <Fog label="Ranking oculto" />}
           <Bubble board={board} capacity={round.capacity} closed={round.closed} />
           <Live events={events} board={board} capacity={round.capacity} goal={view.goal} />
         </aside>
@@ -72,11 +78,13 @@ function Header({
   round,
   board,
   now,
+  clockHidden = false,
 }: {
   view: ViewInfo;
   round: TrackRound;
   board: Entry[];
   now: number;
+  clockHidden?: boolean;
 }) {
   const waiting = now < round.startsAt;
   const left = waiting ? round.startsAt - now : round.endsAt - now;
@@ -127,7 +135,7 @@ function Header({
         )}
         style={PIXEL}
       >
-        {round.closed ? "00:00" : formatClock(left)}
+        {round.closed ? "00:00" : clockHidden && !waiting ? "??:??" : formatClock(left)}
       </p>
     </header>
   );
@@ -430,5 +438,16 @@ export function Figure({
         <Sprite index={index} state={state} scale={fit.scale} {...(speed ? { speed } : {})} />
       </span>
     </span>
+  );
+}
+
+// Niebla del voto del público: tapa la vista y el ranking de la derecha.
+function Fog({ label }: { label: string }) {
+  return (
+    <div className="proj-fog absolute inset-0 z-[2500] grid place-items-center rounded-xl">
+      <p className="px-[2vw] text-center text-[clamp(0.8rem,1.6vw,2.2rem)]" style={PIXEL}>
+        {label}
+      </p>
+    </div>
   );
 }

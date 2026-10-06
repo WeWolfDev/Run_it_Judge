@@ -20,6 +20,10 @@ export type ViewProps = {
   events: FeedEvent[];
   /** Diferencia con el reloj del servidor (useServerClockOffset). */
   serverOffsetMs: number;
+  /** Hit "Niebla" del voto del público: tapa el ranking con este texto. */
+  fog?: string | null;
+  /** Hit "Reloj oculto": el cronómetro no se muestra. */
+  clockHidden?: boolean;
 };
 
 export type ViewInfo = {

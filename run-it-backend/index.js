@@ -20,6 +20,7 @@ const { submissionQueue, startSubmissionWorker, judge0Slots } = require('./queue
 const { createSubmission, waitForSubmission } = require('./judge0-client');
 const { createLimiter, runTestCases } = require('./case-runner');
 const { computeAwards } = require('./awards');
+const hitRules = require('./hits');
 const {
   setSession,
   getSession,
@@ -733,9 +734,19 @@ function validateRoundPlan(rounds) {
 	return null
 }
 
+// Pista del organizador (opcional): solo la ven los participantes si la grada
+// vota el hit "Pista del organizador". null = sin pista; false = inválida.
+function normalizeHint(value) {
+	if (value === undefined || value === null) return null;
+	if (typeof value !== 'string' || value.length > 500) return false;
+	return value.trim() || null
+}
+
 fastify.post('/problems', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
 	const { name, statement, difficulty = 'easy', testCases } = request.body || {};
+	const hint = normalizeHint(request.body?.hint);
+	if (hint === false) return reply.code(400).send({ error: 'La pista admite hasta 500 caracteres' });
 	if (!name || !statement) {
 		return reply.code(400).send({ error: 'name y statement son obligatorios' });
 	}
@@ -751,9 +762,9 @@ fastify.post('/problems', async (request, reply) => {
 		return reply.code(400).send({ error: `El caso ${invalidIndex + 1} debe tener stdin y expected como texto` });
 	}
 	const result = await query(
-		`INSERT INTO problems (name, statement, difficulty, test_cases)
-		 VALUES ($1, $2, $3, $4::jsonb) RETURNING *`,
-		[name, statement, difficulty, JSON.stringify(normalizeTestCases(testCases))],
+		`INSERT INTO problems (name, statement, difficulty, test_cases, hint)
+		 VALUES ($1, $2, $3, $4::jsonb, $5) RETURNING *`,
+		[name, statement, difficulty, JSON.stringify(normalizeTestCases(testCases)), hint],
 	);
 	return reply.code(201).send(result.rows[0]);
 });
@@ -773,7 +784,7 @@ fastify.get('/problems/:id/full', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
 	if (!/^[0-9a-f-]{36}$/i.test(request.params.id)) return reply.code(404).send({ error: 'Problema no encontrado' });
 	const problem = await query(
-		'SELECT id, name, statement, difficulty, test_cases, created_at FROM problems WHERE id = $1',
+		'SELECT id, name, statement, difficulty, test_cases, hint, created_at FROM problems WHERE id = $1',
 		[request.params.id],
 	);
 	if (!problem.rowCount) return reply.code(404).send({ error: 'Problema no encontrado' });
@@ -789,6 +800,8 @@ fastify.get('/problems/:id/full', async (request, reply) => {
 fastify.put('/problems/:id', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
 	const { name, statement, difficulty = 'easy', testCases = [] } = request.body || {};
+	const hint = normalizeHint(request.body?.hint);
+	if (hint === false) return reply.code(400).send({ error: 'La pista admite hasta 500 caracteres' });
 	if (!name || !statement || !Array.isArray(testCases)) {
 		return reply.code(400).send({ error: 'name, statement y testCases son obligatorios' });
 	}
@@ -827,9 +840,11 @@ fastify.put('/problems/:id', async (request, reply) => {
 		// Nombre, enunciado y dificultad no cambian el veredicto de nadie: se
 		// pueden editar con la ronda en juego.
 		const updated = await client.query(
-			`UPDATE problems SET name = $1, statement = $2, difficulty = $3, test_cases = $4::jsonb
+			// Sin el campo hint (un cliente viejo) la pista queda como estaba.
+			`UPDATE problems SET name = $1, statement = $2, difficulty = $3, test_cases = $4::jsonb,
+			   hint = CASE WHEN $7 THEN $6 ELSE hint END
 			 WHERE id = $5 RETURNING *`,
-			[name, statement, difficulty, testCasesJson, request.params.id],
+			[name, statement, difficulty, testCasesJson, request.params.id, hint, request.body?.hint !== undefined],
 		);
 		return { problem: updated.rows[0] };
 	});
@@ -1800,6 +1815,342 @@ fastify.get('/public/rounds/upcoming', async (request) => {
 	return result.rows[0] || null;
 });
 
+// ---------------------------------------------------------------- voto del público
+// La grada vota por QR (/votar) un hit bueno o uno malo entre los del par que
+// anuncia el admin. Reglas y catálogo en hits.js. Los efectos se aplican acá,
+// en el servidor: la niebla oculta el ranking en la API, la amnistía y la
+// penalización doble cambian lo que suma un fallo, el minuto extra y los cupos
+// cambian la ronda. El reloj oculto, el apagón y el aliento son de pantalla.
+
+async function optionalUser(request) {
+	const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
+	return token ? getSession(token).catch(() => null) : null
+}
+
+const toMs = (value) => (value ? new Date(value).getTime() : null);
+
+async function roundHitRows(roundId, db = { query }) {
+	const result = await db.query(
+		`SELECT id, hit, poll_id, starts_at, ends_at, cancelled_at FROM round_hits
+		 WHERE round_id = $1 ORDER BY starts_at`,
+		[roundId],
+	);
+	return result.rows.map((row) => ({
+		id: row.id,
+		hit: row.hit,
+		pollId: row.poll_id,
+		startsAt: toMs(row.starts_at),
+		endsAt: toMs(row.ends_at),
+		cancelledAt: toMs(row.cancelled_at),
+	}));
+}
+
+/** Si la niebla está tapando el ranking de la ronda ahora. */
+async function fogActive(roundId) {
+	const result = await query(
+		`SELECT 1 FROM round_hits WHERE round_id = $1 AND hit = 'niebla' AND cancelled_at IS NULL
+		   AND starts_at <= now() AND (ends_at IS NULL OR ends_at > now()) LIMIT 1`,
+		[roundId],
+	);
+	return result.rowCount > 0
+}
+
+/** Lo que necesita la regla de pollBlockReason, leído de la base. */
+async function pollRuleState(roundId, db = { query }) {
+	const round = await db.query(
+		`SELECT r.status, r.paused, r.starts_at, r.ends_at, r.capacity, p.hint,
+		        (SELECT count(*)::int FROM round_participants rp WHERE rp.round_id = r.id) AS enrolled,
+		        (SELECT count(*)::int FROM round_participants rp WHERE rp.round_id = r.id AND rp.solved_at IS NOT NULL) AS solved
+		 FROM rounds r LEFT JOIN problems p ON p.id = r.problem_id WHERE r.id = $1`,
+		[roundId],
+	);
+	if (!round.rowCount) return null;
+	const row = round.rows[0];
+	const polls = await db.query('SELECT good, bad, status FROM hit_polls WHERE round_id = $1', [roundId]);
+	return {
+		now: Date.now(),
+		round: {
+			status: row.status,
+			paused: row.paused,
+			startsAt: toMs(row.starts_at),
+			endsAt: toMs(row.ends_at),
+			capacity: row.capacity,
+		},
+		enrolled: row.enrolled,
+		solved: row.solved,
+		hasHint: Boolean(row.hint && row.hint.trim()),
+		hint: row.hint,
+		polls: polls.rows,
+	};
+}
+
+/** Estado del voto de una ronda: la votación actual (o la última), los hits y la pista. */
+async function hitsState(roundId, voter) {
+	const poll = await query(
+		`SELECT hp.*,
+		        (SELECT count(*)::int FROM hit_votes v WHERE v.poll_id = hp.id AND v.choice = 'good') AS good_votes,
+		        (SELECT count(*)::int FROM hit_votes v WHERE v.poll_id = hp.id AND v.choice = 'bad') AS bad_votes,
+		        (SELECT v.choice FROM hit_votes v WHERE v.poll_id = hp.id AND v.voter = $2) AS mine
+		 FROM hit_polls hp WHERE hp.round_id = $1 AND hp.status <> 'cancelled'
+		 ORDER BY hp.announced_at DESC LIMIT 1`,
+		[roundId, voter ?? ''],
+	);
+	const used = await query(
+		"SELECT count(*)::int AS n FROM hit_polls WHERE round_id = $1 AND status <> 'cancelled'",
+		[roundId],
+	);
+	const hits = await roundHitRows(roundId);
+	const now = Date.now();
+	const pistaOn = hits.some((hit) => hit.hit === 'pista' && !hit.cancelledAt);
+	const hint = pistaOn
+		? (await query('SELECT p.hint FROM rounds r JOIN problems p ON p.id = r.problem_id WHERE r.id = $1', [roundId])).rows[0]?.hint ?? null
+		: null;
+	const row = poll.rows[0];
+	return {
+		round_id: roundId,
+		server_now: now,
+		polls_used: used.rows[0].n,
+		max_polls: hitRules.MAX_POLLS,
+		poll: row
+			? {
+				id: row.id,
+				good: row.good,
+				bad: row.bad,
+				announced_at: row.announced_at,
+				opens_at: row.opens_at,
+				closes_at: row.closes_at,
+				status: row.status,
+				winner: row.winner,
+				tally: { good: row.good_votes, bad: row.bad_votes },
+				mine: row.mine,
+			}
+			: null,
+		active: hitRules.activeAt(hits, now).map((hit) => ({
+			id: hit.id,
+			hit: hit.hit,
+			starts_at: new Date(hit.startsAt).toISOString(),
+			ends_at: hit.endsAt === null ? null : new Date(hit.endsAt).toISOString(),
+		})),
+		hint,
+	};
+}
+
+function emitHits(roundId) {
+	fastify.io?.emit('hits:update', { round_id: roundId });
+}
+
+// El recuento sale como mucho una vez por segundo por votación: con cien
+// celulares votando juntos no se manda un evento por voto.
+const tallyTimers = new Map();
+function scheduleTally(pollId) {
+	if (tallyTimers.has(pollId)) return;
+	tallyTimers.set(pollId, setTimeout(async () => {
+		tallyTimers.delete(pollId);
+		try {
+			const tally = await query(
+				`SELECT count(*) FILTER (WHERE choice = 'good')::int AS good,
+				        count(*) FILTER (WHERE choice = 'bad')::int AS bad
+				 FROM hit_votes WHERE poll_id = $1`,
+				[pollId],
+			);
+			fastify.io?.emit('hits:tally', { poll_id: pollId, ...tally.rows[0] });
+		} catch (error) {
+			fastify.log.error({ err: error, pollId }, 'No se pudo enviar el recuento');
+		}
+	}, 1000));
+}
+
+/**
+ * Aplica el hit ganador dentro de la transacción del cierre de la votación.
+ * Devuelve la ronda actualizada si cambió su tiempo o su cupo.
+ */
+async function applyHit(client, roundId, hit, pollId) {
+	const round = await client.query("SELECT * FROM rounds WHERE id = $1 AND status = 'active' FOR UPDATE", [roundId]);
+	if (!round.rowCount) return { changed: null };
+	let changed = null;
+	if (hit === 'extra') {
+		const updated = await client.query(
+			`UPDATE rounds SET ends_at = ends_at + ($2::int * interval '1 millisecond') WHERE id = $1 RETURNING *`,
+			[roundId, hitRules.EXTRA_MS],
+		);
+		changed = updated.rows[0];
+	} else if (hit === 'cupo-mas' || hit === 'cupo-menos') {
+		const enrolled = await client.query('SELECT count(*)::int AS n FROM round_participants WHERE round_id = $1', [roundId]);
+		const current = round.rows[0].capacity;
+		const next = hit === 'cupo-mas' ? Math.min(current + 1, enrolled.rows[0].n - 1) : Math.max(2, current - 1);
+		if (next !== current) {
+			const updated = await client.query('UPDATE rounds SET capacity = $2 WHERE id = $1 RETURNING *', [roundId, next]);
+			changed = updated.rows[0];
+		}
+	}
+	const duration = hitRules.HITS[hit].duration;
+	await client.query(
+		`INSERT INTO round_hits (round_id, poll_id, hit, ends_at)
+		 VALUES ($1, $2, $3, CASE WHEN $4::int IS NULL THEN NULL ELSE now() + ($4::int * interval '1 millisecond') END)`,
+		[roundId, pollId, hit, duration],
+	);
+	return { changed };
+}
+
+/** Cierra las votaciones vencidas, elige el ganador y aplica el hit. */
+async function closeDuePolls() {
+	const due = await query("SELECT id FROM hit_polls WHERE status = 'open' AND closes_at <= now()");
+	for (const { id } of due.rows) {
+		try {
+			const outcome = await withTransaction(async (client) => {
+				const poll = await client.query("SELECT * FROM hit_polls WHERE id = $1 AND status = 'open' FOR UPDATE", [id]);
+				if (!poll.rowCount) return null;
+				const row = poll.rows[0];
+				const tally = await client.query(
+					`SELECT count(*) FILTER (WHERE choice = 'good')::int AS good,
+					        count(*) FILTER (WHERE choice = 'bad')::int AS bad
+					 FROM hit_votes WHERE poll_id = $1`,
+					[id],
+				);
+				const winner = hitRules.pickWinner(row, tally.rows[0]);
+				await client.query("UPDATE hit_polls SET status = 'closed', winner = $2 WHERE id = $1", [id, winner]);
+				const applied = await applyHit(client, row.round_id, winner, id);
+				return { roundId: row.round_id, winner, changed: applied.changed };
+			});
+			if (!outcome) continue;
+			fastify.io?.emit('hits:applied', { round_id: outcome.roundId, poll_id: id, hit: outcome.winner });
+			emitHits(outcome.roundId);
+			if (outcome.changed) {
+				fastify.io?.emit('round:updated', {
+					round_id: outcome.roundId,
+					ends_at: outcome.changed.ends_at,
+					capacity: outcome.changed.capacity,
+				});
+				// Con un cupo menor puede quedar lleno: se cierra como al resolver.
+				const solved = await query(
+					'SELECT count(*)::int AS n FROM round_participants WHERE round_id = $1 AND solved_at IS NOT NULL',
+					[outcome.roundId],
+				);
+				if (solved.rows[0].n >= outcome.changed.capacity) await closeRound(outcome.roundId);
+			}
+		} catch (error) {
+			fastify.log.error({ err: error, pollId: id }, 'No se pudo cerrar la votación');
+		}
+	}
+}
+
+// Estado público del voto para la ronda en curso: /votar, /pista, /publico y el
+// participante. El header x-voter (token anónimo del navegador) dice qué votó.
+fastify.get('/public/hits', async (request) => {
+	const active = await query("SELECT id FROM rounds WHERE status = 'active' ORDER BY started_at DESC LIMIT 1");
+	if (!active.rowCount) return null;
+	const voter = typeof request.headers['x-voter'] === 'string' ? request.headers['x-voter'] : null;
+	return hitsState(active.rows[0].id, voter);
+});
+
+const VOTER_RE = /^[A-Za-z0-9_-]{16,64}$/;
+
+fastify.post('/public/hits/vote', async (request, reply) => {
+	const voter = request.headers['x-voter'];
+	if (typeof voter !== 'string' || !VOTER_RE.test(voter)) return reply.code(400).send({ error: 'Votante inválido' });
+	const { pollId, choice } = request.body || {};
+	if (typeof pollId !== 'string' || !/^[0-9a-f-]{36}$/i.test(pollId) || !['good', 'bad'].includes(choice)) {
+		return reply.code(400).send({ error: 'Voto inválido' });
+	}
+	// Quien juega no vota: un hit elegido por un participante sería a su favor.
+	const user = await optionalUser(request);
+	if (user) return reply.code(403).send({ error: 'Los participantes y el organizador no votan' });
+	const inserted = await query(
+		`INSERT INTO hit_votes (poll_id, voter, choice)
+		 SELECT $1, $2, $3 WHERE EXISTS (
+		   SELECT 1 FROM hit_polls WHERE id = $1 AND status = 'open' AND opens_at <= now() AND closes_at > now()
+		 )
+		 ON CONFLICT (poll_id, voter) DO NOTHING RETURNING choice`,
+		[pollId, voter, choice],
+	);
+	if (!inserted.rowCount) {
+		const already = await query('SELECT choice FROM hit_votes WHERE poll_id = $1 AND voter = $2', [pollId, voter]);
+		return reply.code(409).send({ error: already.rowCount ? 'Ya votaste en esta votación' : 'La votación no está abierta' });
+	}
+	scheduleTally(pollId);
+	return { voted: choice };
+});
+
+// Panel del admin: estado, pares disponibles con el motivo si están bloqueados e historial.
+fastify.get('/rounds/:id/hits', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	if (!/^[0-9a-f-]{36}$/i.test(request.params.id)) return reply.code(404).send({ error: 'Ronda no encontrada' });
+	const rule = await pollRuleState(request.params.id);
+	if (!rule) return reply.code(404).send({ error: 'Ronda no encontrada' });
+	const state = await hitsState(request.params.id, null);
+	const history = await query(
+		`SELECT hp.id, hp.good, hp.bad, hp.status, hp.winner, hp.announced_at,
+		        (SELECT count(*)::int FROM hit_votes v WHERE v.poll_id = hp.id AND v.choice = 'good') AS good_votes,
+		        (SELECT count(*)::int FROM hit_votes v WHERE v.poll_id = hp.id AND v.choice = 'bad') AS bad_votes
+		 FROM hit_polls hp WHERE hp.round_id = $1 ORDER BY hp.announced_at`,
+		[request.params.id],
+	);
+	return {
+		...state,
+		pairs: hitRules.PAIRS.map((pair, index) => ({ index, ...pair, blocked: hitRules.pollBlockReason(index, rule) })),
+		history: history.rows,
+	};
+});
+
+fastify.post('/rounds/:id/hits/polls', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const pairIndex = Number(request.body?.pair);
+	const outcome = await withTransaction(async (client) => {
+		// FOR UPDATE de la ronda: dos clics simultáneos no anuncian dos votaciones.
+		const locked = await client.query('SELECT id FROM rounds WHERE id = $1 FOR UPDATE', [request.params.id]);
+		if (!locked.rowCount) return { error: 'Ronda no encontrada', code: 404 };
+		const rule = await pollRuleState(request.params.id, client);
+		const blocked = hitRules.pollBlockReason(pairIndex, rule);
+		if (blocked) return { error: blocked, code: 409 };
+		const pair = hitRules.PAIRS[pairIndex];
+		const poll = await client.query(
+			`INSERT INTO hit_polls (round_id, good, bad, opens_at, closes_at)
+			 VALUES ($1, $2, $3, now() + ($4::int * interval '1 millisecond'), now() + ($5::int * interval '1 millisecond'))
+			 RETURNING *`,
+			[request.params.id, pair.good, pair.bad, hitRules.ANNOUNCE_MS, hitRules.ANNOUNCE_MS + hitRules.POLL_MS],
+		);
+		return { poll: poll.rows[0] };
+	});
+	if (outcome.error) return reply.code(outcome.code).send({ error: outcome.error });
+	emitHits(request.params.id);
+	return reply.code(201).send(outcome.poll);
+});
+
+// Solo mientras está anunciada: una votación abierta ya tiene votos.
+fastify.post('/hits/polls/:id/cancel', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const result = await query(
+		"UPDATE hit_polls SET status = 'cancelled' WHERE id = $1 AND status = 'open' AND opens_at > now() RETURNING round_id",
+		[request.params.id],
+	);
+	if (!result.rowCount) return reply.code(409).send({ error: 'Solo se cancela una votación anunciada que todavía no abrió' });
+	emitHits(result.rows[0].round_id);
+	return { cancelled: true };
+});
+
+fastify.post('/hits/polls/:id/close', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const result = await query(
+		"UPDATE hit_polls SET closes_at = now() WHERE id = $1 AND status = 'open' AND opens_at <= now() RETURNING id",
+		[request.params.id],
+	);
+	if (!result.rowCount) return reply.code(409).send({ error: 'La votación no está abierta' });
+	await closeDuePolls();
+	return { closed: true };
+});
+
+// Corta un hit activo (por ejemplo, si molesta más de lo previsto).
+fastify.post('/round-hits/:id/cancel', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const result = await query(
+		'UPDATE round_hits SET cancelled_at = now() WHERE id = $1 AND cancelled_at IS NULL RETURNING round_id',
+		[request.params.id],
+	);
+	if (!result.rowCount) return reply.code(409).send({ error: 'El hit no está activo' });
+	emitHits(result.rows[0].round_id);
+	return { cancelled: true };
+});
+
 fastify.get('/public/rounds/active', async () => {
 	// Endpoint sin sesión: de test_cases solo sale lo marcado como ejemplo, y
 	// proyectado a stdin/expected. El resto nunca deja la base.
@@ -1817,6 +2168,8 @@ fastify.get('/public/rounds/active', async () => {
 	);
 	if (!result.rowCount) return null;
 	const round = result.rows[0];
+	// Niebla (voto del público): nadie ve el avance de los demás.
+	if (await fogActive(round.id)) return { ...round, participants: [], fog: true };
 	const participants = await query(
 		`SELECT rp.participant_id, p.display_name AS name, p.character, rp.best_pass_percentage,
 		        rp.solved_at, rp.failed_attempts_count
@@ -2023,6 +2376,11 @@ fastify.post('/rounds/:id/run', async (request, reply) => {
 });
 
 fastify.get('/rounds/:id/leaderboard', async (request) => {
+	// Niebla (voto del público): el ranking queda oculto para todos menos el admin.
+	if (/^[0-9a-f-]{36}$/i.test(request.params.id) && (await fogActive(request.params.id))) {
+		const user = await optionalUser(request);
+		if (user?.role !== 'admin') return [];
+	}
 	// El tiempo corre desde el fin de la cuenta regresiva. Las rondas sin
 	// starts_at (anteriores a la columna) siguen contando desde started_at.
 	const result = await query(
@@ -2245,6 +2603,8 @@ async function start() {
 		if (!updated.rowCount) return null;
 
 		const { round_id: roundId, participant_id: participantId } = submission;
+		// Amnistía y penalización doble se miden al momento del envío, no del veredicto.
+		const penalty = hitRules.penaltyFor(await roundHitRows(roundId), toMs(updated.rows[0].submitted_at));
 		// Un fallo solo cuenta mientras el participante no haya resuelto. En el SET,
 		// solved_at es el valor previo a este UPDATE, así que el contador y la
 		// penalización suben juntos en una sola sentencia.
@@ -2255,9 +2615,9 @@ async function start() {
 			     failed_attempts_count = failed_attempts_count
 			       + CASE WHEN NOT $2 AND solved_at IS NULL THEN 1 ELSE 0 END,
 			     penalty_seconds = penalty_seconds
-			       + CASE WHEN NOT $2 AND solved_at IS NULL THEN 30 ELSE 0 END
+			       + CASE WHEN NOT $2 AND solved_at IS NULL THEN $5::int ELSE 0 END
 			 WHERE round_id = $3 AND participant_id = $4`,
-			[total ? Math.round((passed * 10000) / total) / 100 : 0, solved, roundId, participantId],
+			[total ? Math.round((passed * 10000) / total) / 100 : 0, solved, roundId, participantId, penalty],
 		);
 		const capacityResult = await query('SELECT capacity FROM rounds WHERE id = $1', [roundId]);
 		const solvedResult = await query(
@@ -2276,8 +2636,12 @@ async function start() {
 			case_results: caseResults.map((caseResult) => ({ passed: caseResult.passed, status: caseResult.status })),
 			solved,
 		};
-		fastify.io?.to(`round:${submission.round_id}`).emit('participant:progress', progress);
-		fastify.io?.emit('participant:progress', progress);
+		// Con niebla, el avance de cada uno no sale por el socket (su veredicto
+		// le llega igual por submission:judged).
+		if (!(await fogActive(submission.round_id))) {
+			fastify.io?.to(`round:${submission.round_id}`).emit('participant:progress', progress);
+			fastify.io?.emit('participant:progress', progress);
+		}
 		emitSubmissionJudged(updated.rows[0], submission.display_name);
 		return updated.rows[0];
 	});
@@ -2363,6 +2727,11 @@ async function start() {
 				fastify.log.error({ err: error, roundId: round.id }, 'No se pudo cerrar la ronda vencida');
 			}
 		}
+		try {
+			await closeDuePolls();
+		} catch (error) {
+			fastify.log.error({ err: error }, 'No se pudieron cerrar las votaciones vencidas');
+		}
 	}, 1000).unref();
 }
 
@@ -2377,6 +2746,12 @@ async function closeRound(roundId) {
 		if (round.status === 'closed') return round;
 
 		await client.query("UPDATE rounds SET status = 'closing' WHERE id = $1", [roundId]);
+		// El voto del público termina con la ronda: ni votaciones abiertas ni hits activos.
+		await client.query("UPDATE hit_polls SET status = 'cancelled' WHERE round_id = $1 AND status = 'open'", [roundId]);
+		await client.query(
+			'UPDATE round_hits SET ends_at = now() WHERE round_id = $1 AND (ends_at IS NULL OR ends_at > now())',
+			[roundId],
+		);
 		const ranking = await client.query(
 			`SELECT participant_id, best_pass_percentage, solved_at, failed_attempts_count, penalty_seconds
 			 FROM round_participants WHERE round_id = $1
@@ -2412,6 +2787,7 @@ async function closeRound(roundId) {
 			fastify.io?.emit('tournament:winner', { participant_id: advanced[0].participant_id });
 			fastify.io?.emit('ceremony:update', { tournament_id: round.tournament_id });
 		}
+		emitHits(roundId);
 		fastify.io?.emit('round:closed', {
 			// Aditivo: sin el id, un cliente no sabe qué ronda se cerró.
 			round_id: roundId,
@@ -2435,7 +2811,7 @@ if (require.main === module) {
 module.exports = {
 	fastify, start, requireRole, sessions: memorySessions, closeRound, describeStartBlock, startBlockReason,
 	validateRoundEdit, ORPHAN_USER_SQL, parseIdList, TOURNAMENT_DELETABLE_SQL, PROBLEM_DELETABLE_SQL,
-	INFRA_FAILURE_VERDICTS, MAX_BODY_BYTES, validateRunPayload, summarizeRun, validateRoundPlan,
+	INFRA_FAILURE_VERDICTS, MAX_BODY_BYTES, validateRunPayload, summarizeRun, validateRoundPlan, normalizeHint,
 	CHARACTER_COUNT,
 	// Expuestos para test/auth-rate-limit.test.js: el rate limit vive en el
 	// servidor y sin esto habria que.matchear contra una DB real para probarlo.

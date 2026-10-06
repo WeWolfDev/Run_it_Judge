@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 
 import { RaceStandby } from "@/components/ProjectedRace";
 import { ProjectedTrack } from "@/components/ProjectedTrack";
+import { Blackout, Cheer, GradaCard } from "@/components/hits/Grada";
 import { useLiveRace } from "@/hooks/use-live-race";
+import { formatLeft, useHits } from "@/lib/hits";
 import { BalloonsView } from "./Balloons";
 import { BoatView } from "./Boat";
 import { pickView, type ViewInfo } from "./model";
@@ -18,6 +20,7 @@ import { TowerView } from "./Tower";
  */
 export function PublicView() {
   const { load, round, board, events, serverOffsetMs } = useLiveRace();
+  const hits = useHits();
   const [view, setView] = useState<ViewInfo | null>(null);
   const [intro, setIntro] = useState(false);
   const roundId = round?.id;
@@ -31,7 +34,17 @@ export function PublicView() {
   const endIntro = useCallback(() => setIntro(false), []);
 
   if (load !== "ready" || !round || !view) return <RaceStandby load={load} />;
-  const props = { round, board, events, serverOffsetMs };
+  const fog = hits.isOn("niebla")
+    ? `Niebla · el ranking vuelve en ${formatLeft(hits.left("niebla"))}`
+    : null;
+  const props = {
+    round,
+    board,
+    events,
+    serverOffsetMs,
+    fog,
+    clockHidden: hits.isOn("reloj-oculto"),
+  };
   return (
     <>
       {view.id === "pista" && <ProjectedTrack {...props} />}
@@ -39,6 +52,9 @@ export function PublicView() {
       {view.id === "globos" && <BalloonsView {...props} />}
       {view.id === "futbol" && <SoccerView {...props} />}
       {view.id === "bote" && <BoatView {...props} />}
+      <GradaCard hits={hits} />
+      <Cheer hits={hits} />
+      <Blackout hits={hits} />
       {intro && <Intro view={view} onDone={endIntro} />}
     </>
   );

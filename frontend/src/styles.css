@@ -1408,3 +1408,53 @@ html.pixel-cursor :is(button, a, label, select, [role="button"], [role="tab"]) {
 .pub-zone .pub-name.pub-next-tag {
   background: var(--accent);
 }
+
+/* ================= Voto del público (lib/hits.ts, components/hits) ================= */
+/* Malo en naranja, bueno en amarillo: se leen igual en cualquier paleta. */
+.vot-card {
+  border: 3px solid var(--accent);
+  border-radius: 10px;
+  background: color-mix(in oklch, var(--card), black 10%);
+  box-shadow: 6px 6px 0 color-mix(in oklch, var(--accent) 40%, black);
+  color: var(--foreground);
+}
+.vot-card.vot-bueno { border-color: #ffd34d; box-shadow: 6px 6px 0 #6b5410; }
+.vot-card.vot-malo { border-color: #f08a4b; box-shadow: 6px 6px 0 #6b2f10; }
+.vot-soon { border-style: dashed; }
+.vot-bar-bad { background: #f08a4b; color: #2a1206; transition: width 0.4s steps(4); }
+.vot-bar-good { background: #ffd34d; color: #2a2006; transition: width 0.4s steps(4); }
+.vot-timer { border: 3px solid #ffd34d; background: #22163a; }
+.vot-option { border: 3px solid; border-radius: 4px; color: #f4ecff; }
+.vot-option:active:not(:disabled) { transform: translate(2px, 2px); }
+.vot-option-malo { border-color: #f08a4b; background: #4a1f16; }
+.vot-option-bueno { border-color: #ffd34d; background: #3a3018; }
+.vot-option-picked { box-shadow: 0 0 0 3px #fff, 0 0 24px rgb(255 255 255 / 0.4); }
+.vot-cheer {
+  background: var(--accent);
+  color: #000;
+  border: 4px solid #000;
+  box-shadow: 6px 6px 0 rgb(0 0 0 / 0.5);
+}
+.vot-hint {
+  background: color-mix(in oklch, #ffd34d 16%, var(--card));
+  border: 2px solid #ffd34d;
+}
+
+/* Niebla: nubes que se mueven sobre el ranking. */
+.proj-fog {
+  background:
+    radial-gradient(ellipse 30% 22% at 20% 30%, rgb(220 225 240 / 0.95), transparent),
+    radial-gradient(ellipse 35% 25% at 70% 60%, rgb(210 215 235 / 0.95), transparent),
+    radial-gradient(ellipse 30% 20% at 40% 85%, rgb(225 230 245 / 0.95), transparent),
+    rgb(150 158 185 / 0.94);
+  background-size: 200% 200%;
+  animation: proj-fog 6s steps(12) infinite alternate;
+  backdrop-filter: blur(6px);
+  color: #1a1d2e;
+}
+@keyframes proj-fog {
+  to { background-position: 100% 60%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .proj-fog { animation: none; }
+}
