@@ -230,6 +230,13 @@ export interface RunItEvents {
   // El admin avanzó la ceremonia de premios (o terminó el torneo): hay que
   // volver a pedir GET /public/ceremony.
   "ceremony:update": { tournament_id: string };
+  // Voto del público (lib/hits.ts): cambió la votación o los hits activos, hay
+  // que volver a pedir GET /public/hits. hits:tally trae el recuento en vivo.
+  "hits:update": { round_id: string };
+  "hits:tally": { poll_id: string; good: number; bad: number };
+  "hits:applied": { round_id: string; poll_id: string; hit: string };
+  // Un hit cambió el reloj o el cupo de la ronda.
+  "round:updated": { round_id: string; ends_at: string; capacity: number };
   "submission:queued": SubmissionQueuedEvent;
   "submission:judged": SubmissionJudgedEvent;
   // Local, no lo emite el servidor: cada conexión y reconexión del socket. Lo

@@ -6,6 +6,7 @@ import { ProblemStatement } from "@/components/ProblemStatement";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RowCheckbox, SelectAllCheckbox } from "@/components/BulkSelect";
 import { CeremonyPanel } from "@/components/CeremonyPanel";
+import { HitsPanel } from "@/components/hits/HitsPanel";
 import { PixelIcon, type PixelIconName } from "@/components/PixelIcon";
 import { Sprite } from "@/components/Sprite";
 import {
@@ -314,6 +315,7 @@ export function AdminPanel({
   const [problemName, setProblemName] = useState("");
   const [problemStatement, setProblemStatement] = useState("");
   const [problemDifficulty, setProblemDifficulty] = useState<"easy" | "medium" | "hard">("easy");
+  const [problemHint, setProblemHint] = useState("");
   // is_sample marca los casos que ve el participante. Por defecto todo es privado.
   const [testCases, setTestCases] = useState<ProblemTestCase[]>([EMPTY_CASE]);
   // Casos importados de un .zip que no se muestran en el editor, pero se envían.
@@ -885,6 +887,7 @@ export function AdminPanel({
     setProblemName("");
     setProblemStatement("");
     setProblemDifficulty("easy");
+    setProblemHint("");
     setTestCases([EMPTY_CASE]);
     setHiddenCases([]);
     setProblemFormMessage("");
@@ -924,6 +927,7 @@ export function AdminPanel({
       name: problemName.trim(),
       statement: problemStatement.trim(),
       difficulty: problemDifficulty,
+      hint: problemHint.trim() || null,
       // El array completo, con is_sample en cada caso: el backend guarda false si
       // falta.
       testCases: allCases.map((testCase) => ({
@@ -982,6 +986,7 @@ export function AdminPanel({
       setProblemName(detail.name);
       setProblemStatement(detail.statement);
       setProblemDifficulty(detail.difficulty);
+      setProblemHint(detail.hint ?? "");
       const cases = detail.test_cases.map((testCase) => ({
         stdin: String(testCase.stdin ?? ""),
         expected: String(testCase.expected ?? ""),
@@ -2073,6 +2078,8 @@ export function AdminPanel({
             </h3>
             {/* Torneo terminado: ganador y botones de la ceremonia de premios. */}
             <CeremonyPanel />
+            {/* Ronda en curso: el voto del público (hits). */}
+            {currentRound?.status === "active" && <HitsPanel roundId={currentRound.id} />}
             {!progressTournamentId ? (
               <p className="mt-4 text-sm text-muted-foreground">
                 Elige un torneo o inicia una ronda para ver su progreso.
@@ -2779,6 +2786,19 @@ export function AdminPanel({
                 <option value="medium">Intermedio</option>
                 <option value="hard">Difícil</option>
               </select>
+            </label>
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Pista del organizador (opcional)</span>
+              <textarea
+                value={problemHint}
+                onChange={(event) => setProblemHint(event.target.value)}
+                className="run-it-statement mt-1 min-h-16 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 outline-none focus:border-ring"
+                placeholder="Ej.: ojo con los números negativos; usa enteros de 64 bits."
+                maxLength={500}
+              />
+              <span className="mt-1 block text-xs text-muted-foreground">
+                Solo la ven los participantes si la grada vota el hit «Pista del organizador».
+              </span>
             </label>
             <label className="block text-sm">
               <span className="text-muted-foreground">Importar casos (.zip)</span>

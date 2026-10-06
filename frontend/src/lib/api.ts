@@ -294,6 +294,8 @@ export type ProblemInput = {
   statement: string;
   difficulty: ProblemDifficulty;
   testCases: ProblemTestCase[];
+  /** Pista del organizador: solo se muestra si la grada vota ese hit. */
+  hint?: string | null;
 };
 
 // GET /problems/:id/full, solo admin. Trae los casos completos y las rondas que
@@ -304,6 +306,7 @@ export type ProblemDetail = {
   statement: string;
   difficulty: ProblemDifficulty;
   test_cases: ProblemTestCase[];
+  hint?: string | null;
   created_at: string;
   rounds: Array<{
     id: string;

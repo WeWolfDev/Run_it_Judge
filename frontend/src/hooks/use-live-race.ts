@@ -64,7 +64,10 @@ export function useLiveRace() {
     const fetchBoard = () =>
       void getRoundLeaderboard(roundId)
         .then((rows) => {
-          if (!cancelled) setBoard(rows as Entry[]);
+          // Con niebla el servidor devuelve el ranking vacío: se conserva el
+          // último, que queda tapado, en vez de vaciar la pista detrás.
+          if (!cancelled)
+            setBoard((current) => (rows.length || !current.length ? (rows as Entry[]) : current));
         })
         .catch(() => undefined);
     const refresh = () => {
@@ -110,6 +113,19 @@ export function useLiveRace() {
     });
     feed?.on("round:started", (event) => {
       if (event.round_id !== roundId) setReloadKey((key) => key + 1);
+    });
+    // Voto del público: un hit cambió el reloj o el cupo, o terminó la niebla.
+    feed?.on("round:updated", (event) => {
+      if (event.round_id !== roundId) return;
+      setRound((current) =>
+        current
+          ? { ...current, endsAt: new Date(event.ends_at).getTime(), capacity: event.capacity }
+          : current,
+      );
+      refresh();
+    });
+    feed?.on("hits:update", (event) => {
+      if (event.round_id === roundId) refresh();
     });
     feed?.on("round:closed", (event) => {
       if (event.round_id && event.round_id !== roundId) return;
