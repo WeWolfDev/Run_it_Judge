@@ -18,6 +18,7 @@ import { Route as ParticipanteRouteImport } from './routes/participante'
 import { Route as PistaRouteImport } from './routes/pista'
 import { Route as PublicoRouteImport } from './routes/publico'
 import { Route as ReglasRouteImport } from './routes/reglas'
+import { Route as VotarRouteImport } from './routes/votar'
 import { Route as LegalIndexRouteImport } from './routes/legal.index'
 import { Route as LegalCreditosRouteImport } from './routes/legal.creditos'
 import { Route as LegalPrivacidadRouteImport } from './routes/legal.privacidad'
@@ -67,6 +68,11 @@ const ReglasRoute = ReglasRouteImport.update({
   path: '/reglas',
   getParentRoute: () => rootRouteImport,
 } as any)
+const VotarRoute = VotarRouteImport.update({
+  id: '/votar',
+  path: '/votar',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LegalIndexRoute = LegalIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -93,6 +99,7 @@ export interface FileRoutesByFullPath {
   '/pista': typeof PistaRoute
   '/publico': typeof PublicoRoute
   '/reglas': typeof ReglasRoute
+  '/votar': typeof VotarRoute
   '/legal/creditos': typeof LegalCreditosRoute
   '/legal/privacidad': typeof LegalPrivacidadRoute
   '/legal/': typeof LegalIndexRoute
@@ -106,6 +113,7 @@ export interface FileRoutesByTo {
   '/pista': typeof PistaRoute
   '/publico': typeof PublicoRoute
   '/reglas': typeof ReglasRoute
+  '/votar': typeof VotarRoute
   '/legal/creditos': typeof LegalCreditosRoute
   '/legal/privacidad': typeof LegalPrivacidadRoute
   '/legal': typeof LegalIndexRoute
@@ -121,6 +129,7 @@ export interface FileRoutesById {
   '/pista': typeof PistaRoute
   '/publico': typeof PublicoRoute
   '/reglas': typeof ReglasRoute
+  '/votar': typeof VotarRoute
   '/legal/creditos': typeof LegalCreditosRoute
   '/legal/privacidad': typeof LegalPrivacidadRoute
   '/legal/': typeof LegalIndexRoute
@@ -137,6 +146,7 @@ export interface FileRouteTypes {
     | '/pista'
     | '/publico'
     | '/reglas'
+    | '/votar'
     | '/legal/creditos'
     | '/legal/privacidad'
     | '/legal/'
@@ -150,6 +160,7 @@ export interface FileRouteTypes {
     | '/pista'
     | '/publico'
     | '/reglas'
+    | '/votar'
     | '/legal/creditos'
     | '/legal/privacidad'
     | '/legal'
@@ -164,6 +175,7 @@ export interface FileRouteTypes {
     | '/pista'
     | '/publico'
     | '/reglas'
+    | '/votar'
     | '/legal/creditos'
     | '/legal/privacidad'
     | '/legal/'
@@ -179,6 +191,7 @@ export interface RootRouteChildren {
   PistaRoute: typeof PistaRoute
   PublicoRoute: typeof PublicoRoute
   ReglasRoute: typeof ReglasRoute
+  VotarRoute: typeof VotarRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -246,6 +259,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReglasRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/votar': {
+      id: '/votar'
+      path: '/votar'
+      fullPath: '/votar'
+      preLoaderRoute: typeof VotarRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/legal/': {
       id: '/legal/'
       path: '/'
@@ -294,6 +314,7 @@ const rootRouteChildren: RootRouteChildren = {
   PistaRoute: PistaRoute,
   PublicoRoute: PublicoRoute,
   ReglasRoute: ReglasRoute,
+  VotarRoute: VotarRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

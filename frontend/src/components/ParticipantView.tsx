@@ -22,6 +22,7 @@ import { ProblemStatement } from "@/components/ProblemStatement";
 import { Ceremony } from "@/components/Ceremony";
 import { Eliminated } from "@/components/Eliminated";
 import { useCeremony } from "@/hooks/use-ceremony";
+import { formatLeft, hitInfo, useHits, type HitId } from "@/lib/hits";
 import {
   getActiveRound,
   getMySubmissions,
@@ -409,6 +410,13 @@ export function ParticipantView() {
       // Otra ronda: se vuelve a detectar y a inscribir, sin recargar la página.
       setReloadKey((key) => key + 1);
     });
+    // Voto del público: el minuto extra y los cupos cambian la ronda en vivo.
+    feed.on("round:updated", (event) => {
+      if (event.round_id !== roundIdRef.current) return;
+      setLive((current) => current && { ...current, endsAt: new Date(event.ends_at).getTime() });
+      setRound((current) => current && { ...current, capacity: event.capacity });
+      refreshStandings();
+    });
     feed.on("round:paused", (event) => {
       if (event.id !== roundIdRef.current) return;
       setLive((current) => current && { ...current, paused: Boolean(event.paused) });
@@ -512,6 +520,22 @@ export function ParticipantView() {
   // Al terminar el torneo, la ceremonia de premios reemplaza la sala de espera
   // y el resultado de la última ronda (se ve igual que en la pista).
   const ceremony = useCeremony();
+  // Voto del público: los hits solo tocan el ranking, el reloj y los avisos;
+  // el editor y el enunciado no cambian nunca.
+  const hits = useHits();
+  const hitsHere = Boolean(round && hits.state?.round_id === round.id);
+  const hitOn = (id: HitId) => hitsHere && hits.isOn(id);
+  const fog = hitOn("niebla");
+  const clockHidden = hitOn("reloj-oculto");
+  const cheering = hitOn("aliento");
+  const cheered = useRef(false);
+  useEffect(() => {
+    if (cheering && !cheered.current) {
+      confetti({ x: 0.5, y: 0.3 });
+      play("win");
+    }
+    cheered.current = cheering;
+  }, [cheering]);
   const paused = Boolean(live?.paused) && !closed;
   const countingDown = live?.status === "active" && untilStart > 0;
   // Bloqueo real: deja el editor en solo lectura, no solo el botón. El texto se conserva.
@@ -749,9 +773,9 @@ export function ParticipantView() {
           <PixelIcon name="trophy" className="h-4 w-4 text-primary" />
           Posición en tabla:{" "}
           <span className="font-mono text-lg font-semibold tabular-nums text-foreground">
-            {myIndex >= 0 ? `#${myIndex + 1}` : "—"}
+            {fog ? "Niebla" : myIndex >= 0 ? `#${myIndex + 1}` : "—"}
           </span>
-          {liveStandings.length > 0 && (
+          {!fog && liveStandings.length > 0 && (
             <span className="font-mono tabular-nums"> / {liveStandings.length}</span>
           )}
         </p>
@@ -765,7 +789,7 @@ export function ParticipantView() {
           }`}
         >
           <PixelIcon name="clock" className="h-7 w-7" />
-          {formatClock(remaining)}
+          {clockHidden && !closed ? "??:??" : formatClock(remaining)}
         </p>
       </header>
 
@@ -784,6 +808,8 @@ export function ParticipantView() {
           </button>
         </section>
       )}
+
+      {hitsHere && !closed && <GradaNotice hits={hits} />}
 
       {paused && (
         <section
@@ -870,6 +896,11 @@ export function ParticipantView() {
           </h2>
           <div className="mt-2 min-h-0 flex-1 overflow-y-auto pr-1">
             <ProblemStatement statement={round.statement} />
+            {hitsHere && hits.state?.hint && (
+              <p className="vot-hint mt-3 rounded-md p-3 text-sm text-foreground">
+                <b>Pista del organizador:</b> {hits.state.hint}
+              </p>
+            )}
           </div>
         </section>
 
@@ -1194,3 +1225,45 @@ export function ParticipantView() {
 }
 
 export default ParticipantView;
+
+// Avisos del voto del público para el participante: qué eligió la grada y los
+// hits que lo afectan ahora, con su tiempo. Nunca tapa el editor.
+const NOTICE_HITS: HitId[] = ["niebla", "reloj-oculto", "amnistia", "penal-doble", "aliento"];
+
+function GradaNotice({ hits }: { hits: ReturnType<typeof useHits> }) {
+  const decided = hits.justDecided && hits.poll?.winner ? hitInfo(hits.poll.winner) : null;
+  const on = NOTICE_HITS.filter((id) => hits.isOn(id));
+  if (!decided && !on.length) return null;
+  return (
+    <section role="status" className="space-y-2">
+      {decided && (
+        <p
+          className={`animate-run-it-pop rounded-xl border-2 px-5 py-3 text-sm ${
+            decided.kind === "malo"
+              ? "border-danger bg-danger-soft"
+              : "border-success bg-success-soft"
+          }`}
+        >
+          <b>La grada eligió: {decided.name}.</b> {decided.text}
+        </p>
+      )}
+      {on.map((id) => {
+        const hit = hitInfo(id);
+        return (
+          <p
+            key={id}
+            className={`flex items-center justify-between gap-3 rounded-xl border px-5 py-2 text-sm ${
+              hit.kind === "malo" ? "border-danger text-danger" : "border-success text-success"
+            }`}
+          >
+            <span>
+              <b>{id === "aliento" ? "¡La grada te alienta!" : hit.name}</b>
+              {id === "aliento" ? "" : ` · ${hit.text}`}
+            </span>
+            <span className="font-mono tabular-nums">{formatLeft(hits.left(id))}</span>
+          </p>
+        );
+      })}
+    </section>
+  );
+}
