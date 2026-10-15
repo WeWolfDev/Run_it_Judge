@@ -382,6 +382,7 @@ POST /rounds/:id/next              pasar los clasificados a la siguiente
 <div align="center">
 
 **Run It** · Hecho por WeWolfDev<br>
+<sub>Leonardo San Martin Lopez · Cesar Augusto</sub><br>
 <sub>Sprites, fondos y fuentes de terceros: ver <a href="CREDITS.md">CREDITS.md</a></sub>
 
 </div>
