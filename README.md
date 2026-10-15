@@ -367,6 +367,20 @@ POST /rounds/:id/next              pasar los clasificados a la siguiente
 
 ---
 
+## 🤝 Contribuir y licencia
+
+Run It tiene **todos los derechos reservados**. El código es público para que se
+pueda leer y mejorar: se puede hacer un fork **solo para proponer cambios a este
+repositorio**. No se permite copiarlo, reusarlo ni redistribuirlo sin permiso
+escrito de WeWolfDev.
+
+- Cómo contribuir y qué implica abrir un PR: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Términos completos: [`LICENSE`](LICENSE)
+- Los recursos de terceros (sprites, fondos, fuentes, sonido) tienen su propia
+  licencia: [`CREDITS.md`](CREDITS.md)
+
+---
+
 ## 📚 Documentación
 
 | Documento | Contenido |

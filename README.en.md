@@ -367,6 +367,19 @@ POST /rounds/:id/next              move qualifiers to the next round
 
 ---
 
+## 🤝 Contributing and license
+
+Run It is **all rights reserved**. The code is public so it can be read and
+improved: you may fork it **only to propose changes to this repository**.
+Copying, reusing or redistributing it requires written permission from WeWolfDev.
+
+- How to contribute and what opening a PR implies: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Full terms: [`LICENSE`](LICENSE)
+- Third-party assets (sprites, backgrounds, fonts, sound) have their own
+  licenses: [`CREDITS.md`](CREDITS.md)
+
+---
+
 ## 📚 Documentation
 
 The reference documents are in Spanish.
