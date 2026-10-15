@@ -2,6 +2,8 @@
 
 <img src="docs/screens/banner.png" alt="Run It" width="720">
 
+🌐 **Español** · [English](README.en.md)
+
 ### Torneos de programación competitiva por eliminación, con pista de carreras en vivo
 
 Cada participante es un corredor. Cada test que pasa lo acerca a la meta.<br>
