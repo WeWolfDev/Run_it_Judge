@@ -160,12 +160,25 @@ type Sim = {
   autoPollAt: number | null;
   speed: number;
   seq: number;
+  /** Cuándo cerró la ronda: el podio se ve un rato y después "esperando ronda". */
+  closedAt: number | null;
+};
+
+/** Cuánto se ve el podio antes de pasar a la espera de la próxima ronda. */
+const PODIUM_MS = 10_000;
+
+/** Una ronda terminada o en curso, para la tabla de envíos y el visor. */
+type RoundSubs = {
+  number: number;
+  subs: Sub[];
+  startsAt: number;
+  closed: boolean;
 };
 
 const pick = <T,>(list: T[]) =>
   list[Math.floor(Math.random() * list.length)] as T;
 
-function newSim(now: number): Sim {
+function newSim(now: number, number = 1): Sim {
   // La ronda ya va por el minuto 1:10: la grada puede votar enseguida.
   const startsAt = now - 70_000;
   const runners = NAMES.map((name, index) => ({
@@ -180,7 +193,7 @@ function newSim(now: number): Sim {
   runners.forEach((runner) => (runner.penalty = runner.fails * 30));
   return {
     round: {
-      number: 1,
+      number,
       problem: PROBLEM.name,
       capacity: 2,
       startsAt,
@@ -197,7 +210,21 @@ function newSim(now: number): Sim {
     autoPollAt: now + 20_000,
     speed: 1,
     seq: 0,
+    closedAt: null,
   };
+}
+
+function closeRound(sim: Sim, now: number) {
+  if (sim.round.closed) return;
+  sim.round = { ...sim.round, closed: true };
+  sim.closedAt = now;
+  // Como closeRound del backend: los hits terminan con la ronda.
+  sim.active = sim.active.map((hit) =>
+    hit.endsAt === null || hit.endsAt > now ? { ...hit, endsAt: now } : hit,
+  );
+  sim.polls.forEach((p) => {
+    if (p.status === "open") p.status = "closed";
+  });
 }
 
 const isOn = (sim: Sim, hit: HitId, now: number) =>
@@ -457,12 +484,8 @@ function step(sim: Sim, now: number) {
     applyHit(sim, poll.winner, now);
   }
   const solved = sim.runners.filter((r) => r.solvedAt !== null).length;
-  if (solved >= sim.round.capacity || now >= sim.round.endsAt) {
-    sim.round = { ...sim.round, closed: true };
-    sim.polls.forEach((p) => {
-      if (p.status === "open") p.status = "closed";
-    });
-  }
+  if (solved >= sim.round.capacity || now >= sim.round.endsAt)
+    closeRound(sim, now);
 }
 
 // ── Vista ───────────────────────────────────────────────────────────────────
@@ -471,7 +494,11 @@ export function CasterDemo() {
   const sim = useRef<Sim | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [notice, setNotice] = useState("");
-  const [viewing, setViewing] = useState<Sub | null>(null);
+  const [viewing, setViewing] = useState<{ sub: Sub; round: RoundSubs } | null>(
+    null,
+  );
+  /** La ronda anterior a la actual, con sus envíos (para ver los códigos). */
+  const [previous, setPrevious] = useState<RoundSubs | null>(null);
   const [view, setView] = useState<"pista" | "pizarra">("pista");
   const whiteboard = useBoard();
   sim.current ??= newSim(now);
@@ -492,6 +519,15 @@ export function CasterDemo() {
   const clockHidden = isOn(s, "reloj-oculto", now);
   const left = Math.max(0, s.round.endsAt - now);
   const hint = isOn(s, "pista", now) ? PROBLEM.hint : null;
+  // Terminó la ronda (y ya se vio el podio): todo pasa a esperar la próxima.
+  const waiting =
+    s.round.closed && s.closedAt !== null && now - s.closedAt >= PODIUM_MS;
+  const thisRound: RoundSubs = {
+    number: s.round.number,
+    subs: s.subs,
+    startsAt: s.round.startsAt,
+    closed: s.round.closed,
+  };
 
   const act = (action: () => string | null | void) => {
     setNotice(action() ?? "");
@@ -506,23 +542,30 @@ export function CasterDemo() {
         <header className="flex flex-wrap items-center gap-x-8 gap-y-3 rounded-xl border border-border bg-card px-5 py-4">
           <div className="min-w-0 flex-1">
             <p className="text-xs uppercase tracking-widest text-muted-foreground">
-              Ronda {s.round.number} · Cupo {s.round.capacity}
+              {waiting
+                ? `Ronda ${s.round.number} terminada · sin ronda activa`
+                : `Ronda ${s.round.number} · Cupo ${s.round.capacity}`}
             </p>
             <h1 className="mt-1 truncate text-2xl font-semibold text-foreground">
-              {PROBLEM.name}
+              {waiting ? "Esperando problema" : PROBLEM.name}
             </h1>
           </div>
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <PixelIcon name="users" className="h-4 w-4 text-primary" />
-            Participantes: <b className="text-foreground">{s.runners.length}</b>
-          </p>
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <PixelIcon name="trophy" className="h-4 w-4 text-primary" />
-            Clasificados:{" "}
-            <b className="text-foreground">
-              {Math.min(solved, s.round.capacity)}/{s.round.capacity}
-            </b>
-          </p>
+          {!waiting && (
+            <>
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <PixelIcon name="users" className="h-4 w-4 text-primary" />
+                Participantes:{" "}
+                <b className="text-foreground">{s.runners.length}</b>
+              </p>
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <PixelIcon name="trophy" className="h-4 w-4 text-primary" />
+                Clasificados:{" "}
+                <b className="text-foreground">
+                  {Math.min(solved, s.round.capacity)}/{s.round.capacity}
+                </b>
+              </p>
+            </>
+          )}
           <div className="text-right">
             <p
               className={cn(
@@ -538,7 +581,11 @@ export function CasterDemo() {
               role="timer"
             >
               <PixelIcon name="clock" className="h-7 w-7" />
-              {s.round.closed ? "Cerrada" : formatClock(left)}
+              {waiting
+                ? "--:--"
+                : s.round.closed
+                  ? "Cerrada"
+                  : formatClock(left)}
             </p>
             {clockHidden && !s.round.closed && (
               <p className="mt-1 text-xs text-danger">
@@ -556,15 +603,22 @@ export function CasterDemo() {
                 <PixelIcon name="flag" className="h-4 w-4 text-primary" />{" "}
                 Enunciado
               </h2>
-              {hint && (
+              {hint && !waiting && (
                 <p className="mt-3 rounded-lg border border-success/40 bg-success-soft px-3 py-2 text-sm text-success">
                   <b>Pista del organizador</b> (la ven los participantes):{" "}
                   {hint}
                 </p>
               )}
-              <div className="mt-2 min-h-0 flex-1 overflow-y-auto pr-1">
-                <ProblemStatement statement={PROBLEM.statement} />
-              </div>
+              {waiting ? (
+                <Waiting
+                  title="Esperando problema"
+                  text="El enunciado aparece cuando el organizador inicie la próxima ronda."
+                />
+              ) : (
+                <div className="mt-2 min-h-0 flex-1 overflow-y-auto pr-1">
+                  <ProblemStatement statement={PROBLEM.statement} />
+                </div>
+              )}
             </section>
 
             <section className="rounded-xl border border-border bg-card p-5">
@@ -573,26 +627,35 @@ export function CasterDemo() {
                   <PixelIcon name="check" className="h-4 w-4 text-primary" />{" "}
                   Casos de prueba
                 </h2>
-                <span className="rounded-md bg-muted px-2.5 py-1 text-xs font-medium text-foreground">
-                  Ejemplos ({PROBLEM.samples.length})
-                </span>
+                {!waiting && (
+                  <span className="rounded-md bg-muted px-2.5 py-1 text-xs font-medium text-foreground">
+                    Ejemplos ({PROBLEM.samples.length})
+                  </span>
+                )}
               </div>
-              <div className="mt-3 space-y-3 text-xs">
-                {PROBLEM.samples.map((sample, index) => (
-                  <div
-                    key={index}
-                    className="rounded-lg border border-border p-3"
-                  >
-                    <p className="font-medium text-foreground">
-                      Ejemplo {index + 1}
-                    </p>
-                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                      <Sample label="Entrada" text={sample.input} />
-                      <Sample label="Salida esperada" text={sample.output} />
+              {waiting ? (
+                <Waiting
+                  title="Esperando problema"
+                  text="Los ejemplos llegan con el enunciado."
+                />
+              ) : (
+                <div className="mt-3 space-y-3 text-xs">
+                  {PROBLEM.samples.map((sample, index) => (
+                    <div
+                      key={index}
+                      className="rounded-lg border border-border p-3"
+                    >
+                      <p className="font-medium text-foreground">
+                        Ejemplo {index + 1}
+                      </p>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        <Sample label="Entrada" text={sample.input} />
+                        <Sample label="Salida esperada" text={sample.output} />
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </section>
 
             <VotePanel sim={s} now={now} />
@@ -644,6 +707,8 @@ export function CasterDemo() {
               </h2>
               {view === "pizarra" ? (
                 <Whiteboard board={whiteboard} />
+              ) : waiting ? (
+                <TrackStandby />
               ) : (
                 <Scaled>
                   <ProjectedTrack
@@ -660,10 +725,14 @@ export function CasterDemo() {
                 </Scaled>
               )}
               <Submissions
-                subs={s.subs}
-                startsAt={s.round.startsAt}
-                fog={fogOn ? formatLeft(activeLeft(s, "niebla", now)) : null}
-                onView={setViewing}
+                live={waiting ? null : thisRound}
+                past={waiting ? thisRound : previous}
+                fog={
+                  !waiting && fogOn
+                    ? formatLeft(activeLeft(s, "niebla", now))
+                    : null
+                }
+                onView={(sub, round) => setViewing({ sub, round })}
               />
             </section>
           </div>
@@ -683,32 +752,40 @@ export function CasterDemo() {
         }
         onClose={() =>
           act(() => {
-            s.round = { ...s.round, closed: true };
+            closeRound(s, Date.now());
           })
         }
         onReset={() =>
           act(() => {
-            sim.current = newSim(Date.now());
+            // La ronda que termina pasa a ser la anterior: sus códigos siguen a mano.
+            setPrevious({ ...thisRound, closed: true });
+            sim.current = newSim(Date.now(), s.round.number + 1);
             setViewing(null);
           })
         }
       />
       {viewing && (
         <CodeViewer
-          sub={viewing}
+          sub={viewing.sub}
+          round={viewing.round.number}
           attempt={
-            s.subs.filter(
-              (sub) => sub.name === viewing.name && sub.at <= viewing.at,
+            viewing.round.subs.filter(
+              (sub) =>
+                sub.name === viewing.sub.name && sub.at <= viewing.sub.at,
             ).length
           }
-          startsAt={s.round.startsAt}
-          closed={s.round.closed}
+          startsAt={viewing.round.startsAt}
+          closed={
+            viewing.round.closed ||
+            (viewing.round.number === s.round.number && s.round.closed)
+          }
           onClose={() => setViewing(null)}
           onToBoard={() => {
-            const style = verdictStyle(viewing.verdict);
+            const { sub } = viewing;
+            const style = verdictStyle(sub.verdict);
             whiteboard.addCode(
-              `${viewing.name} · ${style.code} ${viewing.passed}/${TESTS} · ${LANGUAGE_NAME[viewing.language]}`,
-              viewing.code,
+              `${sub.name} · ${style.code} ${sub.passed}/${TESTS} · ${LANGUAGE_NAME[sub.language]}`,
+              sub.code,
             );
             setViewing(null);
             setView("pizarra");
@@ -801,16 +878,21 @@ const FILTERS = ["Todos", "WA", "TLE", "CE", "RE", "AC"] as const;
  * un resumen por veredicto y la lista con participante, tests y penalización.
  */
 function Submissions({
-  subs,
-  startsAt,
+  live,
+  past,
   fog,
   onView,
 }: {
-  subs: Sub[];
-  startsAt: number;
+  /** La ronda en curso; null si no hay ninguna activa. */
+  live: RoundSubs | null;
+  /** La ronda anterior, para ver sus códigos. */
+  past: RoundSubs | null;
   fog: string | null;
-  onView: (sub: Sub) => void;
+  onView: (sub: Sub, round: RoundSubs) => void;
 }) {
+  const [showPast, setShowPast] = useState(false);
+  const round = live && !(showPast && past) ? live : past;
+  const subs = round?.subs ?? [];
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("Todos");
   const counts = new Map<string, number>();
   subs.forEach((sub) => {
@@ -825,10 +907,43 @@ function Submissions({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="flex items-center gap-2 text-base font-semibold text-foreground">
           <PixelIcon name="code" className="h-4 w-4 text-primary" /> Envíos
-          <span className="text-sm font-normal text-muted-foreground">
-            · {subs.length} en la ronda
-          </span>
+          {round && (
+            <span className="text-sm font-normal text-muted-foreground">
+              · ronda {round.number}
+              {round === live ? "" : " (anterior)"} · {subs.length}
+            </span>
+          )}
         </h3>
+        {live && past && (
+          <span
+            role="tablist"
+            aria-label="Ronda"
+            className="flex gap-1 rounded-lg bg-muted p-1 text-xs"
+          >
+            {(
+              [
+                [false, "Ronda actual"],
+                [true, `Ronda ${past.number} (anterior)`],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={label}
+                type="button"
+                role="tab"
+                aria-selected={showPast === value}
+                onClick={() => setShowPast(value)}
+                className={cn(
+                  "rounded-md px-2.5 py-1 font-medium",
+                  showPast === value
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted-foreground",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </span>
+        )}
         <div
           role="tablist"
           aria-label="Filtrar envíos"
@@ -866,85 +981,99 @@ function Submissions({
         </div>
       </div>
 
-      <div className="mt-3 max-h-[26rem] overflow-y-auto pr-1">
-        <table className="w-full text-sm">
-          <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
-            <tr>
-              <th className="py-2 pr-3 font-medium">Minuto</th>
-              <th className="py-2 pr-3 font-medium">Participante</th>
-              <th className="py-2 pr-3 font-medium">Veredicto</th>
-              <th className="py-2 pr-3 font-medium">Tests</th>
-              <th className="py-2 pr-3 text-right font-medium">Penalización</th>
-              <th className="py-2 text-right font-medium">Código</th>
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map((sub) => {
-              const style = verdictStyle(sub.verdict);
-              return (
-                <tr
-                  key={sub.id}
-                  className="animate-run-it-rise border-t border-border"
-                >
-                  <td className="py-2 pr-3 font-mono text-muted-foreground">
-                    {formatClock(Math.max(0, sub.at - startsAt))}
-                  </td>
-                  <td className="py-2 pr-3">
-                    <span className="flex items-center gap-2 font-medium text-foreground">
-                      <MiniSprite index={sub.character} />
-                      <span className="truncate">{sub.name}</span>
-                    </span>
-                  </td>
-                  <td className="py-2 pr-3">
-                    <span className="flex items-center gap-2">
-                      <span
-                        className="rounded px-2 py-0.5 font-mono text-sm font-bold text-background"
-                        style={{ background: style.color }}
-                      >
-                        {style.code}
-                      </span>
-                      <span style={{ color: style.color }}>
-                        {verdictLabel(sub.verdict)}
-                      </span>
-                    </span>
-                  </td>
-                  <td className="py-2 pr-3">
-                    <span className="flex items-center gap-2 font-mono text-foreground">
-                      <span className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
-                        <span
-                          className="block h-full rounded-full"
-                          style={{
-                            width: `${(sub.passed / TESTS) * 100}%`,
-                            background: style.color,
-                          }}
-                        />
-                      </span>
-                      {sub.passed}/{TESTS}
-                    </span>
-                  </td>
-                  <td className="py-2 pr-3 text-right font-mono text-muted-foreground">
-                    {sub.verdict === "accepted" ? "—" : `+${sub.penalty} s`}
-                  </td>
-                  <td className="py-2 text-right">
-                    <button
-                      type="button"
-                      onClick={() => onView(sub)}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
-                    >
-                      <PixelIcon name="code" className="h-3.5 w-3.5" /> Ver
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        {!shown.length && (
-          <p className="py-6 text-center text-sm text-muted-foreground">
-            Todavía no hay envíos con ese veredicto.
+      {!live && (
+        <div className="mt-3 rounded-lg border border-dashed border-border px-4 py-3 text-sm">
+          <p className="font-semibold text-foreground">No hay ronda activa</p>
+          <p className="mt-0.5 text-muted-foreground">
+            {past
+              ? `Abajo están los envíos de la ronda ${past.number}: con "Ver" puedes repasar los códigos.`
+              : "Los envíos aparecen cuando empiece la ronda."}
           </p>
-        )}
-      </div>
+        </div>
+      )}
+      {round && (
+        <div className="mt-3 max-h-[26rem] overflow-y-auto pr-1">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
+              <tr>
+                <th className="py-2 pr-3 font-medium">Minuto</th>
+                <th className="py-2 pr-3 font-medium">Participante</th>
+                <th className="py-2 pr-3 font-medium">Veredicto</th>
+                <th className="py-2 pr-3 font-medium">Tests</th>
+                <th className="py-2 pr-3 text-right font-medium">
+                  Penalización
+                </th>
+                <th className="py-2 text-right font-medium">Código</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((sub) => {
+                const style = verdictStyle(sub.verdict);
+                return (
+                  <tr
+                    key={sub.id}
+                    className="animate-run-it-rise border-t border-border"
+                  >
+                    <td className="py-2 pr-3 font-mono text-muted-foreground">
+                      {formatClock(Math.max(0, sub.at - round.startsAt))}
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span className="flex items-center gap-2 font-medium text-foreground">
+                        <MiniSprite index={sub.character} />
+                        <span className="truncate">{sub.name}</span>
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span className="flex items-center gap-2">
+                        <span
+                          className="rounded px-2 py-0.5 font-mono text-sm font-bold text-background"
+                          style={{ background: style.color }}
+                        >
+                          {style.code}
+                        </span>
+                        <span style={{ color: style.color }}>
+                          {verdictLabel(sub.verdict)}
+                        </span>
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span className="flex items-center gap-2 font-mono text-foreground">
+                        <span className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
+                          <span
+                            className="block h-full rounded-full"
+                            style={{
+                              width: `${(sub.passed / TESTS) * 100}%`,
+                              background: style.color,
+                            }}
+                          />
+                        </span>
+                        {sub.passed}/{TESTS}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3 text-right font-mono text-muted-foreground">
+                      {sub.verdict === "accepted" ? "—" : `+${sub.penalty} s`}
+                    </td>
+                    <td className="py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => onView(sub, round)}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
+                      >
+                        <PixelIcon name="code" className="h-3.5 w-3.5" /> Ver
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {!shown.length && (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              Todavía no hay envíos con ese veredicto.
+            </p>
+          )}
+        </div>
+      )}
 
       {fog && (
         <div className="absolute inset-0 grid place-items-center rounded-lg bg-background/85 text-center backdrop-blur-sm">
@@ -997,6 +1126,7 @@ const LANGUAGE_NAME: Record<SubLanguage, string> = {
  */
 function CodeViewer({
   sub,
+  round,
   attempt,
   startsAt,
   closed,
@@ -1004,6 +1134,7 @@ function CodeViewer({
   onToBoard,
 }: {
   sub: Sub;
+  round: number;
   attempt: number;
   startsAt: number;
   closed: boolean;
@@ -1035,7 +1166,7 @@ function CodeViewer({
           <div className="min-w-0">
             <p className="text-lg font-semibold">{sub.name}</p>
             <p className="text-xs text-muted-foreground">
-              Envío {attempt} · minuto{" "}
+              Ronda {round} · envío {attempt} · minuto{" "}
               {formatClock(Math.max(0, sub.at - startsAt))} ·{" "}
               {LANGUAGE_NAME[sub.language]}
             </p>
@@ -1057,11 +1188,11 @@ function CodeViewer({
           <button
             type="button"
             onClick={onToBoard}
-            disabled={!closed}
+            disabled={locked}
             title={
-              closed
-                ? "Pega el código en la pizarra para explicarlo"
-                : "Se habilita al cerrar la ronda: la pizarra sale en la transmisión"
+              locked
+                ? "Una solución aceptada se revela al cerrar la ronda"
+                : "Pega el código en la pizarra para explicarlo"
             }
             className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
           >
@@ -1092,7 +1223,7 @@ function CodeViewer({
           />
           {closed
             ? "Ronda cerrada: ya puedes mostrar este código en la transmisión."
-            : "Ronda en curso: este código es solo para tu pantalla. No lo muestres en la transmisión ni en el proyector."}
+            : "Ronda en curso: puedes llevarlo a la pizarra para explicar el error, sin dar la solución completa."}
         </p>
 
         <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,3fr)_minmax(16rem,2fr)]">
@@ -1206,6 +1337,50 @@ function codeVerdict(code: string) {
       TLE: "Time Limit Exceeded",
       CE: "Compilation Error",
     }[code] ?? "Runtime Error (Other)"
+  );
+}
+
+/** Recuadro de espera entre rondas (enunciado y casos). */
+function Waiting({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="grid flex-1 place-items-center py-10 text-center">
+      <div>
+        <span className="run-it-spinner mx-auto" aria-hidden="true">
+          {Array.from({ length: 9 }, (_, i) => (
+            <i key={i} />
+          ))}
+        </span>
+        <p className="mt-4 text-sm text-foreground" style={PIXEL}>
+          {title}
+        </p>
+        <p className="mt-2 text-sm text-muted-foreground">{text}</p>
+      </div>
+    </div>
+  );
+}
+
+/** La pista entre rondas: como /pista cuando no hay ronda activa. */
+function TrackStandby() {
+  return (
+    <div className="grid aspect-video place-items-center rounded-lg border border-border bg-background px-6 text-center">
+      <div>
+        <p
+          className="text-[clamp(1.2rem,2.4vw,2.6rem)] text-primary"
+          style={PIXEL}
+        >
+          Run&nbsp;It
+        </p>
+        <p
+          className="animate-run-it-blink mt-5 text-sm text-foreground"
+          style={PIXEL}
+        >
+          Esperando ronda
+        </p>
+        <p className="mt-3 text-sm text-muted-foreground">
+          La pista vuelve sola cuando el organizador inicie la próxima ronda.
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -1511,7 +1686,7 @@ function SimControls({
               Cerrar ronda
             </button>
             <button type="button" onClick={onReset} className={button}>
-              Reiniciar ronda
+              Siguiente ronda
             </button>
           </div>
           {notice && <p className="mt-2 text-xs text-danger">{notice}</p>}
