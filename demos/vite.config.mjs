@@ -15,7 +15,8 @@ export default {
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: [
-      { find: /^@\//, replacement: here("./src/") },
+      // Las demos solo y caster usan los componentes actuales del frontend, no la copia de src/.
+      { find: /^@\//, replacement: here(["solo", "caster"].includes(demo) ? "../frontend/src/" : "./src/") },
       { find: /^socket\.io-client$/, replacement: here("./fake/socket.ts") },
     ],
   },
@@ -23,6 +24,8 @@ export default {
     "import.meta.env.VITE_SOCKET_URL": JSON.stringify("/"),
     "import.meta.env.VITE_API_URL": JSON.stringify(""),
   },
+  // Los workers del juez de la demo solo importan Pyodide y Clang desde jsDelivr.
+  worker: { format: "es" },
   build: {
     outDir: here(`./dist/${demo}`),
     emptyOutDir: true,

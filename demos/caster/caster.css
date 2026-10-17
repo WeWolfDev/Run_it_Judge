@@ -1,0 +1,9 @@
+/* La demo caster usa el código actual de frontend/src: estilos, paletas y animaciones. */
+@import "../../frontend/src/styles.css";
+@source "../../frontend/src";
+@source "./";
+
+/* La pista va achicada dentro de su recuadro: sin el botón de pantalla completa. */
+.caster-pista .proj > button {
+  display: none;
+}
