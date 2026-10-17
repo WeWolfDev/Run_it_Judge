@@ -10,7 +10,7 @@ import {
   type FeedEvent,
   type TrackRound,
 } from "@/components/ProjectedTrack";
-import { CHARACTERS } from "@/lib/characters";
+import { characterAt, CHARACTERS } from "@/lib/characters";
 import { formatLeft, hitInfo, type HitId, type HitPoll } from "@/lib/hits";
 import { applyPalette, PALETTES, storedPalette } from "@/lib/palette";
 import { formatClock, verdictLabel } from "@/lib/runit";
@@ -496,6 +496,8 @@ export function CasterDemo() {
                 ))}
               </div>
             </section>
+
+            <VotePanel sim={s} now={now} />
           </div>
 
           <div className="flex min-w-0 flex-col gap-5">
@@ -530,7 +532,6 @@ export function CasterDemo() {
               />
             </section>
 
-            <VotePanel sim={s} now={now} />
           </div>
         </div>
       </main>
@@ -708,9 +709,7 @@ function Submissions({
                   </td>
                   <td className="py-2 pr-3">
                     <span className="flex items-center gap-2 font-medium text-foreground">
-                      <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden">
-                        <Sprite index={sub.character} scale={0.45} />
-                      </span>
+                      <MiniSprite index={sub.character} />
                       <span className="truncate">{sub.name}</span>
                     </span>
                   </td>
@@ -762,6 +761,33 @@ function Submissions({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Personaje chico para la lista de envíos. Sprite no baja de su tamaño real
+ * (factor 1), y cada hoja tiene otro tamaño de cuadro: se dibuja a tamaño real
+ * y se achica con transform hasta entrar en la casilla de 40 px.
+ */
+function MiniSprite({ index }: { index: number }) {
+  const character = characterAt(index);
+  const width = character.gif ? character.gif.width : character.fw;
+  const height = character.gif ? character.gif.height : character.fh;
+  const zoom = 48 / Math.max(height, width * 0.8);
+  return (
+    <span className="relative block h-10 w-10 shrink-0 overflow-hidden">
+      <span
+        className="absolute bottom-0 left-1/2 block"
+        style={{
+          width,
+          height,
+          transform: `translateX(-50%) scale(${zoom})`,
+          transformOrigin: "bottom center",
+        }}
+      >
+        <Sprite index={index} scale={0.01} />
+      </span>
+    </span>
   );
 }
 
