@@ -1,5 +1,5 @@
-// Ejercicios de la demo solo, basados en problemas de Codeforces (enunciados
-// propios, con crédito). Sus 30 casos (los de los .zip de RunIt-demo-tests) están
+// Ejercicios de la demo solo, con enunciados propios (los formatos de entrada y
+// salida siguen los problemas de Codeforces anotados en `source`). Sus 30 casos (los de los .zip de RunIt-demo-tests) están
 // en public/solo-tests/<id>.json y se descargan al enviar. No se le pide nada al
 // servidor del torneo.
 
@@ -119,8 +119,6 @@ export const withSolution = (language: Language, problem: Problem) =>
 
 const limits = (seconds: number) =>
   `Límite de tiempo por prueba: **${seconds} ${seconds === 1 ? "segundo" : "segundos"}**  \nLímite de memoria por prueba: **256 megabytes**\n\n`;
-const credit = (id: string, name: string) =>
-  `\n\n*Basado en [Codeforces ${id} · ${name}](https://codeforces.com/problemset/problem/${id.replace(/([A-Z])$/, "/$1")}).*`;
 const words = (input: string) => input.split(/\s+/).filter(Boolean);
 
 export const PROBLEMS: Problem[] = [
@@ -140,7 +138,7 @@ Una palabra no vacía de letras inglesas mayúsculas y minúsculas. Su longitud 
 
 **Salida**
 
-La palabra con la primera letra en mayúscula.${credit("281A", "Word Capitalization")}`,
+La palabra con la primera letra en mayúscula.`,
     samples: ["ApPLe", "konjac"],
     solve: (i) => {
       const w = words(i)[0] ?? "";
@@ -168,7 +166,7 @@ Un entero $x$ ($1 \\le x \\le 1\\,000\\,000$).
 
 **Salida**
 
-El mínimo número de pasos.${credit("617A", "Elephant")}`,
+El mínimo número de pasos.`,
     samples: ["5", "12"],
     solve: (i) => String(Math.ceil(Number(words(i)[0]) / 5)),
     body: {
@@ -193,7 +191,7 @@ La primera línea tiene $n$ y $m$ ($1 \\le m \\le n \\le 100$). La segunda, $n$ 
 
 **Salida**
 
-Un entero: la mayor ganancia posible.${credit("34B", "Sale")}`,
+Un entero: la mayor ganancia posible.`,
     samples: ["5 3\n-6 0 35 -2 4", "4 2\n7 0 0 -7"],
     solve: (i) => {
       const [, m, ...a] = words(i).map(Number);
@@ -222,7 +220,7 @@ La primera línea tiene $t$ ($1 \\le t \\le 1000$), la cantidad de partidas. Cad
 
 **Salida**
 
-Para cada partida, \`DA\` si gana Alicia o \`NET\` si no.${credit("1373B", "01 Game")}`,
+Para cada partida, \`DA\` si gana Alicia o \`NET\` si no.`,
     samples: ["3\n01\n1111\n0011", "3\n10\n0\n000111"],
     solve: (i) =>
       words(i)
@@ -254,7 +252,7 @@ Una palabra $s$ de letras inglesas minúsculas ($1 \\le |s| \\le 100$).
 
 **Salida**
 
-\`YES\` si saludó, \`NO\` si no.${credit("58A", "Chat room")}`,
+\`YES\` si saludó, \`NO\` si no.`,
     samples: ["ahhellllloou", "hlelo"],
     solve: (i) => {
       let k = 0;
@@ -283,7 +281,7 @@ La primera línea tiene $n$ ($1 \\le n \\le 10^5$). La segunda, $n$ enteros $s_i
 
 **Salida**
 
-El mínimo número de taxis.${credit("158B", "Taxi")}`,
+El mínimo número de taxis.`,
     samples: ["5\n1 2 4 3 3", "8\n2 3 4 4 2 1 3 1"],
     solve: (i) => {
       const c = [0, 0, 0, 0, 0];
@@ -320,7 +318,7 @@ La primera línea tiene $t$ ($1 \\le t \\le 10^4$), la cantidad de casos. Cada c
 
 **Salida**
 
-Para cada caso, la mayor experiencia posible.${credit("1914C", "Quests")}`,
+Para cada caso, la mayor experiencia posible.`,
     samples: [
       "4\n4 7\n4 3 1 2\n1 1 1 1\n3 2\n1 2 5\n3 1 8\n5 5\n3 2 4 1 4\n2 3 1 4 7\n6 4\n1 4 5 4 5 10\n1 5 1 2 5 1",
       "2\n2 3\n5 1\n1 10\n1 1\n7\n9",

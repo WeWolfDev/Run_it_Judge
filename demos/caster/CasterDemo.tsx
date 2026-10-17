@@ -54,25 +54,23 @@ const DURATION: Record<HitId, number | null> = {
 };
 
 const PROBLEM = {
-  name: "A. Helpful Maths",
+  name: "A. Marcador en orden",
   hint: "Separa los números por el +, ordénalos y vuelve a unirlos con +.",
   statement: `Límite de tiempo por prueba: **2 segundos**  \nLímite de memoria por prueba: **256 megabytes**
 
-Xenia, la matemática principiante, es una estudiante de tercer año de primaria. Ahora está aprendiendo la operación de suma.
+El marcador electrónico del torneo muestra, entre ronda y ronda, una suma de puntos de bonificación. Cada sumando vale $1$, $2$ o $3$.
 
-La profesora ha escrito la suma de múltiples números. Los alumnos deben calcular la suma. Para hacer el cálculo más fácil, la suma solo contiene los números $1$, $2$ y $3$. Aún así, eso no es suficiente para Xenia. Apenas está empezando a contar, por lo que solo puede calcular una suma si los sumandos siguen un orden no decreciente. Por ejemplo, no puede calcular la suma $1+3+2+1$ pero sí puede calcular las sumas $1+1+2$ y $3+3$.
+El problema es que el marcador es viejo: solo puede mostrar una suma si sus sumandos están ordenados de menor a mayor (puede haber repetidos). Por ejemplo, puede mostrar $1+1+2$ o $3+3$, pero no $1+3+2+1$.
 
-Tienes la suma que estaba escrita en la pizarra. Reorganiza los sumandos e imprime la suma de tal manera que Xenia pueda calcularla.
+Te pasan la suma tal como la anotó el organizador. Reordena los sumandos para que el marcador pueda mostrarla. El resultado de la suma no cambia.
 
 **Entrada**
 
-La primera línea contiene una cadena no vacía $s$ — la suma que Xenia necesita contar. La cadena $s$ no contiene espacios. Solo contiene dígitos y caracteres \`+\`. Además, la cadena $s$ es una suma correcta de números $1$, $2$ y $3$. La cadena $s$ tiene una longitud de como máximo $100$ caracteres.
+Una línea con una cadena no vacía $s$: la suma anotada. Solo tiene dígitos \`1\`, \`2\`, \`3\` y signos \`+\`, sin espacios, y es una suma bien escrita. Su longitud es como mucho $100$.
 
 **Salida**
 
-Imprime la nueva suma que Xenia puede contar.
-
-*Basado en [Codeforces 339A · Helpful Maths](https://codeforces.com/problemset/problem/339/A).*`,
+La misma suma con los sumandos en orden no decreciente.`,
   samples: [
     { input: "3+2+1", output: "1+2+3" },
     { input: "1+1+3+1+3", output: "1+1+1+3+3" },
