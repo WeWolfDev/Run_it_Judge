@@ -225,6 +225,8 @@ export interface RunItEvents {
   "participant:progress": ParticipantProgressEvent;
   "round:closing_soon": RoundClosingSoonEvent;
   "round:closed": RoundClosedEvent;
+  /** El admin creó/pasó a la siguiente ronda (pendiente): refrescar pista y público. */
+  "round:created": { round_id: string; round_number: number; participants: number };
   "round:paused": RoundPausedEvent;
   "tournament:winner": TournamentWinnerEvent;
   // El admin avanzó la ceremonia de premios (o terminó el torneo): hay que

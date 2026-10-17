@@ -16,6 +16,9 @@ dist-ssr
 .nitro
 *.local
 
+# Respaldo temporal de despliegue (no subir al repositorio)
+.output.pre-deploy-backup
+
 # Wrangler / Cloudflare
 .wrangler/
 .dev.vars
