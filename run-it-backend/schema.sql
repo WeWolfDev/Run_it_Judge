@@ -34,6 +34,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_admin_username_key ON users (username) W
 -- Reemplaza al índice que venía con el UNIQUE: el login filtra por username.
 CREATE INDEX IF NOT EXISTS users_username_idx ON users (username);
 
+-- Casters: cuentas de solo lectura para quien narra el torneo (ven el enunciado,
+-- la pista, el voto y el código de los envíos). Las crea el admin desde Accesos.
+-- Se amplía el CHECK del rol con DROP IF EXISTS, como access_codes_status_check.
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users
+  ADD CONSTRAINT users_role_check
+  CHECK (role IN ('admin', 'participant', 'caster'));
+
 -- El admin no se borra por ningún camino: ni endpoint, ni cascada, ni un DELETE
 -- a mano. Tampoco se lo degrada a participante, que es la forma de volverlo
 -- borrable. Sin esto, borrarlo deja el panel sin acceso hasta el próximo
