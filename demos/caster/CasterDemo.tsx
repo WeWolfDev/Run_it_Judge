@@ -24,6 +24,7 @@ import { formatClock, verdictLabel } from "@/lib/runit";
 import { cn } from "@/lib/utils";
 
 import { caseResults, codeFor, type SubLanguage } from "./submissionCode";
+import { useBoard, Whiteboard } from "./Whiteboard";
 
 // Vista del caster: quien narra el torneo en vivo. Ve el enunciado de la ronda
 // con los ejemplos, la pista como la ve el público y la votación de la grada
@@ -471,6 +472,8 @@ export function CasterDemo() {
   const [now, setNow] = useState(() => Date.now());
   const [notice, setNotice] = useState("");
   const [viewing, setViewing] = useState<Sub | null>(null);
+  const [view, setView] = useState<"pista" | "pizarra">("pista");
+  const whiteboard = useBoard();
   sim.current ??= newSim(now);
 
   useEffect(() => {
@@ -597,31 +600,65 @@ export function CasterDemo() {
 
           <div className="flex min-w-0 flex-col gap-5">
             <section className="rounded-xl border border-border bg-card p-3">
-              <h2 className="flex items-center gap-2 px-2 pb-2 text-sm font-semibold text-foreground">
-                <PixelIcon name="play" className="h-4 w-4 text-primary" /> Pista
-                <span className="font-normal text-muted-foreground">
-                  · la carrera en vivo
+              <h2 className="flex flex-wrap items-center gap-2 px-2 pb-2 text-sm font-semibold text-foreground">
+                {/* Pestañas: solo cambia esta escena; los envíos quedan debajo. */}
+                <span
+                  role="tablist"
+                  aria-label="Escena"
+                  className="flex gap-1 rounded-lg bg-muted p-1"
+                >
+                  {(
+                    [
+                      ["pista", "Pista", "play"],
+                      ["pizarra", "Pizarra", "code"],
+                    ] as const
+                  ).map(([id, label, icon]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      role="tab"
+                      aria-selected={view === id}
+                      onClick={() => setView(id)}
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium",
+                        view === id
+                          ? "bg-card text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      <PixelIcon name={icon} className="h-3.5 w-3.5" /> {label}
+                    </button>
+                  ))}
                 </span>
-                {isOn(s, "apagon", now) && (
+                <span className="font-normal text-muted-foreground">
+                  {view === "pista"
+                    ? "· la carrera en vivo"
+                    : "· para explicar la solución"}
+                </span>
+                {view === "pista" && isOn(s, "apagon", now) && (
                   <span className="ml-auto rounded-md bg-danger-soft px-2 py-0.5 text-xs text-danger">
                     Apagón en las pantallas del público ·{" "}
                     {formatLeft(activeLeft(s, "apagon", now))}
                   </span>
                 )}
               </h2>
-              <Scaled>
-                <ProjectedTrack
-                  round={s.round}
-                  board={entries}
-                  events={s.events}
-                  fog={
-                    fogOn
-                      ? `Niebla · el ranking vuelve en ${formatLeft(activeLeft(s, "niebla", now))}`
-                      : null
-                  }
-                  clockHidden={clockHidden}
-                />
-              </Scaled>
+              {view === "pizarra" ? (
+                <Whiteboard board={whiteboard} />
+              ) : (
+                <Scaled>
+                  <ProjectedTrack
+                    round={s.round}
+                    board={entries}
+                    events={s.events}
+                    fog={
+                      fogOn
+                        ? `Niebla · el ranking vuelve en ${formatLeft(activeLeft(s, "niebla", now))}`
+                        : null
+                    }
+                    clockHidden={clockHidden}
+                  />
+                </Scaled>
+              )}
               <Submissions
                 subs={s.subs}
                 startsAt={s.round.startsAt}
@@ -667,6 +704,15 @@ export function CasterDemo() {
           startsAt={s.round.startsAt}
           closed={s.round.closed}
           onClose={() => setViewing(null)}
+          onToBoard={() => {
+            const style = verdictStyle(viewing.verdict);
+            whiteboard.addCode(
+              `${viewing.name} · ${style.code} ${viewing.passed}/${TESTS} · ${LANGUAGE_NAME[viewing.language]}`,
+              viewing.code,
+            );
+            setViewing(null);
+            setView("pizarra");
+          }}
         />
       )}
     </div>
@@ -955,12 +1001,14 @@ function CodeViewer({
   startsAt,
   closed,
   onClose,
+  onToBoard,
 }: {
   sub: Sub;
   attempt: number;
   startsAt: number;
   closed: boolean;
   onClose: () => void;
+  onToBoard: () => void;
 }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
@@ -1008,9 +1056,23 @@ function CodeViewer({
           </span>
           <button
             type="button"
+            onClick={onToBoard}
+            disabled={!closed}
+            title={
+              closed
+                ? "Pega el código en la pizarra para explicarlo"
+                : "Se habilita al cerrar la ronda: la pizarra sale en la transmisión"
+            }
+            className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <PixelIcon name="code" className="h-3.5 w-3.5" /> Llevar a la
+            pizarra
+          </button>
+          <button
+            type="button"
             onClick={onClose}
             aria-label="Cerrar"
-            className="ml-auto rounded-md border border-border p-1.5 text-muted-foreground hover:text-foreground"
+            className="rounded-md border border-border p-1.5 text-muted-foreground hover:text-foreground"
           >
             <PixelIcon name="close" className="h-4 w-4" />
           </button>
