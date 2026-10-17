@@ -1,4 +1,11 @@
-export type UserRole = "admin" | "participant";
+export type UserRole = "admin" | "participant" | "caster";
+
+/** La pantalla de inicio de cada rol, a la que llevan el login y los guardas. */
+export function homeFor(role: UserRole) {
+  if (role === "admin") return "/admin" as const;
+  if (role === "caster") return "/caster" as const;
+  return "/participante" as const;
+}
 
 export interface Session {
   username: string;

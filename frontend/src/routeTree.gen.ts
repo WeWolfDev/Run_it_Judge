@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
+import { Route as CasterRouteImport } from './routes/caster'
 import { Route as CreditosRouteImport } from './routes/creditos'
 import { Route as LegalRouteImport } from './routes/legal'
 import { Route as LoginRouteImport } from './routes/login'
@@ -31,6 +32,11 @@ const IndexRoute = IndexRouteImport.update({
 const AdminRoute = AdminRouteImport.update({
   id: '/admin',
   path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CasterRoute = CasterRouteImport.update({
+  id: '/caster',
+  path: '/caster',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CreditosRoute = CreditosRouteImport.update({
@@ -92,6 +98,7 @@ const LegalPrivacidadRoute = LegalPrivacidadRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/caster': typeof CasterRoute
   '/creditos': typeof CreditosRoute
   '/legal': typeof LegalRouteWithChildren
   '/login': typeof LoginRoute
@@ -107,6 +114,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/caster': typeof CasterRoute
   '/creditos': typeof CreditosRoute
   '/login': typeof LoginRoute
   '/participante': typeof ParticipanteRoute
@@ -122,6 +130,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/caster': typeof CasterRoute
   '/creditos': typeof CreditosRoute
   '/legal': typeof LegalRouteWithChildren
   '/login': typeof LoginRoute
@@ -139,6 +148,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/admin'
+    | '/caster'
     | '/creditos'
     | '/legal'
     | '/login'
@@ -154,6 +164,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/admin'
+    | '/caster'
     | '/creditos'
     | '/login'
     | '/participante'
@@ -168,6 +179,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/admin'
+    | '/caster'
     | '/creditos'
     | '/legal'
     | '/login'
@@ -184,6 +196,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRoute
+  CasterRoute: typeof CasterRoute
   CreditosRoute: typeof CreditosRoute
   LegalRoute: typeof LegalRouteWithChildren
   LoginRoute: typeof LoginRoute
@@ -208,6 +221,13 @@ declare module '@tanstack/react-router' {
       path: '/admin'
       fullPath: '/admin'
       preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/caster': {
+      id: '/caster'
+      path: '/caster'
+      fullPath: '/caster'
+      preLoaderRoute: typeof CasterRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/creditos': {
@@ -307,6 +327,7 @@ const LegalRouteWithChildren = LegalRoute._addFileChildren(LegalRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
+  CasterRoute: CasterRoute,
   CreditosRoute: CreditosRoute,
   LegalRoute: LegalRouteWithChildren,
   LoginRoute: LoginRoute,

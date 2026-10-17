@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { useArcadeDeck, type DeckSide } from "@/hooks/use-arcade-deck";
 import { nextBackdrop, type BackdropId } from "@/lib/login-backdrop";
 import { cn } from "@/lib/utils";
-import { setSession } from "@/lib/session";
+import { homeFor, setSession } from "@/lib/session";
 import { login, register } from "@/lib/api";
 import { play } from "@/lib/sfx";
 
@@ -87,7 +87,7 @@ function LoginScreen({ onKey }: { onKey: (side: DeckSide) => void }) {
         : await login(username.trim(), accessCode.trim());
       play("coin");
       setSession({ username: result.user.username, role: result.user.role, token: result.token });
-      await navigate({ to: result.user.role === "admin" ? "/admin" : "/participante" });
+      await navigate({ to: homeFor(result.user.role) });
     } catch (requestError) {
       play("error");
       setError(requestError instanceof Error ? requestError.message : "No se pudo iniciar sesión");
