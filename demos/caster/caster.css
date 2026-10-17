@@ -16,3 +16,11 @@
   grid-template-rows: minmax(0, 1fr);
   padding-top: 1.2vw;
 }
+
+/* Los envíos del caster van debajo, más grandes: la pista va sin su columna de cupo y eventos. */
+.caster-pista .proj > div:nth-child(2) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.caster-pista .proj > div:nth-child(2) > aside {
+  display: none;
+}

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 
 import { TallyBars, VoteQr } from "@/components/hits/Grada";
 import { PixelIcon } from "@/components/PixelIcon";
+import { Sprite } from "@/components/Sprite";
 import { ProblemStatement } from "@/components/ProblemStatement";
 import {
   ProjectedTrack,
@@ -12,7 +13,7 @@ import {
 import { CHARACTERS } from "@/lib/characters";
 import { formatLeft, hitInfo, type HitId, type HitPoll } from "@/lib/hits";
 import { applyPalette, PALETTES, storedPalette } from "@/lib/palette";
-import { formatClock } from "@/lib/runit";
+import { formatClock, verdictLabel } from "@/lib/runit";
 import { cn } from "@/lib/utils";
 
 // Vista del caster: quien narra el torneo en vivo. Ve el enunciado de la ronda
@@ -118,10 +119,21 @@ type Poll = {
   winner: HitId | null;
 };
 type Active = { id: number; hit: HitId; startsAt: number; endsAt: number | null };
+/** Un envío, con el veredicto de Judge0 (lo que el caster quiere ver). */
+type Sub = {
+  id: number;
+  at: number;
+  name: string;
+  character: number;
+  verdict: string;
+  passed: number;
+  penalty: number;
+};
 type Sim = {
   round: TrackRound;
   runners: Runner[];
   events: FeedEvent[];
+  subs: Sub[];
   polls: Poll[];
   active: Active[];
   nextSubmitAt: number;
@@ -157,6 +169,7 @@ function newSim(now: number): Sim {
     },
     runners,
     events: [],
+    subs: seedSubs(runners, startsAt, now),
     polls: [],
     active: [],
     nextSubmitAt: now + 1500,
@@ -199,36 +212,80 @@ function board(sim: Sim): Entry[] {
   }));
 }
 
+// Veredictos de los envíos fallidos, con su peso en la simulación.
+const FAILS: [string, number][] = [
+  ["Wrong Answer", 45],
+  ["Time Limit Exceeded", 20],
+  ["Compilation Error", 12],
+  ["Runtime Error (SIGSEGV)", 9],
+  ["Runtime Error (NZEC)", 8],
+  ["Runtime Error (SIGFPE)", 6],
+];
+
+function failVerdict() {
+  let roll = Math.random() * FAILS.reduce((sum, [, weight]) => sum + weight, 0);
+  for (const [verdict, weight] of FAILS) {
+    roll -= weight;
+    if (roll < 0) return verdict;
+  }
+  return "Wrong Answer";
+}
+
+/** Los envíos que ya hubo antes de que el caster abriera la vista. */
+function seedSubs(runners: Runner[], startsAt: number, now: number) {
+  const subs: Sub[] = [];
+  runners.forEach((runner, index) => {
+    for (let i = 0; i < runner.fails; i++) {
+      const verdict = failVerdict();
+      subs.push({
+        id: -(index * 10 + i + 1),
+        at: startsAt + 10_000 + Math.random() * (now - startsAt - 15_000),
+        name: runner.name,
+        character: runner.character,
+        verdict,
+        passed:
+          verdict === "Compilation Error" ? 0 : Math.round((runner.best / 100) * TESTS),
+        penalty: 30,
+      });
+    }
+  });
+  return subs.sort((a, b) => b.at - a.at);
+}
+
 /** Un envío de un participante al azar que todavía no resolvió. */
 function submit(sim: Sim, now: number) {
   const pending = sim.runners.filter((r) => r.solvedAt === null);
   if (!pending.length || sim.round.closed) return;
   const runner = pick(pending);
   const base = { id: ++sim.seq, at: now, name: runner.name, character: runner.character };
+  const record = (verdict: string, passed: number, penalty: number) => {
+    sim.subs = [{ ...base, verdict, passed, penalty }, ...sim.subs].slice(0, 200);
+  };
   const roll = Math.random();
   if (runner.best >= 70 && roll < 0.3) {
     runner.best = 100;
     runner.solvedAt = now;
+    record("accepted", TESTS, 0);
     const arrival = sim.runners.filter((r) => r.solvedAt !== null).length;
     sim.events = [{ ...base, kind: "solved" as const, arrival }, ...sim.events].slice(0, 40);
     return;
   }
-  if (roll < 0.75 && runner.best < 90) {
-    runner.best = Math.min(90, runner.best + pick([10, 10, 20, 20, 30]));
-    const passed = Math.round((runner.best / 100) * TESTS);
-    sim.events = [
-      { ...base, kind: "progress" as const, passed, total: TESTS },
-      ...sim.events,
-    ].slice(0, 40);
-    return;
-  }
+  // Todo envío que no es Aceptado suma un intento fallido, aunque pase más tests.
+  const penalty = isOn(sim, "amnistia", now) ? 0 : isOn(sim, "penal-doble", now) ? 60 : 30;
   runner.fails += 1;
-  runner.penalty += isOn(sim, "amnistia", now) ? 0 : isOn(sim, "penal-doble", now) ? 60 : 30;
-  const passed = Math.round((Math.max(0, runner.best - 20) / 100) * TESTS);
-  sim.events = [{ ...base, kind: "fail" as const, passed, total: TESTS }, ...sim.events].slice(
-    0,
-    40,
-  );
+  runner.penalty += penalty;
+  const verdict = failVerdict();
+  const improves = verdict !== "Compilation Error" && roll < 0.75 && runner.best < 90;
+  if (improves) runner.best = Math.min(90, runner.best + pick([10, 10, 20, 20, 30]));
+  const passed =
+    verdict === "Compilation Error"
+      ? 0
+      : Math.round(((improves ? runner.best : Math.max(0, runner.best - 20)) / 100) * TESTS);
+  record(verdict, passed, penalty);
+  sim.events = [
+    { ...base, kind: improves ? ("progress" as const) : ("fail" as const), passed, total: TESTS },
+    ...sim.events,
+  ].slice(0, 40);
 }
 
 /** Por qué no se puede anunciar ese par ahora (pollBlockReason del backend). */
@@ -445,7 +502,7 @@ export function CasterDemo() {
             <section className="rounded-xl border border-border bg-card p-3">
               <h2 className="flex items-center gap-2 px-2 pb-2 text-sm font-semibold text-foreground">
                 <PixelIcon name="play" className="h-4 w-4 text-primary" /> Pista
-                <span className="font-normal text-muted-foreground">· lo que ve el público</span>
+                <span className="font-normal text-muted-foreground">· la carrera en vivo</span>
                 {isOn(s, "apagon", now) && (
                   <span className="ml-auto rounded-md bg-danger-soft px-2 py-0.5 text-xs text-danger">
                     Apagón en las pantallas del público ·{" "}
@@ -466,6 +523,11 @@ export function CasterDemo() {
                   clockHidden={clockHidden}
                 />
               </Scaled>
+              <Submissions
+                subs={s.subs}
+                startsAt={s.round.startsAt}
+                fog={fogOn ? formatLeft(activeLeft(s, "niebla", now)) : null}
+              />
             </section>
 
             <VotePanel sim={s} now={now} />
@@ -553,6 +615,162 @@ function Scaled({ children }: { children: ReactNode }) {
         {children}
       </div>
     </div>
+  );
+}
+
+// Veredicto corto y color de cada uno (los textos largos salen de verdictLabel).
+// CE y RE van con colores fijos: en algunas paletas info y accent se parecen.
+function verdictStyle(verdict: string) {
+  if (verdict === "accepted") return { code: "AC", color: "var(--success)" };
+  if (verdict === "Wrong Answer") return { code: "WA", color: "var(--danger)" };
+  if (verdict === "Time Limit Exceeded") return { code: "TLE", color: "var(--gold)" };
+  if (verdict === "Compilation Error") return { code: "CE", color: "#a78bfa" };
+  return { code: "RE", color: "#fb923c" };
+}
+
+const FILTERS = ["Todos", "WA", "TLE", "CE", "RE", "AC"] as const;
+
+/**
+ * Envíos de la ronda con su veredicto, para que el caster cuente en qué fallan:
+ * un resumen por veredicto y la lista con participante, tests y penalización.
+ */
+function Submissions({
+  subs,
+  startsAt,
+  fog,
+}: {
+  subs: Sub[];
+  startsAt: number;
+  fog: string | null;
+}) {
+  const [filter, setFilter] = useState<(typeof FILTERS)[number]>("Todos");
+  const counts = new Map<string, number>();
+  subs.forEach((sub) => {
+    const code = verdictStyle(sub.verdict).code;
+    counts.set(code, (counts.get(code) ?? 0) + 1);
+  });
+  const shown = subs.filter(
+    (sub) => filter === "Todos" || verdictStyle(sub.verdict).code === filter,
+  );
+  return (
+    <div className="relative mt-3 rounded-lg border border-border bg-background/40 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="flex items-center gap-2 text-base font-semibold text-foreground">
+          <PixelIcon name="code" className="h-4 w-4 text-primary" /> Envíos
+          <span className="text-sm font-normal text-muted-foreground">
+            · {subs.length} en la ronda
+          </span>
+        </h3>
+        <div role="tablist" aria-label="Filtrar envíos" className="flex flex-wrap gap-1.5">
+          {FILTERS.map((key) => {
+            const color = key === "Todos" ? "var(--primary)" : verdictStyle(codeVerdict(key)).color;
+            const active = filter === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setFilter(key)}
+                className="rounded-md border px-2.5 py-1 font-mono text-sm font-semibold"
+                style={{
+                  borderColor: color,
+                  background: active ? color : "transparent",
+                  color: active ? "var(--background)" : color,
+                }}
+              >
+                {key}
+                {key !== "Todos" && <span className="ml-1.5 opacity-80">{counts.get(key) ?? 0}</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="mt-3 max-h-[26rem] overflow-y-auto pr-1">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
+            <tr>
+              <th className="py-2 pr-3 font-medium">Minuto</th>
+              <th className="py-2 pr-3 font-medium">Participante</th>
+              <th className="py-2 pr-3 font-medium">Veredicto</th>
+              <th className="py-2 pr-3 font-medium">Tests</th>
+              <th className="py-2 text-right font-medium">Penalización</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((sub) => {
+              const style = verdictStyle(sub.verdict);
+              return (
+                <tr key={sub.id} className="animate-run-it-rise border-t border-border">
+                  <td className="py-2 pr-3 font-mono text-muted-foreground">
+                    {formatClock(Math.max(0, sub.at - startsAt))}
+                  </td>
+                  <td className="py-2 pr-3">
+                    <span className="flex items-center gap-2 font-medium text-foreground">
+                      <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden">
+                        <Sprite index={sub.character} scale={0.45} />
+                      </span>
+                      <span className="truncate">{sub.name}</span>
+                    </span>
+                  </td>
+                  <td className="py-2 pr-3">
+                    <span className="flex items-center gap-2">
+                      <span
+                        className="rounded px-2 py-0.5 font-mono text-sm font-bold text-background"
+                        style={{ background: style.color }}
+                      >
+                        {style.code}
+                      </span>
+                      <span style={{ color: style.color }}>{verdictLabel(sub.verdict)}</span>
+                    </span>
+                  </td>
+                  <td className="py-2 pr-3">
+                    <span className="flex items-center gap-2 font-mono text-foreground">
+                      <span className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
+                        <span
+                          className="block h-full rounded-full"
+                          style={{
+                            width: `${(sub.passed / TESTS) * 100}%`,
+                            background: style.color,
+                          }}
+                        />
+                      </span>
+                      {sub.passed}/{TESTS}
+                    </span>
+                  </td>
+                  <td className="py-2 text-right font-mono text-muted-foreground">
+                    {sub.verdict === "accepted" ? "—" : `+${sub.penalty} s`}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {!shown.length && (
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            Todavía no hay envíos con ese veredicto.
+          </p>
+        )}
+      </div>
+
+      {fog && (
+        <div className="absolute inset-0 grid place-items-center rounded-lg bg-background/85 text-center backdrop-blur-sm">
+          <p className="text-sm text-foreground" style={PIXEL}>
+            Niebla · los envíos vuelven en {fog}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Un veredicto de ejemplo para cada código, para tomar su color. */
+function codeVerdict(code: string) {
+  return (
+    { AC: "accepted", WA: "Wrong Answer", TLE: "Time Limit Exceeded", CE: "Compilation Error" }[
+      code
+    ] ?? "Runtime Error (Other)"
   );
 }
 
