@@ -267,8 +267,14 @@ export function ParticipantView() {
         // inscribe ya, así el admin lo ve conectado antes de iniciar.
         const next = await getUpcomingRound().catch(() => null);
         if (cancelled) return;
-        // Sin ninguna ronda todavía no hay torneo donde elegir: espera.
-        const chosen = next ? await characterChosen(next.id, username) : true;
+        // Todavia no hay ronda donde preguntarle al servidor si ya eligio
+        // personaje, asi que se mira solo este navegador. Antes se tomaba como
+        // "ya elegido" y el participante caia directo en la sala con el primer
+        // personaje, sin haberlo elegido nunca; con el .catch de arriba,
+        // ademas, cualquier fallo de red lo salteaba igual.
+        const chosen = next
+          ? await characterChosen(next.id, username)
+          : getCharacterConfirmed(username);
         if (cancelled) return;
         setConfirmedState(chosen || choseNowRef.current);
         setUpcoming(next);
