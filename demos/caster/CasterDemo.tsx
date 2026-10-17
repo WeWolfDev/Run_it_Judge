@@ -789,7 +789,7 @@ function SimControls({
   const button =
     "rounded-md border border-border px-2.5 py-1.5 text-xs text-foreground hover:bg-muted disabled:opacity-50";
   return (
-    <div className={cn("fixed bottom-4 left-4 z-[70] rounded-xl border border-border bg-card/95 p-3 text-foreground shadow-lg backdrop-blur", open ? "w-72" : "w-44")}>
+    <div className={cn("fixed bottom-4 left-4 z-[70] rounded-xl border border-border bg-card/95 p-3 text-foreground shadow-lg backdrop-blur", open ? "w-72" : "w-56")}>
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}

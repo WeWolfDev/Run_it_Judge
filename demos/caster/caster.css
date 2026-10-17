@@ -7,3 +7,12 @@
 .caster-pista .proj > button {
   display: none;
 }
+
+/* El caster ya tiene la ronda y el reloj arriba: la pista va sin su encabezado. */
+.caster-pista .proj > header {
+  display: none;
+}
+.caster-pista .proj {
+  grid-template-rows: minmax(0, 1fr);
+  padding-top: 1.2vw;
+}
