@@ -1,0 +1,53 @@
+Copyright (c) 2026 WeWolfDev (Leonardo San Martin Lopez, Cesar Augusto).
+Todos los derechos reservados.
+
+Este repositorio es público para que se pueda leer el código y contribuir a él.
+Que sea público no lo convierte en software libre ni de código abierto.
+
+PERMITIDO
+
+  1. Ver y leer el código en GitHub.
+  2. Hacer un fork en GitHub y modificarlo con el único fin de proponer cambios
+     a este repositorio mediante un pull request, según CONTRIBUTING.md.
+
+NO PERMITIDO sin autorización previa y por escrito de WeWolfDev
+
+  1. Usar el código, total o parcialmente, en otro proyecto, producto, servicio
+     o evento.
+  2. Copiar, modificar, publicar, distribuir, sublicenciar o vender el código o
+     trabajos derivados.
+  3. Desplegar u operar Run It, o una versión modificada, para terceros.
+  4. Presentar el código, el diseño o la mecánica de juego de Run It como
+     trabajo propio.
+
+RECURSOS DE TERCEROS
+
+Los sprites, fondos, fuentes, sonidos y bibliotecas de terceros listados en
+CREDITS.md no son de WeWolfDev ni están cubiertos por esta licencia: se rigen
+por la licencia de cada autor. Varios prohíben expresamente su redistribución.
+
+CONTRIBUCIONES
+
+Al enviar un pull request, el contribuidor acepta los términos de
+CONTRIBUTING.md, incluida la cesión de derechos sobre su aporte.
+
+SIN GARANTÍA
+
+El código se ofrece "tal cual", sin garantías de ningún tipo. WeWolfDev no
+responde por daños derivados de su uso.
+
+Para pedir permisos: abrir un issue en
+https://github.com/WeWolfDev/Run_it_Judge/issues
+
+-------------------------------------------------------------------------------
+
+English summary (the Spanish text above prevails)
+
+Copyright (c) 2026 WeWolfDev. All rights reserved. This repository is public so
+the code can be read and contributed to; it is not free or open-source software.
+You may view the code and fork it on GitHub solely to propose changes to this
+repository through a pull request. Any other use, copying, modification,
+distribution, deployment or sale requires prior written permission from
+WeWolfDev. Third-party assets listed in CREDITS.md are governed by their own
+licenses. Contributions are subject to CONTRIBUTING.md. Provided "as is",
+without warranty.
