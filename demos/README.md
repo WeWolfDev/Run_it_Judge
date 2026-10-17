@@ -12,6 +12,12 @@ de diseño y de flujo antes de pasarlos al código. No está en git.
 - `fake/socket.ts`: reemplazo de `socket.io-client` (bus en memoria).
 - `shell/DemoShell.tsx`: barra de navegación y panel flotante de simulación.
 - `admin/`, `participante/`: entradas de cada demo.
+- `solo/`: demo solo (práctica contrarreloj sin cuenta). Usa `frontend/src`
+  directo y corrige en el navegador: Python con Pyodide y C/C++ con Clang en
+  WebAssembly (`solo/judge/`), contra los 30 casos de `public/solo-tests/`.
+- `caster/`: vista del caster (enunciado, pista y votación con QR). Usa
+  `frontend/src` directo y simula la ronda y las votaciones con las reglas de
+  `run-it-backend/hits.js`.
 
 ## Compilar
 
@@ -19,6 +25,8 @@ de diseño y de flujo antes de pasarlos al código. No está en git.
 cd demos
 DEMO=admin ./node_modules/.bin/vite build --config vite.config.mjs
 DEMO=participante ./node_modules/.bin/vite build --config vite.config.mjs
+DEMO=solo ./node_modules/.bin/vite build --config vite.config.mjs && python3 publish.py solo
+DEMO=caster ./node_modules/.bin/vite build --config vite.config.mjs && python3 publish.py caster
 python3 publish.py admin && python3 publish.py participante
 ../frontend/node_modules/.bin/tsc -p tsconfig.json   # tipos
 ```

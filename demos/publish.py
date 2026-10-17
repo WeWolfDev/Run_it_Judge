@@ -7,7 +7,7 @@ demo = sys.argv[1]
 here = os.path.dirname(os.path.abspath(__file__))
 dist = os.path.join(here, "dist", demo)
 html = open(os.path.join(dist, "index.html")).read()
-titles = {"admin": "Panel Admin Run It", "participante": "Vista Participante Run It", "pista": "Pista Run It", "login": "Login Run It", "proyeccion": "Pista proyectada Run It", "premios": "Ceremonia de premios Run It", "eliminado": "Eliminado Run It", "publico": "Vistas del público Run It", "votos": "Voto del público Run It"}
+titles = {"admin": "Panel Admin Run It", "participante": "Vista Participante Run It", "pista": "Pista Run It", "login": "Login Run It", "proyeccion": "Pista proyectada Run It", "premios": "Ceremonia de premios Run It", "eliminado": "Eliminado Run It", "publico": "Vistas del público Run It", "votos": "Voto del público Run It", "solo": "Run It Demo Solo", "caster": "Run It Caster"}
 
 css_files = re.findall(r'<link rel="stylesheet" crossorigin href="\./(assets/[^"]+\.css)">', html)
 css = "".join(open(os.path.join(dist, f)).read() for f in css_files)
@@ -35,6 +35,9 @@ for name in os.listdir(os.path.join(dist, "assets")):
                 used_public.add(item)
             if f"{left}./{item}{right}" in js:
                 used_public.add(item)
+    # Rutas armadas en tiempo de ejecución (`/chars/${hoja}` en lib/characters.ts).
+    for top in sorted({i.split("/")[0] for i in public if "/" in i}):
+        js = js.replace(f"`/{top}/", f"`./{top}/")
     # El minificador deja U+FFFD literal; la publicación lo rechaza.
     js = js.replace("�", "\\ufffd")
     open(path, "w", encoding="utf8").write(js)
@@ -54,6 +57,9 @@ files = {f"assets/{n}": os.path.join(dist, "assets", n) for n in os.listdir(os.p
 # Las hojas de personajes se piden con rutas armadas en tiempo de ejecución.
 if demo != "login":
     used_public |= {n for n in public if n.startswith("chars/")}
+# Los casos de la demo solo se bajan con rutas armadas en tiempo de ejecución.
+if demo == "solo":
+    used_public |= {n for n in public if n.startswith("solo-tests/")}
 files.update({n: os.path.join(dist, n) for n in used_public})
 json.dump(files, open(os.path.join(dist, "files.json"), "w"), indent=1)
 print(demo, "página", len(page) // 1024, "KB ·", len(files), "archivos ·", sorted(used_public))

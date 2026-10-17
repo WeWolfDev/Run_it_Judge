@@ -1,0 +1,4 @@
+/* La demo solo usa el código actual de frontend/src: estilos, paletas y animaciones. */
+@import "../../frontend/src/styles.css";
+@source "../../frontend/src";
+@source "./";
