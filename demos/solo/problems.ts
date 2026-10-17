@@ -126,11 +126,11 @@ export const PROBLEMS: Problem[] = [
     id: "A",
     level: "easy",
     source: "281A",
-    name: "Mayúscula inicial",
+    name: "Leo y el tablero",
     seconds: 1,
-    statement: `${limits(1)}El tablero del torneo muestra el nombre de cada equipo, pero algunos se cargaron con la primera letra en minúscula.
+    statement: `${limits(1)}Leo cargó en el tablero del torneo el nombre de cada equipo, pero con el apuro algunos quedaron con la primera letra en minúscula.
 
-Escribe la palabra con su primera letra en mayúscula. Las demás letras quedan exactamente como están.
+Ayuda a Leo: escribe la palabra con su primera letra en mayúscula. Las demás letras quedan exactamente como están.
 
 **Entrada**
 
@@ -154,11 +154,11 @@ La palabra con la primera letra en mayúscula.`,
     id: "B",
     level: "easy",
     source: "617A",
-    name: "Saltos a la meta",
+    name: "Los saltos de Cesar",
     seconds: 1,
-    statement: `${limits(1)}Tu personaje está en el punto $0$ de la pista y la meta está en el punto $x$ ($x > 0$). En cada paso puede avanzar $1$, $2$, $3$, $4$ o $5$ posiciones.
+    statement: `${limits(1)}Cesar está en el punto $0$ de la pista y la meta está en el punto $x$ ($x > 0$). En cada paso puede avanzar $1$, $2$, $3$, $4$ o $5$ posiciones.
 
-¿Cuántos pasos necesita, como mínimo, para llegar justo a la meta?
+¿Cuántos pasos necesita Cesar, como mínimo, para llegar justo a la meta?
 
 **Entrada**
 
@@ -179,11 +179,11 @@ El mínimo número de pasos.`,
     id: "C",
     level: "medium",
     source: "34B",
-    name: "Liquidación de pantallas",
+    name: "Misa en la liquidación",
     seconds: 2,
-    statement: `${limits(2)}Una tienda liquida $n$ pantallas. La pantalla $i$ tiene precio $a_i$, y puede ser negativo: en ese caso el dueño **te paga** $|a_i|$ para que te la lleves.
+    statement: `${limits(2)}Misa encontró una tienda que liquida $n$ pantallas. La pantalla $i$ tiene precio $a_i$, y puede ser negativo: en ese caso el dueño **le paga** $|a_i|$ a Misa para que se la lleve.
 
-Puedes llevarte como mucho $m$ pantallas. ¿Cuánto dinero puedes ganar como máximo?
+Misa puede llevarse como mucho $m$ pantallas. ¿Cuánto dinero puede ganar como máximo?
 
 **Entrada**
 
@@ -208,11 +208,11 @@ Un entero: la mayor ganancia posible.`,
     id: "D",
     level: "medium",
     source: "1373B",
-    name: "Duelo 01",
+    name: "El duelo de Joselo y Dani",
     seconds: 1,
-    statement: `${limits(1)}Alicia y Bruno juegan con una cadena binaria $s$. Por turnos, empezando Alicia, cada uno borra **dos caracteres vecinos distintos** (un \`0\` junto a un \`1\`). Quien no puede mover, pierde.
+    statement: `${limits(1)}Joselo y Dani juegan con una cadena binaria $s$. Por turnos, empezando Joselo, cada uno borra **dos caracteres vecinos distintos** (un \`0\` junto a un \`1\`). Quien no puede mover, pierde.
 
-Si los dos juegan perfecto, ¿gana Alicia?
+Si los dos juegan perfecto, ¿gana Joselo?
 
 **Entrada**
 
@@ -220,7 +220,7 @@ La primera línea tiene $t$ ($1 \\le t \\le 1000$), la cantidad de partidas. Cad
 
 **Salida**
 
-Para cada partida, \`DA\` si gana Alicia o \`NET\` si no.`,
+Para cada partida, \`DA\` si gana Joselo o \`NET\` si no.`,
     samples: ["3\n01\n1111\n0011", "3\n10\n0\n000111"],
     solve: (i) =>
       words(i)
@@ -240,11 +240,11 @@ Para cada partida, \`DA\` si gana Alicia o \`NET\` si no.`,
     id: "E",
     level: "hard",
     source: "58A",
-    name: "Saludo escondido",
+    name: "El saludo de Andy",
     seconds: 1,
-    statement: `${limits(1)}Alguien escribió un mensaje en el chat del torneo. Decimos que saludó si borrando algunas letras (o ninguna) del mensaje se puede leer \`hello\`.
+    statement: `${limits(1)}Andy escribió un mensaje en el chat del torneo. Decimos que saludó si borrando algunas letras (o ninguna) del mensaje se puede leer \`hello\`.
 
-¿Saludó?
+¿Andy saludó?
 
 **Entrada**
 
@@ -269,11 +269,11 @@ Una palabra $s$ de letras inglesas minúsculas ($1 \\le |s| \\le 100$).
     id: "F",
     level: "hard",
     source: "158B",
-    name: "Taxis al estadio",
+    name: "Maricarmen pide taxis",
     seconds: 2,
-    statement: `${limits(2)}Hay $n$ grupos de amigos que van al estadio. El grupo $i$ tiene $s_i$ personas ($1 \\le s_i \\le 4$). Cada taxi lleva como mucho $4$ personas y un grupo no se separa, aunque un taxi sí puede llevar a varios grupos.
+    statement: `${limits(2)}Maricarmen organiza el viaje de $n$ grupos de amigos al estadio. El grupo $i$ tiene $s_i$ personas ($1 \\le s_i \\le 4$). Cada taxi lleva como mucho $4$ personas y un grupo no se separa, aunque un taxi sí puede llevar a varios grupos.
 
-¿Cuántos taxis hacen falta como mínimo?
+¿Cuántos taxis tiene que pedir Maricarmen como mínimo?
 
 **Entrada**
 
@@ -306,11 +306,11 @@ El mínimo número de taxis.`,
     id: "G",
     level: "hard",
     source: "1914C",
-    name: "Misiones del torneo",
+    name: "Las misiones de Rodrigo",
     seconds: 2,
-    statement: `${limits(2)}El torneo tiene $n$ misiones en orden. La primera vez que completas la misión $i$ ganas $a_i$ puntos de experiencia; cada vez que la repites, $b_i$. Solo puedes hacer la misión $i$ si ya completaste al menos una vez todas las anteriores.
+    statement: `${limits(2)}Rodrigo juega un modo con $n$ misiones en orden. La primera vez que completa la misión $i$ gana $a_i$ puntos de experiencia; cada vez que la repite, $b_i$. Solo puede hacer la misión $i$ si ya completó al menos una vez todas las anteriores.
 
-Puedes completar misiones **como mucho $k$ veces en total**, contando las repeticiones. ¿Cuánta experiencia puedes juntar como máximo?
+Rodrigo puede completar misiones **como mucho $k$ veces en total**, contando las repeticiones. ¿Cuánta experiencia puede juntar como máximo?
 
 **Entrada**
 

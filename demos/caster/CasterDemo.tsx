@@ -54,7 +54,7 @@ const DURATION: Record<HitId, number | null> = {
 };
 
 const PROBLEM = {
-  name: "A. Marcador en orden",
+  name: "A. El marcador de Leo",
   hint: "Separa los números por el +, ordénalos y vuelve a unirlos con +.",
   statement: `Límite de tiempo por prueba: **2 segundos**  \nLímite de memoria por prueba: **256 megabytes**
 
@@ -62,7 +62,7 @@ El marcador electrónico del torneo muestra, entre ronda y ronda, una suma de pu
 
 El problema es que el marcador es viejo: solo puede mostrar una suma si sus sumandos están ordenados de menor a mayor (puede haber repetidos). Por ejemplo, puede mostrar $1+1+2$ o $3+3$, pero no $1+3+2+1$.
 
-Te pasan la suma tal como la anotó el organizador. Reordena los sumandos para que el marcador pueda mostrarla. El resultado de la suma no cambia.
+Leo, el organizador, te pasa la suma tal como la anotó. Reordena los sumandos para que el marcador pueda mostrarla. El resultado de la suma no cambia.
 
 **Entrada**
 
