@@ -24,3 +24,8 @@
 .caster-pista .proj > div:nth-child(2) > aside {
   display: none;
 }
+
+/* El editor del visor de código va en solo lectura pero sin atenuar. */
+.caster-code .opacity-60 {
+  opacity: 1;
+}

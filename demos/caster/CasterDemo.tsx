@@ -1,5 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
+import { CodeEditor } from "@/components/CodeEditor";
 import { TallyBars, VoteQr } from "@/components/hits/Grada";
 import { PixelIcon } from "@/components/PixelIcon";
 import { Sprite } from "@/components/Sprite";
@@ -15,6 +22,8 @@ import { formatLeft, hitInfo, type HitId, type HitPoll } from "@/lib/hits";
 import { applyPalette, PALETTES, storedPalette } from "@/lib/palette";
 import { formatClock, verdictLabel } from "@/lib/runit";
 import { cn } from "@/lib/utils";
+
+import { caseResults, codeFor, type SubLanguage } from "./submissionCode";
 
 // Vista del caster: quien narra el torneo en vivo. Ve el enunciado de la ronda
 // con los ejemplos, la pista como la ve el público y la votación de la grada
@@ -118,7 +127,12 @@ type Poll = {
   status: "open" | "closed";
   winner: HitId | null;
 };
-type Active = { id: number; hit: HitId; startsAt: number; endsAt: number | null };
+type Active = {
+  id: number;
+  hit: HitId;
+  startsAt: number;
+  endsAt: number | null;
+};
 /** Un envío, con el veredicto de Judge0 (lo que el caster quiere ver). */
 type Sub = {
   id: number;
@@ -128,6 +142,10 @@ type Sub = {
   verdict: string;
   passed: number;
   penalty: number;
+  language: SubLanguage;
+  code: string;
+  /** Resultado de cada caso: "ok" o su veredicto (submissions.case_results). */
+  cases: string[];
 };
 type Sim = {
   round: TrackRound;
@@ -143,7 +161,8 @@ type Sim = {
   seq: number;
 };
 
-const pick = <T,>(list: T[]) => list[Math.floor(Math.random() * list.length)] as T;
+const pick = <T,>(list: T[]) =>
+  list[Math.floor(Math.random() * list.length)] as T;
 
 function newSim(now: number): Sim {
   // La ronda ya va por el minuto 1:10: la grada puede votar enseguida.
@@ -181,7 +200,12 @@ function newSim(now: number): Sim {
 }
 
 const isOn = (sim: Sim, hit: HitId, now: number) =>
-  sim.active.some((a) => a.hit === hit && a.startsAt <= now && (a.endsAt === null || a.endsAt > now));
+  sim.active.some(
+    (a) =>
+      a.hit === hit &&
+      a.startsAt <= now &&
+      (a.endsAt === null || a.endsAt > now),
+  );
 
 function standings(sim: Sim) {
   return [...sim.runners].sort((a, b) => {
@@ -207,7 +231,8 @@ function board(sim: Sim): Entry[] {
       : null,
     best_pass_percentage: runner.best,
     failed_attempts_count: runner.fails,
-    solved_at: runner.solvedAt === null ? null : new Date(runner.solvedAt).toISOString(),
+    solved_at:
+      runner.solvedAt === null ? null : new Date(runner.solvedAt).toISOString(),
     penalty_seconds: runner.penalty,
   }));
 }
@@ -231,6 +256,17 @@ function failVerdict() {
   return "Wrong Answer";
 }
 
+/** Código y resultado por caso de un envío simulado (submissionCode.ts). */
+function withCode(id: number, verdict: string, passed: number) {
+  return {
+    id,
+    verdict,
+    passed,
+    ...codeFor(verdict, id, passed),
+    cases: caseResults(id, verdict, passed, TESTS),
+  };
+}
+
 /** Los envíos que ya hubo antes de que el caster abriera la vista. */
 function seedSubs(runners: Runner[], startsAt: number, now: number) {
   const subs: Sub[] = [];
@@ -238,13 +274,16 @@ function seedSubs(runners: Runner[], startsAt: number, now: number) {
     for (let i = 0; i < runner.fails; i++) {
       const verdict = failVerdict();
       subs.push({
-        id: -(index * 10 + i + 1),
         at: startsAt + 10_000 + Math.random() * (now - startsAt - 15_000),
         name: runner.name,
         character: runner.character,
-        verdict,
-        passed:
-          verdict === "Compilation Error" ? 0 : Math.round((runner.best / 100) * TESTS),
+        ...withCode(
+          -(index * 10 + i + 1),
+          verdict,
+          verdict === "Compilation Error"
+            ? 0
+            : Math.round((runner.best / 100) * TESTS),
+        ),
         penalty: 30,
       });
     }
@@ -257,9 +296,17 @@ function submit(sim: Sim, now: number) {
   const pending = sim.runners.filter((r) => r.solvedAt === null);
   if (!pending.length || sim.round.closed) return;
   const runner = pick(pending);
-  const base = { id: ++sim.seq, at: now, name: runner.name, character: runner.character };
+  const base = {
+    id: ++sim.seq,
+    at: now,
+    name: runner.name,
+    character: runner.character,
+  };
   const record = (verdict: string, passed: number, penalty: number) => {
-    sim.subs = [{ ...base, verdict, passed, penalty }, ...sim.subs].slice(0, 200);
+    sim.subs = [
+      { ...base, ...withCode(base.id, verdict, passed), penalty },
+      ...sim.subs,
+    ].slice(0, 200);
   };
   const roll = Math.random();
   if (runner.best >= 70 && roll < 0.3) {
@@ -267,23 +314,40 @@ function submit(sim: Sim, now: number) {
     runner.solvedAt = now;
     record("accepted", TESTS, 0);
     const arrival = sim.runners.filter((r) => r.solvedAt !== null).length;
-    sim.events = [{ ...base, kind: "solved" as const, arrival }, ...sim.events].slice(0, 40);
+    sim.events = [
+      { ...base, kind: "solved" as const, arrival },
+      ...sim.events,
+    ].slice(0, 40);
     return;
   }
   // Todo envío que no es Aceptado suma un intento fallido, aunque pase más tests.
-  const penalty = isOn(sim, "amnistia", now) ? 0 : isOn(sim, "penal-doble", now) ? 60 : 30;
+  const penalty = isOn(sim, "amnistia", now)
+    ? 0
+    : isOn(sim, "penal-doble", now)
+      ? 60
+      : 30;
   runner.fails += 1;
   runner.penalty += penalty;
   const verdict = failVerdict();
-  const improves = verdict !== "Compilation Error" && roll < 0.75 && runner.best < 90;
-  if (improves) runner.best = Math.min(90, runner.best + pick([10, 10, 20, 20, 30]));
+  const improves =
+    verdict !== "Compilation Error" && roll < 0.75 && runner.best < 90;
+  if (improves)
+    runner.best = Math.min(90, runner.best + pick([10, 10, 20, 20, 30]));
   const passed =
     verdict === "Compilation Error"
       ? 0
-      : Math.round(((improves ? runner.best : Math.max(0, runner.best - 20)) / 100) * TESTS);
+      : Math.round(
+          ((improves ? runner.best : Math.max(0, runner.best - 20)) / 100) *
+            TESTS,
+        );
   record(verdict, passed, penalty);
   sim.events = [
-    { ...base, kind: improves ? ("progress" as const) : ("fail" as const), passed, total: TESTS },
+    {
+      ...base,
+      kind: improves ? ("progress" as const) : ("fail" as const),
+      passed,
+      total: TESTS,
+    },
     ...sim.events,
   ].slice(0, 40);
 }
@@ -293,16 +357,22 @@ function blockReason(sim: Sim, pairIndex: number, now: number) {
   const pair = PAIRS[pairIndex];
   if (!pair) return "El par no existe";
   if (sim.round.closed) return "La ronda no está en curso";
-  if (sim.polls.some((p) => p.status === "open")) return "Ya hay una votación en curso";
-  if (sim.polls.length >= MAX_POLLS) return `Ya hubo ${MAX_POLLS} votaciones en esta ronda`;
-  if (now - sim.round.startsAt < QUIET_START_MS) return "Sin votaciones en el primer minuto";
+  if (sim.polls.some((p) => p.status === "open"))
+    return "Ya hay una votación en curso";
+  if (sim.polls.length >= MAX_POLLS)
+    return `Ya hubo ${MAX_POLLS} votaciones en esta ronda`;
+  if (now - sim.round.startsAt < QUIET_START_MS)
+    return "Sin votaciones en el primer minuto";
   if (sim.round.endsAt - now < QUIET_END_MS + ANNOUNCE_MS + POLL_MS)
     return "Sin votaciones en los últimos 2 minutos";
-  if (sim.polls.some((p) => p.good === pair.good)) return "Ese par ya se usó en esta ronda";
+  if (sim.polls.some((p) => p.good === pair.good))
+    return "Ese par ya se usó en esta ronda";
   if (pair.weight === 3) {
     const solved = sim.runners.filter((r) => r.solvedAt !== null).length;
-    if (sim.round.capacity <= 2) return "Con cupo 2 o menos no se tocan los cupos";
-    if (sim.round.capacity + 1 >= sim.runners.length) return "Con este cupo pasarían todos";
+    if (sim.round.capacity <= 2)
+      return "Con cupo 2 o menos no se tocan los cupos";
+    if (sim.round.capacity + 1 >= sim.runners.length)
+      return "Con este cupo pasarían todos";
     if (solved >= sim.round.capacity - 1) return "Ya casi se llenó el cupo";
   }
   return null;
@@ -310,8 +380,11 @@ function blockReason(sim: Sim, pairIndex: number, now: number) {
 
 /** Lo que haría el admin desde "Progreso del torneo": anunciar un par permitido. */
 function announce(sim: Sim, now: number) {
-  const allowed = PAIRS.map((_, index) => index).filter((i) => !blockReason(sim, i, now));
-  if (!allowed.length) return blockReason(sim, 0, now) ?? "No hay pares disponibles";
+  const allowed = PAIRS.map((_, index) => index).filter(
+    (i) => !blockReason(sim, i, now),
+  );
+  if (!allowed.length)
+    return blockReason(sim, 0, now) ?? "No hay pares disponibles";
   const index = pick(allowed);
   const pair = PAIRS[index]!;
   sim.polls.push({
@@ -332,8 +405,10 @@ function announce(sim: Sim, now: number) {
 }
 
 function applyHit(sim: Sim, hit: HitId, now: number) {
-  if (hit === "extra") sim.round = { ...sim.round, endsAt: sim.round.endsAt + 60_000 };
-  if (hit === "cupo-mas") sim.round = { ...sim.round, capacity: sim.round.capacity + 1 };
+  if (hit === "extra")
+    sim.round = { ...sim.round, endsAt: sim.round.endsAt + 60_000 };
+  if (hit === "cupo-mas")
+    sim.round = { ...sim.round, capacity: sim.round.capacity + 1 };
   if (hit === "cupo-menos")
     sim.round = { ...sim.round, capacity: Math.max(1, sim.round.capacity - 1) };
   const duration = DURATION[hit];
@@ -355,7 +430,12 @@ function step(sim: Sim, now: number) {
   }
   if (sim.autoPollAt !== null && now >= sim.autoPollAt) announce(sim, now);
   const poll = sim.polls.find((p) => p.status === "open");
-  if (poll && now >= poll.opensAt && now < poll.closesAt && now >= sim.nextTallyAt) {
+  if (
+    poll &&
+    now >= poll.opensAt &&
+    now < poll.closesAt &&
+    now >= sim.nextTallyAt
+  ) {
     // La grada vota de a poco: más al principio y al final.
     const burst = Math.random() < 0.3 ? 4 : 1;
     for (let i = 0; i < burst; i++) {
@@ -367,7 +447,12 @@ function step(sim: Sim, now: number) {
   if (poll && now >= poll.closesAt) {
     poll.status = "closed";
     const { good, bad } = poll.tally;
-    poll.winner = good === bad ? pick([poll.good, poll.bad]) : good > bad ? poll.good : poll.bad;
+    poll.winner =
+      good === bad
+        ? pick([poll.good, poll.bad])
+        : good > bad
+          ? poll.good
+          : poll.bad;
     applyHit(sim, poll.winner, now);
   }
   const solved = sim.runners.filter((r) => r.solvedAt !== null).length;
@@ -385,6 +470,7 @@ export function CasterDemo() {
   const sim = useRef<Sim | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [notice, setNotice] = useState("");
+  const [viewing, setViewing] = useState<Sub | null>(null);
   sim.current ??= newSim(now);
 
   useEffect(() => {
@@ -453,7 +539,8 @@ export function CasterDemo() {
             </p>
             {clockHidden && !s.round.closed && (
               <p className="mt-1 text-xs text-danger">
-                Reloj oculto al público · {formatLeft(activeLeft(s, "reloj-oculto", now))}
+                Reloj oculto al público ·{" "}
+                {formatLeft(activeLeft(s, "reloj-oculto", now))}
               </p>
             )}
           </div>
@@ -463,11 +550,13 @@ export function CasterDemo() {
           <div className="flex min-w-0 flex-col gap-5">
             <section className="flex max-h-[38rem] flex-col rounded-xl border border-border bg-card p-5">
               <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                <PixelIcon name="flag" className="h-4 w-4 text-primary" /> Enunciado
+                <PixelIcon name="flag" className="h-4 w-4 text-primary" />{" "}
+                Enunciado
               </h2>
               {hint && (
                 <p className="mt-3 rounded-lg border border-success/40 bg-success-soft px-3 py-2 text-sm text-success">
-                  <b>Pista del organizador</b> (la ven los participantes): {hint}
+                  <b>Pista del organizador</b> (la ven los participantes):{" "}
+                  {hint}
                 </p>
               )}
               <div className="mt-2 min-h-0 flex-1 overflow-y-auto pr-1">
@@ -478,7 +567,8 @@ export function CasterDemo() {
             <section className="rounded-xl border border-border bg-card p-5">
               <div className="flex items-center justify-between gap-2">
                 <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                  <PixelIcon name="check" className="h-4 w-4 text-primary" /> Casos de prueba
+                  <PixelIcon name="check" className="h-4 w-4 text-primary" />{" "}
+                  Casos de prueba
                 </h2>
                 <span className="rounded-md bg-muted px-2.5 py-1 text-xs font-medium text-foreground">
                   Ejemplos ({PROBLEM.samples.length})
@@ -486,8 +576,13 @@ export function CasterDemo() {
               </div>
               <div className="mt-3 space-y-3 text-xs">
                 {PROBLEM.samples.map((sample, index) => (
-                  <div key={index} className="rounded-lg border border-border p-3">
-                    <p className="font-medium text-foreground">Ejemplo {index + 1}</p>
+                  <div
+                    key={index}
+                    className="rounded-lg border border-border p-3"
+                  >
+                    <p className="font-medium text-foreground">
+                      Ejemplo {index + 1}
+                    </p>
                     <div className="mt-2 grid gap-2 sm:grid-cols-2">
                       <Sample label="Entrada" text={sample.input} />
                       <Sample label="Salida esperada" text={sample.output} />
@@ -504,7 +599,9 @@ export function CasterDemo() {
             <section className="rounded-xl border border-border bg-card p-3">
               <h2 className="flex items-center gap-2 px-2 pb-2 text-sm font-semibold text-foreground">
                 <PixelIcon name="play" className="h-4 w-4 text-primary" /> Pista
-                <span className="font-normal text-muted-foreground">· la carrera en vivo</span>
+                <span className="font-normal text-muted-foreground">
+                  · la carrera en vivo
+                </span>
                 {isOn(s, "apagon", now) && (
                   <span className="ml-auto rounded-md bg-danger-soft px-2 py-0.5 text-xs text-danger">
                     Apagón en las pantallas del público ·{" "}
@@ -529,9 +626,9 @@ export function CasterDemo() {
                 subs={s.subs}
                 startsAt={s.round.startsAt}
                 fog={fogOn ? formatLeft(activeLeft(s, "niebla", now)) : null}
+                onView={setViewing}
               />
             </section>
-
           </div>
         </div>
       </main>
@@ -547,18 +644,39 @@ export function CasterDemo() {
             s.nextSubmitAt = Date.now();
           })
         }
+        onClose={() =>
+          act(() => {
+            s.round = { ...s.round, closed: true };
+          })
+        }
         onReset={() =>
           act(() => {
             sim.current = newSim(Date.now());
+            setViewing(null);
           })
         }
       />
+      {viewing && (
+        <CodeViewer
+          sub={viewing}
+          attempt={
+            s.subs.filter(
+              (sub) => sub.name === viewing.name && sub.at <= viewing.at,
+            ).length
+          }
+          startsAt={s.round.startsAt}
+          closed={s.round.closed}
+          onClose={() => setViewing(null)}
+        />
+      )}
     </div>
   );
 }
 
 function activeLeft(sim: Sim, hit: HitId, now: number) {
-  const entry = sim.active.find((a) => a.hit === hit && a.endsAt !== null && a.endsAt > now);
+  const entry = sim.active.find(
+    (a) => a.hit === hit && a.endsAt !== null && a.endsAt > now,
+  );
   return entry?.endsAt ? entry.endsAt - now : 0;
 }
 
@@ -624,7 +742,8 @@ function Scaled({ children }: { children: ReactNode }) {
 function verdictStyle(verdict: string) {
   if (verdict === "accepted") return { code: "AC", color: "var(--success)" };
   if (verdict === "Wrong Answer") return { code: "WA", color: "var(--danger)" };
-  if (verdict === "Time Limit Exceeded") return { code: "TLE", color: "var(--gold)" };
+  if (verdict === "Time Limit Exceeded")
+    return { code: "TLE", color: "var(--gold)" };
   if (verdict === "Compilation Error") return { code: "CE", color: "#a78bfa" };
   return { code: "RE", color: "#fb923c" };
 }
@@ -639,10 +758,12 @@ function Submissions({
   subs,
   startsAt,
   fog,
+  onView,
 }: {
   subs: Sub[];
   startsAt: number;
   fog: string | null;
+  onView: (sub: Sub) => void;
 }) {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("Todos");
   const counts = new Map<string, number>();
@@ -662,9 +783,16 @@ function Submissions({
             · {subs.length} en la ronda
           </span>
         </h3>
-        <div role="tablist" aria-label="Filtrar envíos" className="flex flex-wrap gap-1.5">
+        <div
+          role="tablist"
+          aria-label="Filtrar envíos"
+          className="flex flex-wrap gap-1.5"
+        >
           {FILTERS.map((key) => {
-            const color = key === "Todos" ? "var(--primary)" : verdictStyle(codeVerdict(key)).color;
+            const color =
+              key === "Todos"
+                ? "var(--primary)"
+                : verdictStyle(codeVerdict(key)).color;
             const active = filter === key;
             return (
               <button
@@ -681,7 +809,11 @@ function Submissions({
                 }}
               >
                 {key}
-                {key !== "Todos" && <span className="ml-1.5 opacity-80">{counts.get(key) ?? 0}</span>}
+                {key !== "Todos" && (
+                  <span className="ml-1.5 opacity-80">
+                    {counts.get(key) ?? 0}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -696,14 +828,18 @@ function Submissions({
               <th className="py-2 pr-3 font-medium">Participante</th>
               <th className="py-2 pr-3 font-medium">Veredicto</th>
               <th className="py-2 pr-3 font-medium">Tests</th>
-              <th className="py-2 text-right font-medium">Penalización</th>
+              <th className="py-2 pr-3 text-right font-medium">Penalización</th>
+              <th className="py-2 text-right font-medium">Código</th>
             </tr>
           </thead>
           <tbody>
             {shown.map((sub) => {
               const style = verdictStyle(sub.verdict);
               return (
-                <tr key={sub.id} className="animate-run-it-rise border-t border-border">
+                <tr
+                  key={sub.id}
+                  className="animate-run-it-rise border-t border-border"
+                >
                   <td className="py-2 pr-3 font-mono text-muted-foreground">
                     {formatClock(Math.max(0, sub.at - startsAt))}
                   </td>
@@ -721,7 +857,9 @@ function Submissions({
                       >
                         {style.code}
                       </span>
-                      <span style={{ color: style.color }}>{verdictLabel(sub.verdict)}</span>
+                      <span style={{ color: style.color }}>
+                        {verdictLabel(sub.verdict)}
+                      </span>
                     </span>
                   </td>
                   <td className="py-2 pr-3">
@@ -738,8 +876,17 @@ function Submissions({
                       {sub.passed}/{TESTS}
                     </span>
                   </td>
-                  <td className="py-2 text-right font-mono text-muted-foreground">
+                  <td className="py-2 pr-3 text-right font-mono text-muted-foreground">
                     {sub.verdict === "accepted" ? "—" : `+${sub.penalty} s`}
+                  </td>
+                  <td className="py-2 text-right">
+                    <button
+                      type="button"
+                      onClick={() => onView(sub)}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
+                    >
+                      <PixelIcon name="code" className="h-3.5 w-3.5" /> Ver
+                    </button>
                   </td>
                 </tr>
               );
@@ -791,12 +938,212 @@ function MiniSprite({ index }: { index: number }) {
   );
 }
 
+const LANGUAGE_NAME: Record<SubLanguage, string> = {
+  python: "Python 3",
+  c: "C",
+  cpp: "C++",
+};
+
+/**
+ * Código de un envío para el caster: el editor en solo lectura y el resultado de
+ * cada caso. Mientras la ronda sigue es privado (no va a la transmisión) y el de
+ * un envío Aceptado no se muestra: sería la solución para los que siguen.
+ */
+function CodeViewer({
+  sub,
+  attempt,
+  startsAt,
+  closed,
+  onClose,
+}: {
+  sub: Sub;
+  attempt: number;
+  startsAt: number;
+  closed: boolean;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  const style = verdictStyle(sub.verdict);
+  const locked = sub.verdict === "accepted" && !closed;
+  const firstFail = sub.cases.findIndex((result) => result !== "ok");
+  return (
+    <div
+      className="fixed inset-0 z-[80] grid place-items-center bg-background/80 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Código de ${sub.name}`}
+        className="max-h-[92dvh] w-full max-w-6xl overflow-y-auto rounded-xl border border-border bg-card text-foreground shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-5 py-4">
+          <MiniSprite index={sub.character} />
+          <div className="min-w-0">
+            <p className="text-lg font-semibold">{sub.name}</p>
+            <p className="text-xs text-muted-foreground">
+              Envío {attempt} · minuto{" "}
+              {formatClock(Math.max(0, sub.at - startsAt))} ·{" "}
+              {LANGUAGE_NAME[sub.language]}
+            </p>
+          </div>
+          <span className="flex items-center gap-2">
+            <span
+              className="rounded px-2 py-0.5 font-mono text-sm font-bold text-background"
+              style={{ background: style.color }}
+            >
+              {style.code}
+            </span>
+            <span style={{ color: style.color }}>
+              {verdictLabel(sub.verdict)}
+            </span>
+          </span>
+          <span className="font-mono text-sm">
+            {sub.passed}/{TESTS} tests
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Cerrar"
+            className="ml-auto rounded-md border border-border p-1.5 text-muted-foreground hover:text-foreground"
+          >
+            <PixelIcon name="close" className="h-4 w-4" />
+          </button>
+        </div>
+
+        <p
+          className={cn(
+            "flex items-center gap-2 px-5 py-2.5 text-sm",
+            closed
+              ? "bg-success-soft text-success"
+              : "bg-danger-soft text-danger",
+          )}
+        >
+          <PixelIcon
+            name={closed ? "check" : "skull"}
+            className="h-4 w-4 shrink-0"
+          />
+          {closed
+            ? "Ronda cerrada: ya puedes mostrar este código en la transmisión."
+            : "Ronda en curso: este código es solo para tu pantalla. No lo muestres en la transmisión ni en el proyector."}
+        </p>
+
+        <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,3fr)_minmax(16rem,2fr)]">
+          <div className="caster-code overflow-hidden rounded-lg border border-editor-border bg-editor">
+            <div className="flex items-center gap-2 border-b border-editor-border px-3 py-1.5">
+              <span
+                aria-hidden="true"
+                className="h-2 w-2 rounded-full bg-primary"
+              />
+              <span className="font-mono text-xs text-editor-foreground">
+                solution.{sub.language === "python" ? "py" : sub.language}
+              </span>
+              <span className="ml-auto text-xs text-editor-muted">
+                Solo lectura
+              </span>
+            </div>
+            {locked ? (
+              <div className="grid h-96 place-items-center px-6 text-center">
+                <div>
+                  <PixelIcon
+                    name="trophy"
+                    className="mx-auto h-8 w-8 text-success"
+                  />
+                  <p className="mt-3 text-sm text-editor-foreground">
+                    Es una solución aceptada: se revela cuando cierre la ronda.
+                  </p>
+                  <p className="mt-1 text-xs text-editor-muted">
+                    Así nadie la ve antes de terminar, ni siquiera de rebote en
+                    la transmisión.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <CodeEditor
+                key={sub.id}
+                value={sub.code}
+                onChange={() => undefined}
+                language={sub.language}
+                readOnly
+              />
+            )}
+          </div>
+
+          <div>
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <PixelIcon name="check" className="h-4 w-4 text-primary" /> Casos
+            </h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {sub.verdict === "Compilation Error"
+                ? "No compiló: no corrió ningún caso."
+                : firstFail === -1
+                  ? "Pasó los 30 casos."
+                  : `Pasó ${sub.passed} de ${TESTS}. El primer caso que falla es el ${firstFail + 1}.`}
+            </p>
+            <div className="mt-3 grid grid-cols-6 gap-1.5">
+              {sub.cases.map((result, index) => {
+                const ok = result === "ok";
+                return (
+                  <span
+                    key={index}
+                    title={`Caso ${index + 1}: ${ok ? "correcto" : verdictLabel(result)}`}
+                    className={cn(
+                      "grid h-9 place-items-center rounded-md font-mono text-xs font-semibold",
+                      ok ? "bg-success-soft text-success" : "text-background",
+                      index === firstFail && "ring-2 ring-foreground",
+                    )}
+                    style={
+                      ok
+                        ? undefined
+                        : { background: verdictStyle(result).color }
+                    }
+                  >
+                    {index + 1}
+                  </span>
+                );
+              })}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-3 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <span className="h-3 w-3 rounded-sm bg-success-soft ring-1 ring-success" />{" "}
+                Correcto
+              </span>
+              {firstFail !== -1 && (
+                <span className="flex items-center gap-1.5">
+                  <span
+                    className="h-3 w-3 rounded-sm"
+                    style={{ background: style.color }}
+                  />{" "}
+                  {verdictLabel(sub.verdict)}
+                </span>
+              )}
+            </div>
+            <p className="mt-4 rounded-lg border border-border p-3 text-xs text-muted-foreground">
+              Los casos van de los chicos a los más grandes: si falla desde la
+              mitad, suele ser un borde o el tamaño de la entrada. Ningún caso
+              muestra su entrada, igual que para los participantes.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Un veredicto de ejemplo para cada código, para tomar su color. */
 function codeVerdict(code: string) {
   return (
-    { AC: "accepted", WA: "Wrong Answer", TLE: "Time Limit Exceeded", CE: "Compilation Error" }[
-      code
-    ] ?? "Runtime Error (Other)"
+    {
+      AC: "accepted",
+      WA: "Wrong Answer",
+      TLE: "Time Limit Exceeded",
+      CE: "Compilation Error",
+    }[code] ?? "Runtime Error (Other)"
   );
 }
 
@@ -818,7 +1165,9 @@ function VotePanel({ sim, now }: { sim: Sim; now: number }) {
     <section
       className={cn(
         "rounded-xl border bg-card p-5",
-        phase === "announced" || phase === "open" ? "border-accent" : "border-border",
+        phase === "announced" || phase === "open"
+          ? "border-accent"
+          : "border-border",
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -834,11 +1183,16 @@ function VotePanel({ sim, now }: { sim: Sim; now: number }) {
         <div className="mt-4 grid items-center gap-5 sm:grid-cols-[auto_minmax(0,1fr)]">
           <div className="mx-auto">
             <VoteQr size={180} />
-            <p className="mt-2 text-center text-xs text-muted-foreground">QR para votar</p>
+            <p className="mt-2 text-center text-xs text-muted-foreground">
+              QR para votar
+            </p>
           </div>
           <div className="min-w-0">
             <p
-              className={cn("text-sm text-accent", phase === "announced" && "animate-run-it-blink")}
+              className={cn(
+                "text-sm text-accent",
+                phase === "announced" && "animate-run-it-blink",
+              )}
               style={PIXEL}
             >
               {phase === "announced" ? "Votación próxima" : "¡Vota el hit!"}
@@ -849,7 +1203,11 @@ function VotePanel({ sim, now }: { sim: Sim; now: number }) {
                 : "La grada está votando. Cierra en"}
             </p>
             <p className="mt-1 text-4xl tabular-nums text-accent" style={PIXEL}>
-              {formatLeft(phase === "announced" ? poll.opensAt - now : poll.closesAt - now)}
+              {formatLeft(
+                phase === "announced"
+                  ? poll.opensAt - now
+                  : poll.closesAt - now,
+              )}
             </p>
             {phase === "open" && (
               <>
@@ -901,8 +1259,8 @@ function VotePanel({ sim, now }: { sim: Sim; now: number }) {
           <div className="text-sm text-muted-foreground">
             <p className="font-medium text-foreground">Sin votación en curso</p>
             <p className="mt-1">
-              Cuando el organizador anuncie una votación aparecen acá el QR, la cuenta regresiva y
-              el recuento en vivo.
+              Cuando el organizador anuncie una votación aparecen acá el QR, la
+              cuenta regresiva y el recuento en vivo.
             </p>
           </div>
         </div>
@@ -918,15 +1276,21 @@ function VotePanel({ sim, now }: { sim: Sim; now: number }) {
               key={hit.id}
               className={cn(
                 "mt-2 flex justify-between gap-3 text-sm",
-                hitInfo(hit.hit).kind === "malo" ? "text-danger" : "text-success",
+                hitInfo(hit.hit).kind === "malo"
+                  ? "text-danger"
+                  : "text-success",
               )}
             >
               <span>
                 <b>{hitInfo(hit.hit).name}</b>{" "}
-                <span className="text-muted-foreground">· {hitInfo(hit.hit).scope}</span>
+                <span className="text-muted-foreground">
+                  · {hitInfo(hit.hit).scope}
+                </span>
               </span>
               <span className="tabular-nums">
-                {hit.endsAt === null ? "hasta el cierre" : formatLeft(hit.endsAt - now)}
+                {hit.endsAt === null
+                  ? "hasta el cierre"
+                  : formatLeft(hit.endsAt - now)}
               </span>
             </p>
           ))}
@@ -945,7 +1309,12 @@ function HitCard({ id }: { id: HitId }) {
         hit.kind === "bueno" ? "border-success/40" : "border-danger/40",
       )}
     >
-      <p className={cn("font-semibold", hit.kind === "bueno" ? "text-success" : "text-danger")}>
+      <p
+        className={cn(
+          "font-semibold",
+          hit.kind === "bueno" ? "text-success" : "text-danger",
+        )}
+      >
         {hit.name} <span className="text-xs font-normal">· {hit.kind}</span>
       </p>
       <p className="mt-1 text-xs text-muted-foreground">{hit.text}</p>
@@ -981,7 +1350,10 @@ function TopBar() {
           <PixelIcon name="star" className="h-4 w-4 text-primary" /> Caster
         </span>
         <span className="flex items-center gap-2 text-xs text-danger">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-danger" aria-hidden="true" />
+          <span
+            className="h-2 w-2 animate-pulse rounded-full bg-danger"
+            aria-hidden="true"
+          />
           En vivo
         </span>
         <div className="ml-auto flex items-center gap-4 text-sm">
@@ -1018,6 +1390,7 @@ function SimControls({
   onAnnounce,
   onSubmit,
   onSpeed,
+  onClose,
   onReset,
 }: {
   sim: Sim;
@@ -1025,13 +1398,19 @@ function SimControls({
   onAnnounce: () => void;
   onSubmit: () => void;
   onSpeed: () => void;
+  onClose: () => void;
   onReset: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const button =
     "rounded-md border border-border px-2.5 py-1.5 text-xs text-foreground hover:bg-muted disabled:opacity-50";
   return (
-    <div className={cn("fixed bottom-4 left-4 z-[70] rounded-xl border border-border bg-card/95 p-3 text-foreground shadow-lg backdrop-blur", open ? "w-72" : "w-56")}>
+    <div
+      className={cn(
+        "fixed bottom-4 left-4 z-[70] rounded-xl border border-border bg-card/95 p-3 text-foreground shadow-lg backdrop-blur",
+        open ? "w-72" : "w-56",
+      )}
+    >
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -1043,7 +1422,8 @@ function SimControls({
       {open && (
         <>
           <p className="mt-2 text-xs text-muted-foreground">
-            Solo para la demo: en el torneo el admin anuncia la votación y los envíos son reales.
+            Solo para la demo: en el torneo el admin anuncia la votación, cierra
+            la ronda y los envíos son reales.
           </p>
           <div className="mt-3 grid grid-cols-2 gap-2">
             <button type="button" onClick={onAnnounce} className={button}>
@@ -1059,6 +1439,14 @@ function SimControls({
             </button>
             <button type="button" onClick={onSpeed} className={button}>
               Velocidad ×{sim.speed === 1 ? 4 : 1}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={sim.round.closed}
+              className={button}
+            >
+              Cerrar ronda
             </button>
             <button type="button" onClick={onReset} className={button}>
               Reiniciar ronda
