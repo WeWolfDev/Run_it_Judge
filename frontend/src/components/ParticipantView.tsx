@@ -451,6 +451,11 @@ export function ParticipantView() {
               name: names.get(entry.participant_id) ?? entry.name,
             })),
           );
+          // Si clasificó, pasa automáticamente a la sala de espera de la
+          // siguiente ronda en vez de esperar a que pulse "continuar". Quien
+          // fue eliminado se queda en su pantalla de despedida; no hay siguiente
+          // ronda a la que enviar.
+          if (mine.final_status === "advanced") reload();
         })
         .catch(() => undefined);
     });

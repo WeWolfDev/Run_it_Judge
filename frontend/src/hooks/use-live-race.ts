@@ -132,6 +132,15 @@ export function useLiveRace() {
       setRound((current) => (current ? { ...current, closed: true } : current));
       refresh();
     });
+    // El admin pasó a la siguiente ronda: se crea la ronda siguiente (pendiente).
+    // Refrescar para que pista y público se enteren y dejen de mostrar la ronda
+    // anterior como si siguiera en juego.
+    feed?.on("round:created", (event) => {
+      if (event.round_id && event.round_id !== roundId) {
+        setEvents([]);
+        setReloadKey((key) => key + 1);
+      }
+    });
     return () => {
       cancelled = true;
       clearTimeout(timer);
