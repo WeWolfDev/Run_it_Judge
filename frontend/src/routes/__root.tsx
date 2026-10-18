@@ -11,7 +11,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
-import { clearSession, getSession, homeFor, type Session } from "../lib/session";
+import { clearSession, getSession, homeFor, onSessionChange, type Session } from "../lib/session";
 import { logout } from "../lib/api";
 import { PixelIcon } from "../components/PixelIcon";
 import { applyPalette, PALETTE_BOOT_SCRIPT, PALETTES, storedPalette } from "../lib/palette";
@@ -197,8 +197,10 @@ function RoleNavigation() {
   const navigate = useRouter();
   const [session, setSession] = useState<Session | null>(null);
 
+  // Se relee con cada login o salida, sin esperar a recargar la página.
   useEffect(() => {
     setSession(getSession());
+    return onSessionChange(() => setSession(getSession()));
   }, []);
 
   if (!session) return null;

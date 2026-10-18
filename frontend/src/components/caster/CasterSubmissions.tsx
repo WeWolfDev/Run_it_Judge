@@ -61,6 +61,7 @@ function useRoundSubmissions(roundId: string | null) {
     load();
     const poll = setInterval(load, 4000);
     const feed = createSocketFeed("");
+    feed?.on("feed:connected", soon);
     feed?.on("participant:progress", soon);
     feed?.on("round:closed", soon);
     return () => {

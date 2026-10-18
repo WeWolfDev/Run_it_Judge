@@ -43,10 +43,16 @@ function useOverview() {
         });
     load();
     const poll = setInterval(load, 5000);
+    // Todo lo que cambia la ronda o su problema, y cada (re)conexión o vuelta a
+    // la pestaña: la vista se actualiza sola, sin recargar.
     const feed = createSocketFeed("");
+    feed?.on("feed:connected", load);
     feed?.on("round:started", load);
     feed?.on("round:closed", load);
     feed?.on("round:updated", load);
+    feed?.on("round:created", load);
+    feed?.on("rounds:planned", load);
+    feed?.on("problem:updated", load);
     return () => {
       cancelled = true;
       clearInterval(poll);

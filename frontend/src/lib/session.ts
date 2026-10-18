@@ -40,12 +40,33 @@ export function getSession(): Session | null {
   }
 }
 
+const SESSION_EVENT = "run-it-session";
+
 export function setSession(session: Session) {
   window.localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  window.dispatchEvent(new Event(SESSION_EVENT));
 }
 
 export function clearSession() {
   window.localStorage.removeItem(SESSION_KEY);
+  window.dispatchEvent(new Event(SESSION_EVENT));
+}
+
+/**
+ * Avisa cuando la sesión cambia: login o salida en esta pestaña, o en otra
+ * pestaña del mismo navegador (evento storage). Así la barra de navegación se
+ * actualiza sin recargar la página.
+ */
+export function onSessionChange(listener: () => void) {
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === null || event.key === SESSION_KEY) listener();
+  };
+  window.addEventListener(SESSION_EVENT, listener);
+  window.addEventListener("storage", onStorage);
+  return () => {
+    window.removeEventListener(SESSION_EVENT, listener);
+    window.removeEventListener("storage", onStorage);
+  };
 }
 
 export function getSessionToken() {
