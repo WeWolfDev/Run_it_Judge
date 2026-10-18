@@ -21,7 +21,6 @@ import {
   PROBLEMS,
   TEMPLATES,
   TESTS,
-  withSolution,
   type Language,
   type Level,
   type Problem,
@@ -501,12 +500,6 @@ function Play({
     setMessage(`Resultado: ${passed}/${TESTS} casos.${detail ? ` ${detail}` : ""}`);
   };
 
-  const loadSolution = () => {
-    const text = withSolution(language, problem);
-    setCode(text);
-    setEditorKey((k) => k + 1);
-  };
-
   const changeLanguage = (next: Language) => {
     setLanguage(next);
     setRunRows(null);
@@ -601,15 +594,6 @@ function Play({
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-editor-border px-4 py-3">
             <p className="text-xs text-editor-muted">
               Probar no cuenta como envío · Ctrl/Cmd + Enter
-              <br />
-              <button
-                type="button"
-                onClick={loadSolution}
-                disabled={solved}
-                className="underline hover:text-editor-foreground"
-              >
-                Cargar solución de ejemplo
-              </button>
             </p>
             <div className="flex gap-3">
               <button
@@ -832,9 +816,9 @@ function Play({
         </section>
       </div>
       <p className="text-xs text-muted-foreground">
-        Demo: tu código corre de verdad en tu navegador, contra los mismos {TESTS} casos del torneo.
-        Python usa Pyodide y C/C++ se compilan con Clang (la primera vez se descargan, después
-        quedan guardados).
+        Tu código corre de verdad en tu navegador, contra {TESTS} casos de prueba. Python usa
+        Pyodide y C/C++ se compilan con Clang (la primera vez se descargan, después quedan
+        guardados).
       </p>
     </div>
   );
