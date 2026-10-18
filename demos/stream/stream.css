@@ -505,15 +505,18 @@
   border-radius: 2vmin;
   animation: bc-slam-left 650ms cubic-bezier(0.2, 0.9, 0.25, 1.2) both;
 }
+/* Paneles oscuros: los logos oficiales van sobre negro, como en cada sitio. */
 .bc-plat-kick {
-  background: var(--sp-kick);
-  color: #07140a;
-  box-shadow: 0 0 6vmin color-mix(in oklch, var(--sp-kick) 50%, transparent);
+  background: #0b0e0f;
+  color: var(--sp-kick);
+  border: 0.4vmin solid var(--sp-kick);
+  box-shadow: 0 0 6vmin color-mix(in oklch, var(--sp-kick) 45%, transparent);
 }
 .bc-plat-yt {
-  background: var(--sp-youtube);
+  background: #0f0f0f;
   color: #fff;
-  box-shadow: 0 0 6vmin color-mix(in oklch, var(--sp-youtube) 50%, transparent);
+  border: 0.4vmin solid var(--sp-youtube);
+  box-shadow: 0 0 6vmin color-mix(in oklch, var(--sp-youtube) 45%, transparent);
   animation-name: bc-slam-right;
   animation-delay: 350ms;
 }
@@ -527,6 +530,11 @@
 .bc-plat-name {
   font-family: "Press Start 2P", ui-monospace, monospace;
   font-size: 6vmin;
+}
+.bc-plat img {
+  display: block;
+  width: 30vmin;
+  height: auto;
 }
 .bc-plat-live {
   font-size: 1.8vmin;
@@ -1003,13 +1011,33 @@
   animation: bc-fade-up 500ms 1s both;
 }
 .bc-chip {
-  padding: 1.4vmin 2.6vmin;
-  border-radius: 999px;
-  font-family: "Press Start 2P", ui-monospace, monospace;
-  font-size: 2.4vmin;
+  display: grid;
+  place-items: center;
+  padding: 1.8vmin 3vmin;
+  border: 2px solid rgb(255 255 255 / 0.15);
+  border-radius: 1.6vmin;
+  background: #0b0b0e;
 }
-.bc-chip-kick { background: var(--sp-kick); color: #07140a; }
-.bc-chip-yt { background: var(--sp-youtube); color: #fff; }
+.bc-chip img {
+  display: block;
+  height: 4.4vmin;
+  width: auto;
+}
+.bc-soon-when {
+  display: grid;
+  justify-items: center;
+  gap: 2vmin;
+  animation: bc-fade-up 500ms 700ms both;
+}
+.bc-soon-when span {
+  font-size: 3vmin;
+}
+.bc-soon-when b {
+  font-weight: 400;
+  font-size: 8vmin;
+  color: #ffd34d;
+  text-shadow: 0.6vmin 0.6vmin 0 #000;
+}
 .bc-soon-date {
   font-size: 2.6vmin;
   color: var(--sp-dim);
@@ -1041,9 +1069,13 @@
     padding: calc(16vw + env(safe-area-inset-top, 0px)) 8vw calc(12vw + env(safe-area-inset-bottom, 0px));
   }
   .bc-plat { padding: 7vw 5vw; border-radius: 4vw; gap: 3vw; align-self: stretch; align-content: center; }
-  .bc-plat-play { border-top-width: 5vw; border-bottom-width: 5vw; border-left-width: 8vw; }
-  .bc-plat-name { font-size: 10vw; }
-  .bc-plat-live { font-size: 3vw; }
+  .bc-plat img { width: 50vw; }
+  .bc-plat img {
+  display: block;
+  width: 30vmin;
+  height: auto;
+}
+.bc-plat-live { font-size: 3vw; }
   .bc-plat-and { justify-self: center; font-size: 8vw; }
   .bc-plat-caption { font-size: 3.6vw; line-height: 1.5; }
 
@@ -1119,7 +1151,10 @@
   .bc-soon { gap: 5vw; }
   .bc-soon-title { font-size: 12vw; }
   .bc-soon-sub { font-size: 4.6vw; }
-  .bc-chip { font-size: 3.8vw; padding: 2.4vw 4vw; }
+  .bc-chip { padding: 3vw 4vw; border-radius: 3vw; }
+  .bc-chip img { height: 6.4vw; }
+  .bc-soon-when span { font-size: 4.4vw; }
+  .bc-soon-when b { font-size: 14vw; }
   .bc-soon-date { font-size: 4vw; padding-inline: 8vw; line-height: 1.5; }
 }
 

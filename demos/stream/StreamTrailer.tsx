@@ -43,8 +43,19 @@ const score = new Score({
   ],
 });
 
-const TICKER =
-  "Run It en vivo · Kick y YouTube · Torneo de programación competitiva · Vota desde tu celular · Hits buenos y malos · Fecha y hora por confirmar · ";
+/** Cuándo empieza la transmisión. */
+const DATE = "Miércoles 28 de octubre";
+const TIME = "11:15";
+
+const TICKER = `Run It en vivo · ${DATE} · ${TIME} · Kick y YouTube · Torneo de programación competitiva · Vota desde tu celular · Hits buenos y malos · `;
+
+/** Logos oficiales (static.kick.com y gstatic.com/youtube), en PNG transparente. */
+function KickLogo({ className }: { className?: string }) {
+  return <img src="/stream/kick.png" alt="Kick" className={cn("bc-logo-kick", className)} />;
+}
+function YouTubeLogo({ className }: { className?: string }) {
+  return <img src="/stream/youtube.png" alt="YouTube" className={cn("bc-logo-yt", className)} />;
+}
 
 /** Milisegundos desde que se montó la escena. */
 function useElapsed(stepMs = 80) {
@@ -248,8 +259,7 @@ export function PlatformsScene() {
   return (
     <div className="bc-scene bc-platforms">
       <div className="bc-plat bc-plat-kick">
-        <span className="bc-plat-play" aria-hidden="true" />
-        <p className="bc-plat-name">Kick</p>
+        <KickLogo />
         <p className="bc-plat-live" style={PIXEL}>
           ● En vivo
         </p>
@@ -258,14 +268,13 @@ export function PlatformsScene() {
         +
       </p>
       <div className="bc-plat bc-plat-yt">
-        <span className="bc-plat-play" aria-hidden="true" />
-        <p className="bc-plat-name">YouTube</p>
+        <YouTubeLogo />
         <p className="bc-plat-live" style={PIXEL}>
           ● En vivo
         </p>
       </div>
       <p className="bc-plat-caption" style={PIXEL}>
-        El torneo completo, en los dos canales
+        {DATE} · {TIME}
       </p>
       <Chrome ticker={false} />
     </div>
@@ -614,11 +623,19 @@ export function SoonScene() {
       <p className="bc-soon-sub" style={PIXEL}>
         Run It en vivo
       </p>
+      <p className="bc-soon-when" style={PIXEL}>
+        <span>{DATE}</span>
+        <b>{TIME}</b>
+      </p>
       <div className="bc-soon-chips">
-        <span className="bc-chip bc-chip-kick">Kick</span>
-        <span className="bc-chip bc-chip-yt">YouTube</span>
+        <span className="bc-chip">
+          <KickLogo />
+        </span>
+        <span className="bc-chip">
+          <YouTubeLogo />
+        </span>
       </div>
-      <p className="bc-soon-date">Fecha, hora y enlaces: por confirmar</p>
+      <p className="bc-soon-date">El torneo completo, en vivo en los dos canales</p>
       <Chrome />
     </div>
   );
