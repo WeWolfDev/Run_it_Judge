@@ -1,7 +1,7 @@
 // Vista del caster: cliente de las rutas /caster/* y /casters del backend
 // (run-it-backend/caster.js). El caster solo lee: ronda, envíos y código.
 
-const API_URL = import.meta.env["VITE_API_URL"] ?? "";
+import { backendFetch } from "./backend-fetch";
 
 function authHeaders(): Record<string, string> {
   try {
@@ -14,7 +14,7 @@ function authHeaders(): Record<string, string> {
 }
 
 async function request<T>(path: string, fallback: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
+  const response = await backendFetch(path, {
     ...init,
     headers: {
       ...authHeaders(),
@@ -113,10 +113,11 @@ export type CasterAccount = {
 export const listCasters = () =>
   request<CasterAccount[]>("/casters", "No se pudieron cargar los casters");
 
-export const createCaster = (username: string) =>
+/** Sin `accessCode` el servidor genera uno de 12 caracteres. */
+export const createCaster = (username: string, accessCode?: string) =>
   request<CasterAccount>("/casters", "No se pudo crear el caster", {
     method: "POST",
-    body: JSON.stringify({ username }),
+    body: JSON.stringify(accessCode ? { username, accessCode } : { username }),
   });
 
 export const deleteCaster = (id: string) =>

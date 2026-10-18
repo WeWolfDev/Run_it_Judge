@@ -2490,22 +2490,26 @@ fastify.post('/casters', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
 	const { name, error } = casterRules.validateCasterName(request.body?.username);
 	if (error) return reply.code(400).send({ error });
+	const chosen = casterRules.validateCasterCode(request.body?.accessCode);
+	if (chosen.error) return reply.code(400).send({ error: chosen.error });
 	const reserved = await query(
 		"SELECT 1 FROM users WHERE role = 'admin' AND lower(username) = lower($1)",
 		[name],
 	);
 	if (reserved.rowCount) return reply.code(409).send({ error: 'Ese nombre está reservado. Elegí otro.' });
-	// El código es UNIQUE en users: ante un choque (improbable con 32^12) se reintenta.
+	// El código es UNIQUE en users: uno generado se reintenta ante un choque
+	// (improbable con 32^12); uno elegido por el admin que ya existe es un 409.
 	for (let attempt = 0; attempt < 5; attempt += 1) {
 		try {
 			const created = await query(
 				`INSERT INTO users (username, access_code, role) VALUES ($1, $2, 'caster')
 				 RETURNING id, username, access_code, created_at`,
-				[name, generateCasterCode()],
+				[name, chosen.code ?? generateCasterCode()],
 			);
 			return reply.code(201).send(created.rows[0]);
 		} catch (insertError) {
 			if (insertError.code !== '23505') throw insertError;
+			if (chosen.code) return reply.code(409).send({ error: 'Ese código ya está en uso. Elegí otro.' });
 		}
 	}
 	return reply.code(500).send({ error: 'No se pudo generar un código único' });

@@ -40,6 +40,27 @@ test('validateCasterName pide entre 3 y 40 caracteres sin contar los espacios de
 	}
 });
 
+test('validateCasterCode: opcional, normalizado y de 8 a 64 letras o dígitos', () => {
+	assert.deepEqual(caster.validateCasterCode(undefined), { code: null });
+	assert.deepEqual(caster.validateCasterCode(''), { code: null });
+	assert.deepEqual(caster.validateCasterCode('7465066299'), { code: '7465066299' });
+	assert.deepEqual(caster.validateCasterCode(' ab-cd 1234 '), { code: 'ABCD1234' });
+	for (const bad of ['1234567', 'x'.repeat(65), 42, '--------']) {
+		assert.match(caster.validateCasterCode(bad).error, /entre 8 y 64/);
+	}
+});
+
+test('POST /casters rechaza un código corto antes de la base', async () => {
+	const response = await fastify.inject({
+		method: 'POST',
+		url: '/casters',
+		headers: as('admin'),
+		payload: { username: 'caster', accessCode: '123' },
+	});
+	assert.equal(response.statusCode, 400);
+	assert.match(JSON.parse(response.body).error, /entre 8 y 64/);
+});
+
 test('el código de un Aceptado se ve recién con la ronda cerrada', () => {
 	for (const status of ['pending', 'active', 'closing']) {
 		assert.equal(caster.isCodeLocked('accepted', status), true, status);

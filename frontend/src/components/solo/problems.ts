@@ -81,12 +81,6 @@ int main() {
 }`,
 };
 
-const MARK: Record<Language, string> = {
-  python: "  # solucion\n  # ejemplo de entrada rapida:\n  # # n = int(input())\n  pass",
-  c: "    // Código de la solución aquí\n",
-  cpp: "    // Código de la solución aquí",
-};
-
 export const isUntouchedTemplate = (text: string) =>
   Object.values(TEMPLATES).some((template) => template.trim() === text.trim());
 
@@ -110,12 +104,7 @@ export type Problem = {
   samples: string[];
   /** Solución de referencia: da la salida esperada de los ejemplos y de la entrada propia. */
   solve: (input: string) => string;
-  /** El cuerpo de solve() en cada lenguaje, para "Cargar solución". */
-  body: Record<Language, string>;
 };
-
-export const withSolution = (language: Language, problem: Problem) =>
-  TEMPLATES[language].replace(MARK[language], problem.body[language]);
 
 const limits = (seconds: number) =>
   `Límite de tiempo por prueba: **${seconds} ${seconds === 1 ? "segundo" : "segundos"}**  \nLímite de memoria por prueba: **256 megabytes**\n\n`;
@@ -144,11 +133,6 @@ La palabra con la primera letra en mayúscula.`,
       const w = words(i)[0] ?? "";
       return w.charAt(0).toUpperCase() + w.slice(1);
     },
-    body: {
-      python: "  w = input().strip()\n  print(w[0].upper() + w[1:])",
-      c: "    char w[1024];\n    scanf(\"%1023s\", w);\n    if (w[0] >= 'a' && w[0] <= 'z') w[0] -= 32;\n    printf(\"%s\\n\", w);\n",
-      cpp: '    string w; cin >> w;\n    w[0] = toupper(w[0]);\n    cout << w << "\\n";',
-    },
   },
   {
     id: "B",
@@ -169,11 +153,6 @@ Un entero $x$ ($1 \\le x \\le 1\\,000\\,000$).
 El mínimo número de pasos.`,
     samples: ["5", "12"],
     solve: (i) => String(Math.ceil(Number(words(i)[0]) / 5)),
-    body: {
-      python: "  x = int(input())\n  print((x + 4) // 5)",
-      c: '    int x; scanf("%d", &x);\n    printf("%d\\n", (x + 4) / 5);\n',
-      cpp: '    int x; cin >> x;\n    cout << (x + 4) / 5 << "\\n";',
-    },
   },
   {
     id: "C",
@@ -200,12 +179,6 @@ Un entero: la mayor ganancia posible.`,
         .sort((x, y) => x - y)
         .slice(0, m);
       return String(-neg.reduce((sum, x) => sum + x, 0));
-    },
-    body: {
-      python:
-        "  n, m = map(int, input().split())\n  a = sorted(x for x in map(int, input().split()) if x < 0)\n  print(-sum(a[:m]))",
-      c: '    int n, m, a[100];\n    scanf("%d %d", &n, &m);\n    for (int i = 0; i < n; i++) scanf("%d", &a[i]);\n    for (int i = 0; i < n; i++) for (int j = i + 1; j < n; j++) if (a[j] < a[i]) { int x = a[i]; a[i] = a[j]; a[j] = x; }\n    int s = 0;\n    for (int i = 0; i < m && a[i] < 0; i++) s -= a[i];\n    printf("%d\\n", s);\n',
-      cpp: '    int n, m; cin >> n >> m;\n    vector<int> a(n);\n    for (auto& x : a) cin >> x;\n    sort(a.begin(), a.end());\n    int s = 0;\n    for (int i = 0; i < m && a[i] < 0; i++) s -= a[i];\n    cout << s << "\\n";',
     },
   },
   {
@@ -234,12 +207,6 @@ Para cada partida, \`DA\` si gana Joselo o \`NET\` si no.`,
           return Math.min(zeros, s.length - zeros) % 2 ? "DA" : "NET";
         })
         .join("\n"),
-    body: {
-      python:
-        '  for _ in range(int(input())):\n    s = input().strip()\n    print("DA" if min(s.count("0"), s.count("1")) % 2 else "NET")',
-      c: '    int t; scanf("%d", &t);\n    while (t--) {\n        char s[128]; scanf("%127s", s);\n        int z = 0, o = 0;\n        for (int i = 0; s[i]; i++) { if (s[i] == \'0\') z++; else o++; }\n        puts((z < o ? z : o) % 2 ? "DA" : "NET");\n    }\n',
-      cpp: '    int t; cin >> t;\n    while (t--) {\n        string s; cin >> s;\n        int z = count(s.begin(), s.end(), \'0\'), o = s.size() - z;\n        cout << (min(z, o) % 2 ? "DA" : "NET") << "\\n";\n    }',
-    },
   },
   {
     id: "E",
@@ -263,12 +230,6 @@ Una palabra $s$ de letras inglesas minúsculas ($1 \\le |s| \\le 100$).
       let k = 0;
       for (const c of words(i)[0] ?? "") if (k < 5 && c === "hello"[k]) k++;
       return k === 5 ? "YES" : "NO";
-    },
-    body: {
-      python:
-        '  s = input().strip()\n  k = 0\n  for c in s:\n    if k < 5 and c == "hello"[k]:\n      k += 1\n  print("YES" if k == 5 else "NO")',
-      c: '    char s[128]; scanf("%127s", s);\n    const char* h = "hello"; int k = 0;\n    for (int i = 0; s[i]; i++) if (k < 5 && s[i] == h[k]) k++;\n    puts(k == 5 ? "YES" : "NO");\n',
-      cpp: '    string s; cin >> s;\n    string h = "hello"; size_t k = 0;\n    for (char c : s) if (k < h.size() && c == h[k]) k++;\n    cout << (k == h.size() ? "YES" : "NO") << "\\n";',
     },
   },
   {
@@ -301,12 +262,6 @@ El mínimo número de taxis.`,
         ones = Math.max(0, ones - 2);
       }
       return String(taxis + Math.ceil(ones / 4));
-    },
-    body: {
-      python:
-        "  input()\n  c = [0] * 5\n  for x in sys.stdin.read().split():\n    c[int(x)] += 1\n  taxis = c[4] + c[3] + c[2] // 2\n  ones = max(0, c[1] - c[3])\n  if c[2] % 2:\n    taxis += 1\n    ones = max(0, ones - 2)\n  print(taxis + (ones + 3) // 4)",
-      c: '    int n, c[5] = {0};\n    scanf("%d", &n);\n    for (int i = 0; i < n; i++) { int x; scanf("%d", &x); c[x]++; }\n    int taxis = c[4] + c[3] + c[2] / 2;\n    int ones = c[1] - c[3] > 0 ? c[1] - c[3] : 0;\n    if (c[2] % 2) { taxis++; ones = ones - 2 > 0 ? ones - 2 : 0; }\n    printf("%d\\n", taxis + (ones + 3) / 4);\n',
-      cpp: '    int n; cin >> n;\n    int c[5] = {0};\n    for (int i = 0; i < n; i++) { int x; cin >> x; c[x]++; }\n    int taxis = c[4] + c[3] + c[2] / 2;\n    int ones = max(0, c[1] - c[3]);\n    if (c[2] % 2) { taxis++; ones = max(0, ones - 2); }\n    cout << taxis + (ones + 3) / 4 << "\\n";',
     },
   },
   {
@@ -351,12 +306,6 @@ Para cada caso, la mayor experiencia posible.`,
         out.push(best);
       }
       return out.join("\n");
-    },
-    body: {
-      python:
-        '  data = sys.stdin.read().split()\n  t, p, out = int(data[0]), 1, []\n  for _ in range(t):\n    n, k = int(data[p]), int(data[p + 1])\n    a = data[p + 2:p + 2 + n]\n    b = data[p + 2 + n:p + 2 + 2 * n]\n    p += 2 + 2 * n\n    best = s = top = 0\n    for j in range(min(n, k)):\n      s += int(a[j])\n      top = max(top, int(b[j]))\n      best = max(best, s + (k - j - 1) * top)\n    out.append(best)\n  print("\\n".join(map(str, out)))',
-      c: '    int t; scanf("%d", &t);\n    static int a[200000], b[200000];\n    while (t--) {\n        int n, k; scanf("%d %d", &n, &k);\n        for (int i = 0; i < n; i++) scanf("%d", &a[i]);\n        for (int i = 0; i < n; i++) scanf("%d", &b[i]);\n        ll best = 0, s = 0, top = 0;\n        for (int j = 0; j < n && j < k; j++) {\n            s += a[j]; if (b[j] > top) top = b[j];\n            ll cand = s + (ll)(k - j - 1) * top;\n            if (cand > best) best = cand;\n        }\n        printf("%lld\\n", best);\n    }\n',
-      cpp: '    int t; cin >> t;\n    while (t--) {\n        int n, k; cin >> n >> k;\n        vector<long long> a(n), b(n);\n        for (auto& x : a) cin >> x;\n        for (auto& x : b) cin >> x;\n        long long best = 0, s = 0, top = 0;\n        for (int j = 0; j < min(n, k); j++) {\n            s += a[j]; top = max(top, b[j]);\n            best = max(best, s + (long long)(k - j - 1) * top);\n        }\n        cout << best << "\\n";\n    }',
     },
   },
 ];

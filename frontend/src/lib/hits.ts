@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { backendFetch } from "@/lib/backend-fetch";
 import { createSocketFeed } from "@/lib/runit";
 
 // Voto del público: la grada elige por QR (/votar) un hit bueno o uno malo que
@@ -194,7 +195,8 @@ export async function announcePoll(roundId: string, pair: number) {
 }
 
 async function adminPost(url: string, fallback: string) {
-  const response = await fetch(`${API_URL}${url}`, { method: "POST", headers: authHeaders() });
+  // /hits y /round-hits: un Nginx viejo no los enruta (backendFetch reintenta por /api).
+  const response = await backendFetch(url, { method: "POST", headers: authHeaders() });
   return json<unknown>(response, fallback);
 }
 

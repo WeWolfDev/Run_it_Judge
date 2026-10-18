@@ -10,6 +10,7 @@ import { createCaster, deleteCaster, listCasters, type CasterAccount } from "@/l
 export function CasterAccounts() {
   const [casters, setCasters] = useState<CasterAccount[]>([]);
   const [name, setName] = useState("");
+  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -27,8 +28,9 @@ export function CasterAccounts() {
     setBusy(true);
     setMessage("");
     try {
-      const created = await createCaster(name);
+      const created = await createCaster(name, code.trim() || undefined);
       setName("");
+      setCode("");
       setMessage(`Caster ${created.username} creado. Entra en /login con su nombre y su código.`);
       await load();
     } catch (error) {
@@ -65,8 +67,20 @@ export function CasterAccounts() {
             value={name}
             onChange={(event) => setName(event.target.value)}
             maxLength={40}
-            placeholder="Ej.: Leo"
+            placeholder="Ej.: caster"
             className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+          />
+        </label>
+        <label className="block flex-1 text-xs">
+          <span className="text-muted-foreground">Código (opcional, 8 a 64 letras o dígitos)</span>
+          <input
+            id="caster-code"
+            value={code}
+            onChange={(event) => setCode(event.target.value)}
+            maxLength={64}
+            autoComplete="off"
+            placeholder="Vacío: se genera uno"
+            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
           />
         </label>
         <button

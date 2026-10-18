@@ -66,6 +66,7 @@ import {
   verdictLabel,
   verdictTone,
 } from "@/lib/runit";
+import { backendFetch } from "@/lib/backend-fetch";
 import { getSessionToken } from "@/lib/session";
 
 type TournamentRoundProgress = Awaited<ReturnType<typeof getTournamentRounds>>[number];
@@ -149,7 +150,7 @@ const VERDICT_TONE_CLASS = {
 
 async function fetchQueueStats(): Promise<QueueStats> {
   const token = getSessionToken();
-  const response = await fetch(apiUrl("/queue/stats"), {
+  const response = await backendFetch("/queue/stats", {
     headers: token ? { authorization: `Bearer ${token}` } : {},
   });
   if (!response.ok) throw new Error("No se pudo leer la cola");
