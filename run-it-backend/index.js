@@ -856,6 +856,9 @@ fastify.put('/problems/:id', async (request, reply) => {
 			error: `No se pueden cambiar los casos: la ronda ${roundNumber} de "${tournamentName}" está ${ROUND_STATUS_TEXT[status]} con este problema. Nombre, enunciado y dificultad sí se pueden guardar; los casos, cuando la ronda cierre.`,
 		});
 	}
+	// El enunciado se puede corregir con la ronda en curso: participantes y
+	// casters lo releen sin recargar la página.
+	fastify.io?.emit('problem:updated', { problem_id: request.params.id });
 	return outcome.problem;
 });
 
@@ -1397,6 +1400,12 @@ fastify.post('/rounds', async (request, reply) => {
 			error: `El torneo ya tiene la ronda ${result.lastRound}. La siguiente se crea con "Avanzar a la siguiente ronda", que inscribe a los clasificados.`,
 		});
 	}
+	// Quien espera sin ronda (sala de espera, caster) se entera sin recargar.
+	fastify.io?.emit('round:created', {
+		round_id: result.rows[0].id,
+		round_number: result.rows[0].round_number,
+		participants: 0,
+	});
 	return reply.code(201).send(result.rows[0]);
 });
 
@@ -1485,6 +1494,8 @@ fastify.put('/tournaments/:id/plan', async (request, reply) => {
 		throw error;
 	}
 	if (outcome.status !== 200) return reply.code(outcome.status).send({ error: outcome.error });
+	// Rondas nuevas o cambiadas en el plan: la sala de espera se vuelve a leer.
+	fastify.io?.emit('rounds:planned', { tournament_id: request.params.id });
 	const result = await query(
 		`SELECT r.*, COALESCE(p.name, r.problem_name) AS problem_name,
 		        (SELECT count(*)::int FROM round_participants rp WHERE rp.round_id = r.id) AS participants_count

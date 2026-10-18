@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
+import { onResync } from "@/lib/resync";
+
 const API_URL = import.meta.env["VITE_API_URL"] ?? "";
 
 // Mediciones que difieren más que esto indican que el reloj del cliente se
@@ -28,8 +30,9 @@ async function measureOnce(): Promise<{ offset: number; rtt: number } | null> {
 }
 
 /**
- * Offset del reloj del servidor respecto del cliente, medido UNA sola vez al
- * montar. Si la medición falla devuelve 0, así el cronómetro sigue andando con
+ * Offset del reloj del servidor respecto del cliente, medido al montar y otra
+ * vez al volver de más de un minuto fuera (suspensión o pestaña en segundo
+ * plano). Si la medición falla devuelve 0, así el cronómetro sigue andando con
  * el reloj local. `onUnreliable` recibe un aviso cuando las mediciones no son
  * coherentes entre sí.
  */
@@ -40,7 +43,7 @@ export function useServerClockOffset(onUnreliable?: (message: string) => void) {
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    const measure = async () => {
       try {
         const samples: Array<{ offset: number; rtt: number }> = [];
         for (let i = 0; i < MEASUREMENTS; i += 1) {
@@ -62,9 +65,16 @@ export function useServerClockOffset(onUnreliable?: (message: string) => void) {
       } catch {
         // Sin /health el cronómetro sigue con el reloj local (offset 0).
       }
-    })();
+    };
+    void measure();
+    // Después de una suspensión (tapa cerrada, suspender en Windows) el sistema
+    // puede corregir su hora al volver: el offset medido antes ya no sirve.
+    const stop = onResync(({ awayMs }) => {
+      if (awayMs > 60_000) void measure();
+    });
     return () => {
       cancelled = true;
+      stop();
     };
   }, []);
 

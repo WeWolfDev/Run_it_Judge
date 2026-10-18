@@ -279,7 +279,9 @@ export function ParticipantView() {
         setConfirmedState(chosen || choseNowRef.current);
         setUpcoming(next);
         setLoad("none");
-        if (next && chosen) {
+        // Eligió en esta visita antes de que hubiera ronda: el servidor todavía
+        // no lo sabe (no hay dónde preguntar), así que también se inscribe.
+        if (next && (chosen || choseNowRef.current)) {
           void joinRound(next.id, username, getSelectedCharacter(username)).catch(() => undefined);
         }
         return;
@@ -303,9 +305,11 @@ export function ParticipantView() {
       });
       // Sin personaje elegido no se inscribe: lo hace confirmCharacter. Así el
       // admin nunca ve un inscripto con el personaje 0 que en realidad no eligió.
-      const chosen = await characterChosen(remote.id, username);
+      // Eligió en esta visita antes de que hubiera ronda (confirmCharacter dejó
+      // la inscripción para acá): sin esto veía la ronda sin estar inscripto.
+      const chosen = (await characterChosen(remote.id, username)) || choseNowRef.current;
       if (cancelled) return;
-      setConfirmedState(chosen || choseNowRef.current);
+      setConfirmedState(chosen);
       setLoad("ready");
       if (!chosen) return;
       try {
@@ -367,6 +371,28 @@ export function ParticipantView() {
           }
         });
     };
+    // Si la ronda cerró mientras el socket estaba caído (suspensión, red caída,
+    // pestaña en segundo plano), round:closed se perdió: el resultado se arma
+    // con el ranking final, así se ve la animación sin recargar la página.
+    const recoverResult = () => {
+      if (!joinedRoundId) return;
+      void getRoundLeaderboard(joinedRoundId)
+        .then((rows) => {
+          if (cancelled || !rows.some((row) => row.final_rank !== null)) return;
+          setLive((current) => current && { ...current, status: "closed" });
+          setStandings(
+            (current) =>
+              current ??
+              rows.map((row, index) => ({
+                participant_id: row.participant_id,
+                name: row.display_name,
+                rank: row.final_rank ?? index + 1,
+                advanced: row.final_status === "advanced",
+              })),
+          );
+        })
+        .catch(() => undefined);
+    };
     const feed = createSocketFeed(joinedRoundId);
     if (!feed) {
       seedHistory();
@@ -382,9 +408,9 @@ export function ParticipantView() {
       // repide la ronda vieja. Se vuelve a preguntar cuál es la activa.
       void getActiveRound()
         .then((active) => {
-          if (!cancelled && active && active.id !== roundIdRef.current) {
-            setReloadKey((key) => key + 1);
-          }
+          if (cancelled) return;
+          if (active && active.id !== roundIdRef.current) setReloadKey((key) => key + 1);
+          else if (!active) recoverResult();
         })
         .catch(() => undefined);
     });
@@ -393,6 +419,7 @@ export function ParticipantView() {
     });
     feed.on("round:snapshot", (snapshot) => {
       if (!snapshot || snapshot.id !== joinedRoundId) return;
+      if (snapshot.status === "closed") recoverResult();
       setLive({
         status: snapshot.status,
         paused: Boolean(snapshot.paused),
@@ -426,6 +453,32 @@ export function ParticipantView() {
     feed.on("round:paused", (event) => {
       if (event.id !== roundIdRef.current) return;
       setLive((current) => current && { ...current, paused: Boolean(event.paused) });
+    });
+    // Sin ronda activa (sala de espera o entre rondas): una ronda nueva o un
+    // plan cambiado cambian lo que se espera. Se vuelve a leer sin recargar.
+    const roundsChanged = () => {
+      if (!roundIdRef.current) setReloadKey((key) => key + 1);
+    };
+    feed.on("round:created", roundsChanged);
+    feed.on("rounds:planned", roundsChanged);
+    // El admin corrigió el enunciado con la ronda en curso: cambian el texto y
+    // los ejemplos; el editor, el historial y la inscripción no se tocan.
+    feed.on("problem:updated", () => {
+      void getActiveRound()
+        .then((active) => {
+          if (cancelled || !active || active.id !== roundIdRef.current) return;
+          const extra = active as { samples?: SampleCase[] };
+          setRound(
+            (current) =>
+              current && {
+                ...current,
+                problem: active.problem_name,
+                statement: active.statement,
+                samples: Array.isArray(extra.samples) ? extra.samples : current.samples,
+              },
+          );
+        })
+        .catch(() => undefined);
     });
     feed.on("round:closed", (event) => {
       // round:closed no trae el id de la ronda: se reconoce por el participante.
