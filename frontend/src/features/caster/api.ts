@@ -1,7 +1,6 @@
-// Vista del caster: cliente de las rutas /caster/* y /casters del backend
-// (run-it-backend/caster.js). El caster solo lee: ronda, envíos y código.
+// Cliente HTTP del módulo caster: vista y administración de cuentas.
 
-import { backendFetch } from "./backend-fetch";
+import { backendFetch } from "@/lib/backend-fetch";
 
 function authHeaders(): Record<string, string> {
   try {

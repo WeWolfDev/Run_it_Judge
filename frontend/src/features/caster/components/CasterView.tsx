@@ -3,10 +3,10 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { PixelIcon } from "@/components/PixelIcon";
 import { ProblemStatement } from "@/components/ProblemStatement";
 import { ProjectedTrack } from "@/components/ProjectedTrack";
-import { useBoard } from "@/hooks/use-board";
+import { useBoard } from "../use-board";
 import { useLiveRace } from "@/hooks/use-live-race";
 import { useRoundTimer } from "@/hooks/use-round-timer";
-import { getCasterOverview, type CasterOverview } from "@/lib/caster";
+import { getCasterOverview, type CasterOverview } from "../api";
 import { formatLeft, useHits } from "@/lib/hits";
 import { createSocketFeed, formatClock } from "@/lib/runit";
 import { cn } from "@/lib/utils";
@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { CasterSubmissions } from "./CasterSubmissions";
 import { CasterVote } from "./CasterVote";
 import { Whiteboard } from "./Whiteboard";
+import "../caster.css";
 
 // Vista del caster (/caster): quien narra el torneo ve el enunciado de la ronda
 // con sus ejemplos, la pista (o una pizarra para explicar), los envíos con su

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { createCaster, deleteCaster, listCasters, type CasterAccount } from "@/lib/caster";
+import { createCaster, deleteCaster, listCasters, type CasterAccount } from "./api";
 
 // Cuentas de caster en Accesos del panel: quien narra el torneo entra por /login
 // con su nombre y este código, y ve /caster (enunciado, pista, envíos, votación).

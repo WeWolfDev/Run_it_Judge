@@ -5,7 +5,7 @@ import { parseCodeforcesZip } from "@/lib/test-case-parser";
 import { ProblemStatement } from "@/components/ProblemStatement";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RowCheckbox, SelectAllCheckbox } from "@/components/BulkSelect";
-import { CasterAccounts } from "@/components/CasterAccounts";
+import { CasterAccounts } from "@/features/caster/CasterAccounts";
 import { CeremonyPanel } from "@/components/CeremonyPanel";
 import { HitsPanel } from "@/components/hits/HitsPanel";
 import { PixelIcon, type PixelIconName } from "@/components/PixelIcon";

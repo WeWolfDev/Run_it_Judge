@@ -1,18 +1,22 @@
 // Las plantillas de Nginx (deploy/nginx) mandan al backend solo los prefijos de
 // su regex; el resto va al frontend. Una ruta nueva cuyo prefijo no esté ahí
 // responde 404 en producción aunque los tests pasen (pasó con /casters y
-// /hits/polls). DB-free: compara index.js con las plantillas.
+// /hits/polls). DB-free: compara las rutas de los módulos con las plantillas.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
 const INDEX_SOURCE = fs.readFileSync(path.join(__dirname, '../index.js'), 'utf8');
+const CASTER_ROUTES_SOURCE = fs.readFileSync(path.join(__dirname, '../caster/routes.js'), 'utf8');
 const NGINX_DIR = path.join(__dirname, '../../deploy/nginx');
 
 const backendPrefixes = [
 	...new Set(
-		[...INDEX_SOURCE.matchAll(/fastify\.(?:get|post|put|delete|patch)\('\/([a-z-]+)/g)].map((m) => m[1]),
+		[INDEX_SOURCE, CASTER_ROUTES_SOURCE]
+			.flatMap((source) =>
+				[...source.matchAll(/fastify\.(?:get|post|put|delete|patch)\('\/([a-z-]+)/g)].map((m) => m[1]),
+			),
 	),
 ].sort();
 

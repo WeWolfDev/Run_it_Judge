@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
-import { CasterView } from "@/components/caster/CasterView";
+import { CasterView } from "@/features/caster/components/CasterView";
 import { getSession, homeFor } from "@/lib/session";
 
 export const Route = createFileRoute("/caster")({

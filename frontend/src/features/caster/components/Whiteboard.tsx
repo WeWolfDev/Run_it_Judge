@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { PixelIcon } from "@/components/PixelIcon";
-import { nextBoardId, type Board, type BoardItem } from "@/hooks/use-board";
+import { nextBoardId, type Board, type BoardItem } from "../use-board";
 import { cn } from "@/lib/utils";
 
 // Pizarra del caster: ocupa el lugar de la pista (16:9) para explicar la
