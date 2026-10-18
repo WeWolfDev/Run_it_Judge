@@ -1,14 +1,5 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-
-import { cn } from "@/lib/utils";
-
-import { score, type Hit, type Section } from "./audio";
+import { Director, type Scene } from "./Director";
+import { score } from "./audio";
 
 import {
   AWARD_MS,
@@ -22,46 +13,13 @@ import {
   WinnerScene,
 } from "./scenes";
 
-// Director del tráiler: reproduce las escenas en orden, con un corte animado
-// entre cada una, y deja saltar a cualquiera para grabar clips sueltos.
-// Teclas: Espacio reproducir/pausar el avance · ← → escena · 1-9, 0 · R desde
-// el inicio · F pantalla completa · H ocultar controles.
-
-/** Qué sección de la música suena en cada escena. */
-const SECTION: Record<string, Section> = {
-  intro: "intro",
-  lema: "build",
-  pista: "full",
-  enfrentate: "build",
-  codigo: "full",
-  ganador: "build",
-  campeon: "triumph",
-  "premios-titulo": "build",
-  premios: "triumph",
-  solo: "full",
-  animas: "build",
-  evento: "full",
-  logos: "outro",
-};
-/** El golpe de sonido de cada tipo de corte. */
-const CUT_HIT: Record<string, Hit> = {
-  flash: "impact",
-  glitch: "glitch",
-  boot: "boot",
-  white: "shimmer",
-};
-
-type Scene = {
-  id: string;
-  label: string;
-  ms: number;
-  cut: string;
-  render: () => ReactNode;
-};
+// Tráiler de Run It: el guion. La reproducción y los controles están en
+// Director; la vista celular 9:16 para grabar desde el PC, también.
 
 const SCENES: Scene[] = [
   {
     id: "intro",
+    section: "intro",
     label: "Bienvenidos",
     ms: 4600,
     cut: "boot",
@@ -69,6 +27,7 @@ const SCENES: Scene[] = [
   },
   {
     id: "lema",
+    section: "build",
     label: "Solo uno en pie",
     ms: 5600,
     cut: "glitch",
@@ -82,6 +41,7 @@ const SCENES: Scene[] = [
   },
   {
     id: "pista",
+    section: "full",
     label: "La pista",
     ms: 14000,
     cut: "flash",
@@ -89,6 +49,7 @@ const SCENES: Scene[] = [
   },
   {
     id: "enfrentate",
+    section: "build",
     label: "Enfréntate",
     ms: 3800,
     cut: "glitch",
@@ -101,6 +62,7 @@ const SCENES: Scene[] = [
   },
   {
     id: "codigo",
+    section: "full",
     label: "A programar",
     ms: 11800,
     cut: "flash",
@@ -108,6 +70,7 @@ const SCENES: Scene[] = [
   },
   {
     id: "ganador",
+    section: "build",
     label: "Un ganador",
     ms: 2800,
     cut: "glitch",
@@ -117,6 +80,7 @@ const SCENES: Scene[] = [
   },
   {
     id: "campeon",
+    section: "triumph",
     label: "El campeón",
     ms: 7200,
     cut: "flash",
@@ -124,6 +88,7 @@ const SCENES: Scene[] = [
   },
   {
     id: "premios-titulo",
+    section: "build",
     label: "Más premios",
     ms: 3400,
     cut: "glitch",
@@ -136,6 +101,7 @@ const SCENES: Scene[] = [
   },
   {
     id: "premios",
+    section: "triumph",
     label: "Premios",
     ms: AWARD_MS * 3,
     cut: "flash",
@@ -143,6 +109,7 @@ const SCENES: Scene[] = [
   },
   {
     id: "solo",
+    section: "full",
     label: "Solo en Run It",
     ms: 3000,
     cut: "glitch",
@@ -152,6 +119,7 @@ const SCENES: Scene[] = [
   },
   {
     id: "animas",
+    section: "build",
     label: "¿Te animas?",
     ms: 3600,
     cut: "glitch",
@@ -161,6 +129,7 @@ const SCENES: Scene[] = [
   },
   {
     id: "evento",
+    section: "full",
     label: "El evento",
     ms: 6800,
     cut: "boot",
@@ -168,6 +137,7 @@ const SCENES: Scene[] = [
   },
   {
     id: "logos",
+    section: "outro",
     label: "Logos",
     ms: 7000,
     cut: "white",
@@ -175,208 +145,6 @@ const SCENES: Scene[] = [
   },
 ];
 
-const TOTAL_MS = SCENES.reduce((sum, scene) => sum + scene.ms, 0);
-
 export function Trailer() {
-  const [started, setStarted] = useState(false);
-  const [index, setIndex] = useState(0);
-  const [take, setTake] = useState(0);
-  const [playing, setPlaying] = useState(true);
-  const [hud, setHud] = useState(true);
-  const [idle, setIdle] = useState(false);
-  const scene = SCENES[index]!;
-  const done = useRef(false);
-
-  const [muted, setMuted] = useState(false);
-
-  const go = useCallback((next: number) => {
-    done.current = false;
-    setIndex(Math.max(0, Math.min(SCENES.length - 1, next)));
-    setTake((n) => n + 1);
-  }, []);
-
-  // Música: cada escena pone su sección y su corte suena.
-  useEffect(() => {
-    if (!started) return;
-    score.setSection(SECTION[scene.id] ?? "full", take <= 1);
-    score.hit(CUT_HIT[scene.cut] ?? "impact");
-  }, [started, index, take, scene.id, scene.cut]);
-  useEffect(() => () => score.stop(), []);
-
-  // Avance automático: cada escena dura lo suyo; al terminar la última, negro.
-  useEffect(() => {
-    if (!started || !playing) return;
-    const id = setTimeout(() => {
-      if (index < SCENES.length - 1) go(index + 1);
-      else done.current = true;
-    }, scene.ms);
-    return () => clearTimeout(id);
-  }, [started, playing, index, take, scene.ms, go]);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (!started) return;
-      const key = event.key.toLowerCase();
-      if (key === " ") {
-        event.preventDefault();
-        setPlaying((p) => !p);
-      } else if (key === "arrowright") go(index + 1);
-      else if (key === "arrowleft") go(index - 1);
-      else if (key === "r") go(0);
-      else if (key === "h") setHud((v) => !v);
-      else if (key === "f") toggleFullscreen();
-      else if (/^[0-9]$/.test(key)) go(key === "0" ? 9 : Number(key) - 1);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [started, index, go]);
-
-  // Los controles y el cursor se esconden solos para grabar limpio.
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    const wake = () => {
-      setIdle(false);
-      clearTimeout(timer);
-      timer = setTimeout(() => setIdle(true), 1800);
-    };
-    wake();
-    window.addEventListener("mousemove", wake);
-    return () => {
-      clearTimeout(timer);
-      window.removeEventListener("mousemove", wake);
-    };
-  }, []);
-
-  if (!started) {
-    return (
-      <div className="tr-start">
-        <p className="tr-start-eyebrow">Run It · tráiler</p>
-        <h1 className="tr-start-title">Reproducción para grabar clips</h1>
-        <p className="tr-start-copy">
-          {SCENES.length} escenas, {Math.round(TOTAL_MS / 1000)} s. Graba en
-          pantalla completa a 16:9 (1920×1080), o en el celular en vertical
-          (9:16) para historias y reels.
-        </p>
-        <div className="tr-start-actions">
-          <button
-            type="button"
-            className="tr-btn tr-btn-primary"
-            onClick={() => {
-              score.start();
-              toggleFullscreen(true);
-              setStarted(true);
-              go(0);
-            }}
-          >
-            Reproducir en pantalla completa
-          </button>
-          <button
-            type="button"
-            className="tr-btn"
-            onClick={() => {
-              score.start();
-              setStarted(true);
-            }}
-          >
-            Reproducir aquí
-          </button>
-        </div>
-        <ul className="tr-keys">
-          <li>
-            <kbd>Espacio</kbd> pausa el avance
-          </li>
-          <li>
-            <kbd>←</kbd> <kbd>→</kbd> escena anterior o siguiente
-          </li>
-          <li>
-            <kbd>1</kbd>–<kbd>9</kbd>, <kbd>0</kbd> ir a una escena
-          </li>
-          <li>
-            <kbd>R</kbd> desde el inicio · <kbd>H</kbd> controles · <kbd>F</kbd>{" "}
-            pantalla completa
-          </li>
-        </ul>
-      </div>
-    );
-  }
-
-  return (
-    <div className={cn("tr-root", idle && "tr-idle")}>
-      <div
-        key={`${index}-${take}`}
-        className={cn("tr-scene", `tr-cut-${scene.cut}`)}
-      >
-        {scene.render()}
-      </div>
-      <div
-        key={`cut-${index}-${take}`}
-        className={cn("tr-cut", `tr-cut-overlay-${scene.cut}`)}
-        aria-hidden="true"
-      />
-      {hud && (
-        <nav className="tr-hud" aria-label="Escenas del tráiler">
-          <button
-            type="button"
-            className="tr-hud-btn"
-            onClick={() => setPlaying((p) => !p)}
-          >
-            {playing ? "Pausar" : "Seguir"}
-          </button>
-          <button
-            type="button"
-            className="tr-hud-btn"
-            aria-pressed={!muted}
-            onClick={() => {
-              score.setMuted(!muted);
-              setMuted(!muted);
-            }}
-          >
-            Música: {muted ? "no" : "sí"}
-          </button>
-          {SCENES.map((s, i) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => go(i)}
-              className={cn("tr-hud-chip", i === index && "tr-hud-chip-on")}
-              title={`${(s.ms / 1000).toFixed(1)} s`}
-            >
-              {i < 9 ? i + 1 : i === 9 ? 0 : "·"} {s.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            className="tr-hud-btn"
-            onClick={() => go(index - 1)}
-          >
-            ◀
-          </button>
-          <button
-            type="button"
-            className="tr-hud-btn"
-            onClick={() => go(index + 1)}
-          >
-            ▶
-          </button>
-          <button type="button" className="tr-hud-btn" onClick={() => go(0)}>
-            Desde el inicio
-          </button>
-        </nav>
-      )}
-    </div>
-  );
-}
-
-function toggleFullscreen(force?: boolean) {
-  const doc = document as Document & { webkitFullscreenElement?: Element };
-  const root = document.documentElement as HTMLElement & {
-    webkitRequestFullscreen?: () => void;
-  };
-  if (force || !(document.fullscreenElement || doc.webkitFullscreenElement)) {
-    (root.requestFullscreen?.() ?? root.webkitRequestFullscreen?.())?.catch?.(
-      () => undefined,
-    );
-  } else {
-    void document.exitFullscreen?.().catch(() => undefined);
-  }
+  return <Director scenes={SCENES} score={score} eyebrow="Run It · tráiler" />;
 }

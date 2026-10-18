@@ -9,8 +9,6 @@
 export type Section = "intro" | "build" | "full" | "triumph" | "outro";
 export type Hit = "impact" | "glitch" | "boot" | "shimmer" | "blip";
 
-const BPM = 124;
-const STEP = 60 / BPM / 4; // semicorchea
 const LOOKAHEAD = 0.12;
 
 const midi = (n: number) => 440 * 2 ** ((n - 69) / 12);
@@ -39,6 +37,12 @@ const HOOK = [
 ];
 
 export class Score {
+  /** Duración de una semicorchea. */
+  private readonly STEP: number;
+  /** Semitonos sobre La menor (el tráiler del stream suena en otra tonalidad). */
+  private readonly transpose: number;
+  /** Melodía de la sección "full" (2 compases de semicorcheas). */
+  private readonly hook: number[];
   private ctx: AudioContext | null = null;
   private master!: GainNode;
   private music!: GainNode;
@@ -49,6 +53,16 @@ export class Score {
   private nextTime = 0;
   private timer: ReturnType<typeof setInterval> | undefined;
   private muted = false;
+
+  constructor({
+    bpm = 124,
+    transpose = 0,
+    hook = HOOK,
+  }: { bpm?: number; transpose?: number; hook?: number[] } = {}) {
+    this.STEP = 60 / bpm / 4;
+    this.transpose = transpose;
+    this.hook = hook;
+  }
 
   /** Se llama desde un clic (los navegadores no dejan sonar sin un gesto). */
   start() {
@@ -149,7 +163,7 @@ export class Score {
         this.step = 0;
       }
       this.play(this.step, this.nextTime);
-      this.nextTime += STEP;
+      this.nextTime += this.STEP;
       this.step = (this.step + 1) % 64;
     }
   }
@@ -159,7 +173,8 @@ export class Score {
     const bar = Math.floor(step / 16) % 4;
     const s = step % 16;
     const chords = section === "triumph" ? MAJOR : MINOR;
-    const chord = chords[bar]!;
+    const chord = chords[bar]!.map((n) => n + this.transpose);
+    const STEP = this.STEP;
     const out = this.music;
 
     // Pad: el acorde sostenido al inicio de cada compás.
@@ -209,9 +224,9 @@ export class Score {
       this.noiseBurst(t, 0.12, 0.16, 1800, "bandpass", out);
 
     // Melodía: gancho o fanfarria.
-    const line = section === "triumph" ? FANFARE : HOOK;
+    const line = section === "triumph" ? FANFARE : this.hook;
     const n = line[step % 32];
-    if (n) this.tone(t, midi(n), STEP * 1.8, "square", 0.05, out);
+    if (n) this.tone(t, midi(n + this.transpose), STEP * 1.8, "square", 0.05, out);
   }
 
   private tone(

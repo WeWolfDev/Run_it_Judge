@@ -10,7 +10,7 @@ import { ArcadeDeck } from "@/components/ArcadeDeck";
 import { Ceremony } from "@/components/Ceremony";
 import { LoginBackdrop } from "@/components/LoginBackdrop";
 import { PixelIcon } from "@/components/PixelIcon";
-import { ProjectedTrack } from "@/components/ProjectedTrack";
+import { Feed, ProjectedTrack, Quota, Track } from "@/components/ProjectedTrack";
 import { Sprite } from "@/components/Sprite";
 import { useArcadeDeck } from "@/hooks/use-arcade-deck";
 import type { Ceremony as CeremonyData, CeremonyAward } from "@/lib/api";
@@ -216,12 +216,11 @@ export function TrackScene() {
 }
 
 /**
- * La pista en vertical: la de /pista está pensada para un proyector horizontal.
- * Mismos datos (la simulación), en carriles que entran en el ancho del celular.
+ * La pista en vertical, con las mismas piezas que la de /pista (carriles,
+ * medallas, meta a cuadros, corte, cupo y feed), apiladas para el celular.
  */
 function PortraitTrack({ race }: { race: Race }) {
   const board = boardOf(race);
-  const lanes = board.slice(0, 10);
   const solved = board.filter((entry) => entry.solved_at).length;
   const now = Date.now();
   const left = Math.max(0, race.round.endsAt - now);
@@ -229,72 +228,41 @@ function PortraitTrack({ race }: { race: Race }) {
   const announce =
     latest?.kind === "solved" && now - latest.at < 2600 ? latest : null;
   return (
-    <div className="tr-pt">
+    <div className="tr-pt proj">
       <header className="tr-pt-head">
         <div className="min-w-0">
-          <p className="tr-pt-brand" style={PIXEL}>
+          <p className="tr-pt-brand proj-logo" style={PIXEL}>
             Run It
           </p>
-          <p className="tr-pt-round">
-            Ronda {race.round.number} · {race.round.problem}
+          <p className="tr-pt-kicker">Ronda {race.round.number}</p>
+          <p className="tr-pt-round">{race.round.problem}</p>
+        </div>
+        <div className="tr-pt-time">
+          <span className="tr-pt-live" style={PIXEL}>
+            En curso
+          </span>
+          <p className="tr-pt-kicker">Tiempo</p>
+          <p className="tr-pt-clock" style={PIXEL}>
+            {formatClock(left)}
           </p>
         </div>
-        <p className="tr-pt-clock" style={PIXEL}>
-          {formatClock(left)}
-        </p>
       </header>
-      <p className="tr-pt-quota">
-        <PixelIcon name="trophy" className="h-[3.6vw] w-[3.6vw]" /> Clasificados{" "}
-        <b>
-          {solved}/{race.round.capacity}
-        </b>{" "}
-        · {board.length} jugadores
-      </p>
-      <ol className="tr-pt-lanes">
-        {lanes.map((entry, index) => {
-          const pct = Number(entry.best_pass_percentage);
-          const done = Boolean(entry.solved_at);
-          return (
-            <li
-              key={entry.participant_id}
-              className={cn(
-                "tr-pt-lane",
-                done && "tr-pt-lane-done",
-                index === race.round.capacity - 1 && "tr-pt-cut",
-              )}
-            >
-              <span className="tr-pt-rank" style={PIXEL}>
-                {index + 1}
-              </span>
-              <span className="tr-pt-runway">
-                <span className="tr-pt-name">
-                  {entry.display_name} <i>{Math.round(pct)}%</i>
-                </span>
-                <span
-                  className="tr-pt-runner"
-                  style={{ left: `calc(${pct}% - ${pct * 0.09}vw)` }}
-                >
-                  <MiniSprite name={entry.display_name} vmin={8} />
-                </span>
-              </span>
-            </li>
-          );
-        })}
-      </ol>
-      <ul className="tr-pt-feed">
-        {race.events.slice(0, 4).map((event) => (
-          <li
-            key={event.id}
-            className={cn("tr-pt-event", `tr-pt-${event.kind}`)}
-          >
-            {event.kind === "solved"
-              ? `¡${event.name} clasifica! ${event.arrival}.°`
-              : event.kind === "fail"
-                ? `${event.name} falló un envío (+30 s)`
-                : `${event.name} pasa ${event.passed}/${event.total} tests`}
-          </li>
-        ))}
-      </ul>
+      <div className="tr-pt-track">
+        <Track
+          lanes={board.slice(0, 10)}
+          capacity={race.round.capacity}
+          closed={false}
+          total={board.length}
+        />
+      </div>
+      <div className="tr-pt-side">
+        <Quota
+          solved={solved}
+          capacity={race.round.capacity}
+          participants={board.length}
+        />
+        <Feed events={race.events.slice(0, 3)} />
+      </div>
       {announce && (
         <div key={announce.id} className="tr-pt-announce animate-run-it-pop">
           <MiniSprite name={announce.name} vmin={16} />
@@ -699,12 +667,12 @@ export function EventScene() {
           </div>
           <div className="relative z-10 flex w-full flex-col items-center gap-[2.4vmin] px-4">
             <h1
-              className="login-title text-center text-[9vmin] text-primary"
+              className="login-title tr-event-title text-center text-[9vmin] text-primary"
               style={PIXEL}
             >
               Run It
             </h1>
-            <div className="w-[min(46vmin,90%)] space-y-[1.2vmin] border-2 border-primary bg-card/85 p-[2vmin] shadow-[6px_6px_0_0_var(--primary)] backdrop-blur-sm">
+            <div className="tr-event-box w-[min(46vmin,90%)] space-y-[1.2vmin] border-2 border-primary bg-card/85 p-[2vmin] shadow-[6px_6px_0_0_var(--primary)] backdrop-blur-sm">
               <p
                 className="text-center text-[1.3vmin] text-accent"
                 style={PIXEL}
@@ -740,7 +708,16 @@ export function EventScene() {
 
 // ── 13. Salida con los logos ─────────────────────────────────────────────────
 
-export function OutroScene() {
+const CREDITS =
+  "Personajes: Tiny Heroes de CraftPix.net · Fondos: ansimuz (CC0) · Pista: Kenney (CC0) · Música original";
+
+export function OutroScene({
+  title = "Run It",
+  credits = CREDITS,
+}: {
+  title?: string;
+  credits?: string;
+}) {
   return (
     <div className="tr-outro">
       <div className="tr-outro-logos">
@@ -755,12 +732,9 @@ export function OutroScene() {
         />
       </div>
       <p className="tr-outro-run" style={PIXEL}>
-        Run It
+        {title}
       </p>
-      <p className="tr-outro-credits">
-        Personajes: Tiny Heroes de CraftPix.net · Fondos: ansimuz (CC0) · Pista:
-        Kenney (CC0) · Música original
-      </p>
+      <p className="tr-outro-credits">{credits}</p>
       <div className="tr-outro-fade" aria-hidden="true" />
     </div>
   );

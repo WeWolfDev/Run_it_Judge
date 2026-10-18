@@ -583,7 +583,10 @@ body,
   place-content: center;
   justify-items: center;
   gap: 4vmin;
-  background: radial-gradient(ellipse at center, #ffffff 0%, #eeeaf8 70%, #ddd7f0 100%);
+  /* Lavanda grisáceo: ni blanco ni chillón; deja leer el índigo de WeWolf y
+     el degradado de CPC. */
+  background:
+    radial-gradient(ellipse 70% 60% at 50% 45%, #e6e3f1 0%, #d3cee6 55%, #b9b1d6 100%);
   overflow: hidden;
 }
 .tr-outro-logos {
@@ -1014,7 +1017,7 @@ body,
 
 @media (max-aspect-ratio: 1/1) {
   .tr-logo { font-size: 13vw; white-space: nowrap; }
-  .tr-event-title { font-size: 15vw !important; }
+  .tr-event-title { font-size: 13vw !important; white-space: nowrap; }
   .tr-event-box { width: 84vw !important; padding: 4vw !important; }
   .tr-event-box > * + * { margin-top: 2.4vw !important; }
   .tr-event-box p { font-size: 3.6vw !important; }
@@ -1024,13 +1027,202 @@ body,
 }
 
 .tr-outro-credits {
-  max-width: 80vw;
+  position: absolute;
+  left: 50%;
+  bottom: calc(3vmin + env(safe-area-inset-bottom, 0px));
+  translate: -50% 0;
+  width: max-content;
+  max-width: 88vw;
   font-family: "Pixelify Sans", system-ui, sans-serif;
   font-size: 1.6vmin;
   text-align: center;
-  color: #5b5480;
+  color: #4a4370;
   animation: tr-fade-up 700ms 1.8s both;
 }
 @media (max-aspect-ratio: 1/1) {
-  .tr-outro-credits { font-size: 2.8vw; }
+  .tr-outro-credits { font-size: 2.8vw; line-height: 1.5; bottom: calc(6vw + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* ── Arreglos del celular ── */
+@media (max-aspect-ratio: 1/1) {
+  /* Corredores de la intro: más separados, que no se encimen en lo angosto. */
+  .tr-runner {
+    animation-duration: 2.6s;
+    animation-delay: calc(var(--i) * 0.5s);
+  }
+}
+
+/* ── Vista celular 9:16 para grabar desde el PC ── */
+.tr-rec {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  padding: 2vh max(16px, env(safe-area-inset-right, 0px)) 2vh max(16px, env(safe-area-inset-left, 0px));
+  background: #07040f;
+  color: #ece8ff;
+}
+.tr-rec-frame {
+  display: block;
+  height: 96vh;
+  aspect-ratio: 9 / 16;
+  max-width: 100%;
+  border: 0;
+  background: #000;
+  box-shadow: 0 0 0 1px #2a2348;
+}
+.tr-rec-bar {
+  display: grid;
+  gap: 12px;
+  width: min(300px, 30vw);
+  font-family: "Pixelify Sans", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  transition: opacity 300ms;
+}
+.tr-rec-idle .tr-rec-bar {
+  opacity: 0;
+}
+.tr-rec-idle {
+  cursor: none;
+}
+.tr-rec-title {
+  font-family: "Press Start 2P", ui-monospace, monospace;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: var(--primary);
+}
+.tr-rec-size {
+  color: #b9b2d6;
+  font-variant-numeric: tabular-nums;
+}
+.tr-rec-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.tr-rec-help {
+  display: grid;
+  gap: 8px;
+  color: #b9b2d6;
+}
+.tr-rec-help b {
+  color: #ece8ff;
+}
+.tr-rec kbd {
+  padding: 0 5px;
+  border: 1px solid #3a3260;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.tr-rec-fail {
+  padding: 10px;
+  border: 1px solid var(--destructive);
+  border-radius: 8px;
+  color: #ffc9c9;
+}
+.tr-btn-cel {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* En una pantalla angosta no hay lugar al costado: la ayuda va abajo. */
+@media (max-aspect-ratio: 1/1) {
+  .tr-rec { flex-direction: column; gap: 12px; }
+  .tr-rec-frame { height: 78vh; }
+  .tr-rec-bar { width: 100%; max-width: 420px; }
+  .tr-rec-help { display: none; }
+}
+
+/* ── Pista vertical: las piezas de /pista, apiladas ── */
+.tr-pt.proj {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 3vw;
+  padding: calc(5vw + env(safe-area-inset-top, 0px)) 3vw calc(17vw + env(safe-area-inset-bottom, 0px));
+  /* Columnas de /pista medidas para el ancho del celular. */
+  --rank-w: 11vw;
+  --lane-start: 18vw;
+  --lane-end: 5vw;
+}
+.tr-pt-head {
+  align-items: flex-start;
+}
+.tr-pt-brand {
+  font-size: 6vw;
+}
+.tr-pt-kicker {
+  margin-top: 2vw;
+  font-family: "Press Start 2P", ui-monospace, monospace;
+  font-size: 2.2vw;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.tr-pt-round {
+  margin-top: 1.2vw;
+  font-size: 4.2vw;
+}
+.tr-pt-time {
+  display: grid;
+  justify-items: end;
+}
+.tr-pt-live {
+  padding: 1.2vw 2vw;
+  border: 2px solid var(--success);
+  border-radius: 1.4vw;
+  font-size: 2.4vw;
+  color: var(--success);
+}
+.tr-pt-time .tr-pt-kicker {
+  margin-top: 2.4vw;
+}
+.tr-pt-clock {
+  margin-top: 1vw;
+  font-size: 9vw;
+  line-height: 1;
+}
+.tr-pt-track {
+  display: flex;
+  min-height: 0;
+}
+.tr-pt-side {
+  display: grid;
+  grid-template-columns: 1fr 1.25fr;
+  gap: 2.4vw;
+  min-height: 0;
+}
+.tr-pt-side > * {
+  min-width: 0;
+  padding: 3vw !important;
+}
+.tr-pt-side p,
+.tr-pt-side li {
+  font-size: 2.6vw !important;
+}
+.tr-pt-side p.text-success {
+  font-size: 7vw !important;
+}
+.tr-pt .proj-mark {
+  font-size: 2vw;
+  padding: 1vw 0 0 1vw;
+}
+.tr-pt .proj-finish {
+  right: -3vw;
+  width: 3vw;
+  background-size: 1.5vw 1.5vw;
+  background-position: 0 0, 0.75vw 0.75vw;
+}
+.tr-pt .proj-flag {
+  right: calc(-3vw - 4px);
+}
+.tr-pt .proj-cut span {
+  font-size: 2.2vw;
+}
+.tr-pt .proj-coin {
+  width: 3.6vw;
+  height: 3.6vw;
+}
+.tr-pt-side .gap-\[0\.25vw\] {
+  gap: 0.6vw;
 }

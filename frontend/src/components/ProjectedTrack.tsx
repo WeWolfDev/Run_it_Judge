@@ -188,7 +188,7 @@ function zone(entry: Entry, rank: number, capacity: number, closed: boolean) {
   return entry.solved_at ? "in" : "zone";
 }
 
-function Track({
+export function Track({
   lanes,
   capacity,
   closed,
@@ -569,7 +569,7 @@ function Peloton({ rest, offset, capacity }: { rest: Entry[]; offset: number; ca
   );
 }
 
-function Quota({
+export function Quota({
   solved,
   capacity,
   participants,
@@ -622,7 +622,7 @@ function Quota({
   );
 }
 
-function Feed({ events }: { events: FeedEvent[] }) {
+export function Feed({ events }: { events: FeedEvent[] }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col rounded-xl border-2 border-border bg-card p-[1vw]">
       <p className="mb-[0.5vw] flex items-center gap-2 text-[clamp(0.6rem,0.8vw,1.1rem)] uppercase tracking-[0.25em] text-muted-foreground">
