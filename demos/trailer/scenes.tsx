@@ -388,7 +388,15 @@ function highlight(line: string) {
 }
 
 /** Sprite a tamaño real achicado con transform hasta entrar en la casilla. */
-function MiniSprite({ name, vmin }: { name: string; vmin: number }) {
+function MiniSprite({
+  name,
+  vmin,
+  state = "run",
+}: {
+  name: string;
+  vmin: number;
+  state?: "idle" | "run" | "out";
+}) {
   const character = characterAt(characterOf(name));
   const width = character.gif ? character.gif.width : character.fw;
   const height = character.gif ? character.gif.height : character.fh;
@@ -403,7 +411,7 @@ function MiniSprite({ name, vmin }: { name: string; vmin: number }) {
           transform: `translateX(-50%) scale(${(box / Math.max(height, width * 0.8)) * 1.25})`,
         }}
       >
-        <Sprite index={characterOf(name)} state="run" scale={0.01} />
+        <Sprite index={characterOf(name)} state={state} scale={0.01} />
       </span>
     </span>
   );
@@ -436,7 +444,16 @@ function CodingScreen({
     if (accepted) confetti({ x: 0.27, y: 0.3 });
   }, [judged, accepted]);
   const clock = 4 * 60_000 + 37_000 - elapsed;
-  const progress = judged ? screen.passed / 30 : 0.2 + typed * 0.25;
+  // Mientras escribe avanza un poco; el veredicto lo lleva a la meta si es
+  // Accepted. Si falla se queda donde iba (en gris): nunca retrocede.
+  const typing = 0.2 + typed * 0.25;
+  const progress = judged && accepted ? 1 : typing;
+  const runner =
+    !judged || (accepted && elapsed < screen.sendAt + 1600)
+      ? "run"
+      : accepted
+        ? "idle"
+        : "out";
   const lines = visible.split("\n");
   return (
     <div
@@ -447,7 +464,7 @@ function CodingScreen({
       style={{ "--i": index } as CSSProperties}
     >
       <div className="tr-screen-top">
-        <MiniSprite name={screen.name} vmin={5} />
+        <MiniSprite name={screen.name} vmin={5} state="idle" />
         <div className="min-w-0">
           <p className="tr-screen-name">{screen.name}</p>
           <p className="tr-screen-meta">Ronda 3 · cupo 8 · {screen.language}</p>
@@ -465,9 +482,9 @@ function CodingScreen({
       <div className="tr-screen-lane" aria-hidden="true">
         <span
           className="tr-screen-runner"
-          style={{ left: `calc(${progress * 100}% - ${progress * 2.4}vmin)` }}
+          style={{ left: `calc((100% - 6vmin) * ${progress})` }}
         >
-          <MiniSprite name={screen.name} vmin={3.4} />
+          <MiniSprite name={screen.name} vmin={3.4} state={runner} />
         </span>
         <PixelIcon name="flag" className="tr-screen-flag" />
       </div>
@@ -521,9 +538,35 @@ function CodingScreen({
 
 export function CodingScene() {
   const elapsed = useElapsed(60);
+  const portrait = usePortrait();
+  const grid = useRef<HTMLDivElement>(null);
+  const focus = elapsed > 9600;
+  const [zoom, setZoom] = useState<string>();
+  // Acercamiento a la pantalla de Leo, medido sobre su tarjeta: en 16:9 la
+  // tarjeta entera al centro; en vertical, más cerca y con el personaje, el
+  // nombre y el veredicto (todo a la izquierda) dentro del cuadro.
+  useEffect(() => {
+    const box = grid.current;
+    const card = box?.firstElementChild as HTMLElement | null;
+    if (!focus || !box || !card) return;
+    const W = box.offsetWidth;
+    const H = box.offsetHeight;
+    const x = card.offsetLeft;
+    const y = card.offsetTop;
+    const w = card.offsetWidth;
+    const h = card.offsetHeight;
+    const k = portrait ? 1.4 : Math.min((W * 0.92) / w, (H * 0.86) / h);
+    const tx = portrait ? W * 0.03 - W / 2 - k * (x - W / 2) : -k * (x + w / 2 - W / 2);
+    const ty = -k * (y + h / 2 - H / 2);
+    setZoom(`translate(${tx}px, ${ty}px) scale(${k})`);
+  }, [focus, portrait]);
   return (
     <div className="tr-coding">
-      <div className={cn("tr-grid", elapsed > 9600 && "tr-grid-focus")}>
+      <div
+        ref={grid}
+        className={cn("tr-grid", focus && "tr-grid-focus")}
+        style={focus && zoom ? { transform: zoom } : undefined}
+      >
         {SCREENS.map((screen, index) => (
           <CodingScreen
             key={screen.name}

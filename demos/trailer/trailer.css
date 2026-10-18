@@ -957,7 +957,7 @@ body,
     grid-template-rows: repeat(4, minmax(0, 1fr));
     gap: 2.4vw;
     transform: none;
-    transform-origin: 50% 0;
+    transform-origin: 50% 50%;
   }
   .tr-grid-focus {
     transform: translateY(2vw) scale(1.9);
