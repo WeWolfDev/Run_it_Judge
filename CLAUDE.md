@@ -217,6 +217,14 @@ actualizar). Resumen: backup, chequeo previo de solo lectura,
 VITE_API_URL="" VITE_SOCKET_URL="/" npm run build
 ```
 
+Sin `VITE_SOCKET_URL` el socket usa el mismo origen (`/`): un build sin ese flag
+dejaba a todos sin eventos en vivo y había que recargar para ver cada cambio.
+
+Nginx manda al backend solo los prefijos de la regex de `deploy/nginx/*.conf`
+(el resto va al frontend y responde 404 con HTML). Un prefijo nuevo en
+`index.js` va también en las plantillas y en `/etc/nginx` del servidor;
+`test/nginx-routes-contract.test.js` falla si falta en las plantillas.
+
 ### Smoke y E2E
 
 ```bash

@@ -226,8 +226,6 @@ export interface RunItEvents {
   "participant:progress": ParticipantProgressEvent;
   "round:closing_soon": RoundClosingSoonEvent;
   "round:closed": RoundClosedEvent;
-  /** El admin creó/pasó a la siguiente ronda (pendiente): refrescar pista y público. */
-  "round:created": { round_id: string; round_number: number; participants: number };
   "round:paused": RoundPausedEvent;
   "tournament:winner": TournamentWinnerEvent;
   // El admin avanzó la ceremonia de premios (o terminó el torneo): hay que
@@ -240,8 +238,8 @@ export interface RunItEvents {
   "hits:applied": { round_id: string; poll_id: string; hit: string };
   // Un hit cambió el reloj o el cupo de la ronda.
   "round:updated": { round_id: string; ends_at: string; capacity: number };
-  // Hay una ronda nueva (la primera o la siguiente) o cambió el plan de rondas:
-  // quien espera sin ronda activa vuelve a leer la sala de espera.
+  // Hay una ronda nueva (la primera o la siguiente, pendiente) o cambió el plan
+  // de rondas: la sala de espera, la pista y el público vuelven a leerla.
   "round:created": { round_id: string; round_number: number; participants: number };
   "rounds:planned": { tournament_id: string };
   // El admin corrigió el problema (nombre, enunciado, pista o casos).
@@ -256,6 +254,8 @@ export interface RunItEvents {
 
 export interface RunItFeed {
   on<K extends keyof RunItEvents>(event: K, handler: (payload: RunItEvents[K]) => void): void;
+  /** Si el socket está conectado ahora (para decidir cuánto sondear de respaldo). */
+  connected(): boolean;
   disconnect(): void;
 }
 
@@ -272,8 +272,10 @@ export const SILK_COUNT = 10;
 export const MAX_PROBLEM_PAYLOAD_BYTES = 16 * 1024 * 1024;
 
 export function createSocketFeed(roundId = import.meta.env["VITE_ROUND_ID"]): RunItFeed | null {
-  const socketUrl = import.meta.env["VITE_SOCKET_URL"];
-  if (!socketUrl) return null;
+  // Sin VITE_SOCKET_URL, el mismo origen: en producción Nginx enruta /socket.io/
+  // al backend. Antes devolvía null y un build hecho sin el flag dejaba a todos
+  // sin eventos en vivo (había que recargar la página para ver cada cambio).
+  const socketUrl = import.meta.env["VITE_SOCKET_URL"] || "/";
 
   const handlers = new Map<string, Array<(payload: unknown) => void>>();
   let socket: import("socket.io-client").Socket | null = null;
@@ -312,6 +314,7 @@ export function createSocketFeed(roundId = import.meta.env["VITE_ROUND_ID"]): Ru
   });
 
   return {
+    connected: () => Boolean(socket?.connected),
     on(event, handler) {
       const list = handlers.get(event) ?? [];
       list.push(handler as (payload: unknown) => void);

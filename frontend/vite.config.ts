@@ -13,4 +13,7 @@ export default defineConfig({
     server: { entry: "server" },
   },
   nitro: { preset: "node-server" },
+  // Los workers del juez de la demo solo (components/solo/judge) importan
+  // Pyodide y Clang desde jsDelivr con import(): necesitan ser módulos ES.
+  vite: { worker: { format: "es" } },
 });

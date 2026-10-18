@@ -115,6 +115,9 @@ SESSION_STORE=redis
 SESSION_TTL_SECONDS=28800
 ADMIN_USERNAME=admin
 ADMIN_ACCESS_CODE=codigo-privado
+# Opcional: cuenta de caster fija, creada al arrancar como la del admin.
+CASTER_USERNAME=caster
+CASTER_ACCESS_CODE=codigo-privado
 RUN_IT_SEED_DEMO=false
 SUBMISSION_CONCURRENCY=4
 ```

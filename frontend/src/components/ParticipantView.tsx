@@ -177,17 +177,27 @@ type RunTab = "samples" | "custom";
 // servidor no responde: guardado por nombre de usuario, salteaba el carrusel en
 // otro torneo o a otra persona con el mismo nombre.
 async function characterChosen(roundId: string, username: string) {
+  return (await participationIn(roundId, username)).chosen;
+}
+
+/**
+ * Lo que el servidor sabe del participante en el torneo de la ronda: si ya
+ * eligió personaje y si quedó eliminado (participants.status). Un eliminado no
+ * se inscribe en las rondas siguientes: el join lo rechazaría y vería el editor
+ * de una ronda que no juega.
+ */
+async function participationIn(roundId: string, username: string) {
   try {
     const me = await getMyParticipation(roundId);
     if (me.participant) {
       // El personaje que cuenta es el del servidor; el local se alinea.
       setSelectedCharacter(username, me.participant.character);
       setCharacterConfirmed(username);
-      return true;
+      return { chosen: true, eliminated: me.participant.status === "eliminated" };
     }
-    return me.has_previous;
+    return { chosen: me.has_previous, eliminated: false };
   } catch {
-    return getCharacterConfirmed(username);
+    return { chosen: getCharacterConfirmed(username), eliminated: false };
   }
 }
 
@@ -225,6 +235,9 @@ export function ParticipantView() {
   const [characterConfirmed, setConfirmedState] = useState<boolean | null>(null);
   // ronda pendiente en la que espera (sala de espera), si no hay activa.
   const [upcoming, setUpcoming] = useState<Awaited<ReturnType<typeof getUpcomingRound>>>(null);
+  // Quedó eliminado del torneo en una ronda anterior (se sabe al cargar, por
+  // ejemplo tras recargar): no juega la ronda activa, solo puede mirarla.
+  const [outOfTournament, setOutOfTournament] = useState(false);
   const serverOffsetMs = useServerClockOffset(setMessage);
   const remaining = useRoundTimer(live?.endsAt ?? 0, serverOffsetMs);
   // Mismo reloj corregido que el cronómetro: todos cuentan hacia el mismo
@@ -233,6 +246,12 @@ export function ParticipantView() {
   const username = getSession()?.username || "demo";
   const roundIdRef = useRef<string | null>(null);
   roundIdRef.current = round?.id ?? null;
+  // Quien quedó fuera del torneo se queda en su despedida: una ronda nueva no
+  // lo saca de ahí (no la juega). Se calcula más abajo, en cada render.
+  const outRef = useRef(false);
+  // La ronda pendiente de la sala de espera, para la sincronización de respaldo.
+  const upcomingIdRef = useRef<string | null>(null);
+  upcomingIdRef.current = upcoming?.id ?? null;
 
   const reload = () => setReloadKey((key) => key + 1);
 
@@ -248,6 +267,7 @@ export function ParticipantView() {
     setParticipant(null);
     setJoinError("");
     setStandings(null);
+    setOutOfTournament(false);
     void (async () => {
       let remote: Awaited<ReturnType<typeof getActiveRound>>;
       try {
@@ -307,11 +327,13 @@ export function ParticipantView() {
       // admin nunca ve un inscripto con el personaje 0 que en realidad no eligió.
       // Eligió en esta visita antes de que hubiera ronda (confirmCharacter dejó
       // la inscripción para acá): sin esto veía la ronda sin estar inscripto.
-      const chosen = (await characterChosen(remote.id, username)) || choseNowRef.current;
+      const me = await participationIn(remote.id, username);
+      const chosen = me.chosen || choseNowRef.current;
       if (cancelled) return;
       setConfirmedState(chosen);
+      setOutOfTournament(me.eliminated);
       setLoad("ready");
-      if (!chosen) return;
+      if (!chosen || me.eliminated) return;
       try {
         // Idempotente en el backend: ON CONFLICT en participants y en round_participants.
         const joined = await joinRound(remote.id, username, getSelectedCharacter(username));
@@ -390,6 +412,10 @@ export function ParticipantView() {
                 advanced: row.final_status === "advanced",
               })),
           );
+          // Igual que con round:closed: quien clasificó pasa solo a la sala de
+          // espera de la siguiente ronda; el eliminado se queda en su despedida.
+          const mine = rows.find((row) => row.participant_id === participantId);
+          if (mine?.final_status === "advanced") setReloadKey((key) => key + 1);
         })
         .catch(() => undefined);
     };
@@ -441,7 +467,8 @@ export function ParticipantView() {
         return;
       }
       // Otra ronda: se vuelve a detectar y a inscribir, sin recargar la página.
-      setReloadKey((key) => key + 1);
+      // Quien quedó eliminado no la juega: sigue en su despedida.
+      if (!outRef.current) setReloadKey((key) => key + 1);
     });
     // Voto del público: el minuto extra y los cupos cambian la ronda en vivo.
     feed.on("round:updated", (event) => {
@@ -457,7 +484,7 @@ export function ParticipantView() {
     // Sin ronda activa (sala de espera o entre rondas): una ronda nueva o un
     // plan cambiado cambian lo que se espera. Se vuelve a leer sin recargar.
     const roundsChanged = () => {
-      if (!roundIdRef.current) setReloadKey((key) => key + 1);
+      if (!roundIdRef.current && !outRef.current) setReloadKey((key) => key + 1);
     };
     feed.on("round:created", roundsChanged);
     feed.on("rounds:planned", roundsChanged);
@@ -560,9 +587,57 @@ export function ParticipantView() {
         }),
       );
     });
+    // Respaldo del socket: si no conecta (un proxy o una red que corta los
+    // websockets) o se perdió un evento, se compara la ronda activa con la de
+    // pantalla cada 8 s; con el socket conectado alcanza cada 30 s. Así ningún
+    // cambio de escena depende de recargar la página.
+    let lastSync = Date.now();
+    const sync = () => {
+      const now = Date.now();
+      if (now - lastSync < (feed.connected() ? 30_000 : 8_000)) return;
+      lastSync = now;
+      void getActiveRound()
+        .then(async (active) => {
+          if (cancelled) return;
+          if (active && active.id !== roundIdRef.current) {
+            // Empezó una ronda (o cambió) y no llegó round:started. Quien quedó
+            // eliminado sigue en su despedida.
+            if (!outRef.current) setReloadKey((key) => key + 1);
+            return;
+          }
+          if (active) {
+            // La misma ronda: reloj, pausa y cupo pueden haber cambiado.
+            const extra = active as { paused?: boolean };
+            setLive(
+              (current) =>
+                current && {
+                  ...current,
+                  endsAt: new Date(active.ends_at).getTime(),
+                  startsAt: toMs(active.starts_at),
+                  paused: Boolean(extra.paused),
+                },
+            );
+            setRound((current) => current && { ...current, capacity: active.capacity });
+            return;
+          }
+          if (roundIdRef.current) {
+            // La ronda de pantalla cerró y no llegó round:closed.
+            recoverResult();
+            return;
+          }
+          // Sala de espera: si apareció o cambió la ronda pendiente, se relee.
+          const next = await getUpcomingRound().catch(() => null);
+          if (!cancelled && (next?.id ?? null) !== upcomingIdRef.current) {
+            setReloadKey((key) => key + 1);
+          }
+        })
+        .catch(() => undefined);
+    };
+    const safety = setInterval(sync, 2000);
     return () => {
       cancelled = true;
       clearTimeout(standingsTimer);
+      clearInterval(safety);
       feed.disconnect();
     };
   }, [joinedRoundId, participantId, username]);
@@ -763,6 +838,7 @@ export function ParticipantView() {
   const character = getSelectedCharacter(username);
 
   const eliminated = closed && myStanding?.advanced === false;
+  outRef.current = eliminated || outOfTournament;
   if (ceremony && !eliminated && (load === "none" || !round || closed)) {
     return <Ceremony ceremony={ceremony} compact />;
   }
@@ -808,6 +884,46 @@ export function ParticipantView() {
         }}
         onSpectate={() => void navigate({ to: "/pista" })}
       />
+    );
+  }
+
+  // Quedó eliminado en una ronda anterior y recargó (o volvió) con otra ronda en
+  // juego: no la juega, así que en vez del editor ve su salida y puede mirar.
+  if (outOfTournament) {
+    return (
+      <section className="rounded-xl border border-border bg-card px-5 py-10 text-center">
+        <div className="flex justify-center">
+          <Sprite index={character} state="out" scale={0.9} />
+        </div>
+        <h1 className="mt-4 text-lg font-semibold text-foreground">Quedaste fuera del torneo</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {round.number ? `La ronda ${round.number} la juegan` : "Esta ronda la juegan"} los
+          clasificados de la anterior. Puedes seguir la carrera en la pista.
+        </p>
+        <div className="mt-5 flex flex-wrap justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => void navigate({ to: "/pista" })}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+          >
+            Seguir mirando la pista
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void logout()
+                .catch(() => undefined)
+                .finally(() => {
+                  clearSession();
+                  void navigate({ to: "/login" });
+                });
+            }}
+            className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
+          >
+            Salir al login
+          </button>
+        </div>
+      </section>
     );
   }
 
