@@ -13,6 +13,8 @@ import { cn } from "@/lib/utils";
 import { homeFor, setSession } from "@/lib/session";
 import { getActiveRound, login, register } from "@/lib/api";
 import { play } from "@/lib/sfx";
+import { LoginModeSelector } from "@/features/caster/LoginModeSelector";
+import { loginModeError, minimumLoginCodeLength, type LoginMode } from "@/features/caster/login";
 
 const PIXEL = { fontFamily: "'Press Start 2P', ui-monospace, monospace" };
 
@@ -44,6 +46,7 @@ function LoginScreen({ onKey }: { onKey: (side: DeckSide) => void }) {
   const navigate = useNavigate();
   const [username, setUsername] = useState("");
   const [accessCode, setAccessCode] = useState("");
+  const [loginMode, setLoginMode] = useState<LoginMode>("participant");
   const [acceptedRules, setAcceptedRules] = useState(false);
   const [showCode, setShowCode] = useState(false);
   const [registerMode, setRegisterMode] = useState(false);
@@ -81,8 +84,13 @@ function LoginScreen({ onKey }: { onKey: (side: DeckSide) => void }) {
     // Matches ACCESS_CODE_LENGTH in run-it-backend/index.js. The old floor of 8
     // came from the retired 22-character codes and silently blocked the
     // 6-character PINs, so the form could never submit one.
-    if (accessCode.trim().length < 6) {
-      setError("Ingresa tu código de acceso (6 caracteres).");
+    const minimumCodeLength = minimumLoginCodeLength(loginMode);
+    if (accessCode.trim().length < minimumCodeLength) {
+      setError(
+        loginMode === "caster"
+          ? "Ingresa el código de caster (al menos 8 caracteres)."
+          : "Ingresa tu código de acceso (6 caracteres).",
+      );
       return;
     }
 
@@ -97,7 +105,13 @@ function LoginScreen({ onKey }: { onKey: (side: DeckSide) => void }) {
     try {
       const result = registerMode
         ? await register(username.trim(), accessCode.trim())
-        : await login(username.trim(), accessCode.trim());
+        : await login(
+            username.trim(),
+            accessCode.trim(),
+            loginMode === "caster" ? "caster" : "non-caster",
+          );
+      const modeError = loginModeError(result.user.role, loginMode);
+      if (modeError) throw new Error(modeError);
       play("coin");
       setSession({ username: result.user.username, role: result.user.role, token: result.token });
       await navigate({ to: homeFor(result.user.role) });
@@ -131,8 +145,16 @@ function LoginScreen({ onKey }: { onKey: (side: DeckSide) => void }) {
           className="w-full max-w-[320px] space-y-3 border-2 border-primary bg-card/85 p-4 shadow-[6px_6px_0_0_var(--primary)] backdrop-blur-sm"
         >
           <p className="text-center text-[10px] text-accent" style={PIXEL}>
-            {registerMode ? "Nuevo jugador" : "Login"}
+            {registerMode ? "Nuevo jugador" : loginMode === "caster" ? "Acceso caster" : "Login"}
           </p>
+          <LoginModeSelector
+            mode={loginMode}
+            onChange={(mode) => {
+              setLoginMode(mode);
+              setRegisterMode(false);
+              setError("");
+            }}
+          />
           <Input
             value={username}
             onChange={(event) => setUsername(event.target.value)}
@@ -147,7 +169,7 @@ function LoginScreen({ onKey }: { onKey: (side: DeckSide) => void }) {
               onChange={(event) => setAccessCode(event.target.value)}
               onKeyDown={() => onKey("right")}
               type={showCode ? "text" : "password"}
-              placeholder="Código de acceso"
+              placeholder={loginMode === "caster" ? "Código de caster" : "Código de acceso"}
               className={cn("login-field pr-10", error && "border-destructive")}
             />
             <button
@@ -192,16 +214,18 @@ function LoginScreen({ onKey }: { onKey: (side: DeckSide) => void }) {
             {loading ? "Cargando..." : registerMode ? "Crear acceso" : "Press start"}
           </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setRegisterMode((mode) => !mode);
-              setError("");
-            }}
-            className="w-full text-center text-xs text-muted-foreground hover:text-foreground hover:underline"
-          >
-            {registerMode ? "Ya tengo un acceso" : "Registrarme con un código"}
-          </button>
+          {loginMode === "participant" && (
+            <button
+              type="button"
+              onClick={() => {
+                setRegisterMode((mode) => !mode);
+                setError("");
+              }}
+              className="w-full text-center text-xs text-muted-foreground hover:text-foreground hover:underline"
+            >
+              {registerMode ? "Ya tengo un acceso" : "Registrarme con un código"}
+            </button>
+          )}
 
           {practiceOpen && (
             <Link to="/practica" className="block text-center text-xs text-accent hover:underline">

@@ -1,4 +1,4 @@
-// Vista del caster: reglas de caster.js y contrato de sus endpoints. DB-free:
+// Vista del caster: contrato del módulo caster. DB-free:
 // las rutas se prueban hasta donde responden sin tocar la base (rol, validación).
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -9,13 +9,16 @@ const crypto = require('node:crypto');
 process.env.DATABASE_URL ||= 'postgres://test:test@127.0.0.1:5432/test';
 process.env.SESSION_STORE = 'memory';
 
-const caster = require('../caster');
+const caster = require('../caster/domain');
+const { seedCasterAccount } = require('../caster/accounts');
 const hits = require('../hits');
 const { fastify, sessions } = require('../index');
 const { pool } = require('../db');
 const { submissionQueue } = require('../queue');
 
-const INDEX_SOURCE = fs.readFileSync(path.join(__dirname, '../index.js'), 'utf8');
+const AUTH_SOURCE = fs.readFileSync(path.join(__dirname, '../index.js'), 'utf8');
+const CASTER_ROUTES_SOURCE = fs.readFileSync(path.join(__dirname, '../caster/routes.js'), 'utf8');
+const CASTER_ACCOUNTS_SOURCE = fs.readFileSync(path.join(__dirname, '../caster/accounts.js'), 'utf8');
 const SCHEMA = fs.readFileSync(path.join(__dirname, '../schema.sql'), 'utf8');
 
 function as(role) {
@@ -24,12 +27,12 @@ function as(role) {
 	return { authorization: `Bearer ${token}` };
 }
 
-/** El bloque de una ruta en index.js, para revisar su SQL. */
+/** El bloque de una ruta en el módulo caster, para revisar su SQL. */
 function routeSource(signature) {
-	const start = INDEX_SOURCE.indexOf(signature);
+	const start = CASTER_ROUTES_SOURCE.indexOf(signature);
 	assert.notEqual(start, -1, `falta la ruta ${signature}`);
-	const end = INDEX_SOURCE.indexOf('\nfastify.', start + signature.length);
-	return INDEX_SOURCE.slice(start, end === -1 ? undefined : end);
+	const end = CASTER_ROUTES_SOURCE.indexOf('\n\tfastify.', start + signature.length);
+	return CASTER_ROUTES_SOURCE.slice(start, end === -1 ? undefined : end);
 }
 
 test('validateCasterName pide entre 3 y 40 caracteres sin contar los espacios del borde', () => {
@@ -48,6 +51,34 @@ test('validateCasterCode: opcional, normalizado y de 8 a 64 letras o dígitos', 
 	for (const bad of ['1234567', 'x'.repeat(65), 42, '--------']) {
 		assert.match(caster.validateCasterCode(bad).error, /entre 8 y 64/);
 	}
+});
+
+test('el alta inicial del caster es opcional y usa caster como nombre predeterminado', async () => {
+	const calls = [];
+	const query = async (...args) => calls.push(args);
+	await seedCasterAccount(query, {});
+	assert.equal(calls.length, 0);
+	await seedCasterAccount(query, { CASTER_ACCESS_CODE: 'codigo-seguro' });
+	assert.equal(calls.length, 1);
+	assert.deepEqual(calls[0][1], ['caster', 'codigo-seguro']);
+	await seedCasterAccount(query, { CASTER_USERNAME: 'narrador', CASTER_ACCESS_CODE: 'otro-codigo' });
+	assert.deepEqual(calls[1][1], ['narrador', 'otro-codigo']);
+});
+
+test('el login filtra el rol elegido antes de crear una sesión', async () => {
+	const invalid = await fastify.inject({
+		method: 'POST',
+		url: '/auth/login',
+		payload: { username: 'caster', accessCode: 'codigo-seguro', roleMode: 'admin' },
+	});
+	assert.equal(invalid.statusCode, 400);
+	const login = AUTH_SOURCE.slice(
+		AUTH_SOURCE.indexOf("fastify.post('/auth/login'"),
+		AUTH_SOURCE.indexOf("fastify.post('/auth/register'"),
+	);
+	assert.match(login, /\$4 = 'caster'/);
+	assert.match(login, /\$4 = 'non-caster'/);
+	assert.ok(login.indexOf('const result = await query') < login.indexOf('const token = crypto.randomUUID()'));
 });
 
 test('POST /casters rechaza un código corto antes de la base', async () => {
@@ -244,16 +275,17 @@ test('el SQL del caster no filtra lo que no corresponde', () => {
 	const overview = routeSource("fastify.get('/caster/overview'");
 	assert.match(overview, /tc->'is_sample' = 'true'::jsonb/, 'de los casos solo salen los ejemplos');
 	for (const route of [list, detail, overview]) assert.match(route, /requireCaster/);
-	const guard = INDEX_SOURCE.slice(INDEX_SOURCE.indexOf('async function requireCaster'));
+	const guard = CASTER_ROUTES_SOURCE.slice(CASTER_ROUTES_SOURCE.indexOf('async function requireCaster'));
 	assert.match(guard.slice(0, 900), /SELECT 1 FROM users WHERE id = \$1 AND role = 'caster'/);
 });
 
 test('la cuenta fija de caster sale de secrets, como la del admin, sin tocarla', () => {
 	const DB_SOURCE = fs.readFileSync(path.join(__dirname, '../db.js'), 'utf8');
-	const block = DB_SOURCE.slice(DB_SOURCE.indexOf('process.env.CASTER_ACCESS_CODE'));
+	const block = CASTER_ACCOUNTS_SOURCE;
 	assert.match(block, /VALUES \(\$1, \$2, 'caster'\)/);
 	assert.match(block, /ON CONFLICT \(access_code\) DO NOTHING/);
-	assert.match(block, /process\.env\.CASTER_USERNAME \|\| 'caster'/);
+	assert.match(block, /env\.CASTER_USERNAME \|\| 'caster'/);
+	assert.match(DB_SOURCE, /seedCasterAccount\(query\)/);
 	// La del admin sigue igual: mismo INSERT y mismo ON CONFLICT.
 	assert.match(DB_SOURCE, /ON CONFLICT \(username\) WHERE role = 'admin' DO NOTHING/);
 });

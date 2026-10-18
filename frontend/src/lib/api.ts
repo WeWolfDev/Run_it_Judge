@@ -31,11 +31,15 @@ async function requestError(response: Response, fallback: string): Promise<Error
   return new Error(fallback);
 }
 
-export async function login(username: string, accessCode: string) {
+export async function login(
+  username: string,
+  accessCode: string,
+  roleMode?: "caster" | "non-caster",
+) {
   const response = await fetch(`${API_URL}/auth/login`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ username, accessCode }),
+    body: JSON.stringify({ username, accessCode, ...(roleMode ? { roleMode } : {}) }),
   });
 
   const body = await response.json();

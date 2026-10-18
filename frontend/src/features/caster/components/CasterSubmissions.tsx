@@ -10,7 +10,7 @@ import {
   type CasterSubmission,
   type CasterSubmissionDetail,
   type CasterSubmissionList,
-} from "@/lib/caster";
+} from "../api";
 import { characterAt } from "@/lib/characters";
 import { createSocketFeed, formatClock, LANGUAGE_LABEL, verdictLabel } from "@/lib/runit";
 import { cn } from "@/lib/utils";

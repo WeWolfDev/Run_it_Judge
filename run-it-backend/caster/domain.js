@@ -1,6 +1,4 @@
-// Vista del caster: quien narra el torneo ve la ronda, el voto y el código de
-// los envíos, sin poder tocar nada. Funciones puras: index.js pone las rutas y
-// la base. Contrato en test/caster-contract.test.js.
+// Reglas puras del módulo caster. Contrato en test/caster-contract.test.js.
 
 // Las cuentas de caster leen el código de todos: llevan un código más largo que
 // el PIN de 6 de los participantes.

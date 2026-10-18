@@ -30,7 +30,7 @@ Run It es un torneo de programación por rondas, con una pista pública en tiemp
 ### Frontend
 
 - React + TypeScript + Vite/TanStack Router en `frontend/`.
-- `/login`: entrada por rol.
+- `/login`: entrada de admins, participantes y casters; el acceso de espectador está en `/pista`.
 - `/admin`: panel administrativo protegido.
 - `/participante`: vista de participante protegida.
 - `/pista`: vista pública para espectadores, sin login.
@@ -236,11 +236,19 @@ socket.emit("round:snapshot", roundId);
 
 - Cuentas de solo lectura para quien narra el torneo, rol `caster`. Las crea el
   admin en Acceso → Casters; entran por `/auth/login` con su nombre y un código
-  de 12 caracteres (más largo que el PIN: leen el código de todos).
+  de 12 caracteres (más largo que el PIN: leen el código de todos). En `/login`
+  se elige la opción Caster; el registro con PIN solo está disponible para participantes.
+- El módulo vive en `run-it-backend/caster/` (reglas, rutas y alta inicial) y
+  `frontend/src/features/caster/` (API, login, administración y pantalla). El
+  rol se integra con auth y navegación compartidas.
+- Para provisionar `caster` al arrancar producción, configura `CASTER_ACCESS_CODE`
+  en el archivo protegido `run-it-backend/secrets`; `CASTER_USERNAME` es opcional
+  y por defecto vale `caster`. Sin un código configurado no se crea una cuenta.
+  El valor se muestra como código de acceso en login, no es una contraseña.
 - `/caster` muestra el enunciado y los ejemplos de la ronda, la pista (o una
   pizarra para explicar), los envíos con su veredicto y su código, y el voto.
 - El código de un envío Aceptado no sale hasta que la ronda cierra
-  (`isCodeLocked` en `caster.js`). Con niebla el caster tampoco ve los envíos.
+  (`isCodeLocked` en `run-it-backend/caster/domain.js`). Con niebla el caster tampoco ve los envíos.
 - Una cuenta borrada pierde el acceso en el acto: `requireCaster` revisa que el
   usuario siga existiendo, aunque su sesión siga en Redis.
 

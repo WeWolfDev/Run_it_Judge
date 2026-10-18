@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 
-// Estado de la pizarra del caster (components/caster/Whiteboard.tsx): los
+// Estado de la pizarra del caster (components/Whiteboard.tsx): los
 // elementos dibujados y el historial para deshacer y rehacer. Vive en el padre,
 // así lo dibujado sobrevive al cambiar entre la pista y la pizarra.
 
