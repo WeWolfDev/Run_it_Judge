@@ -1,5 +1,5 @@
-// Efectos de sonido 8-bit con ZzFX (src/lib/zzfx.ts). Arrancan apagados; la
-// preferencia queda en el navegador de cada usuario.
+// Efectos de sonido 8-bit con ZzFX (src/lib/zzfx.ts). Arrancan encendidos; quien
+// los apaga desde la barra lo deja guardado en su navegador.
 import { setAudioContext, zzfx } from "@/lib/zzfx";
 
 let context: AudioContext | null = null;
@@ -21,10 +21,35 @@ const listeners = new Set<() => void>();
 
 export function soundOn() {
   try {
-    return localStorage.getItem(KEY) === "1";
+    return localStorage.getItem(KEY) !== "0";
   } catch {
-    return false;
+    return true;
   }
+}
+
+function audio() {
+  if (!context) {
+    context = new AudioContext();
+    setAudioContext(context);
+  }
+  return context;
+}
+
+// Safari en Mac y Chrome o Edge en Windows dejan el audio suspendido hasta el
+// primer gesto. Se desbloquea con el primer clic, toque o tecla, así también
+// suenan los efectos que llegan solos por eventos en vivo (veredicto, clasificar).
+if (typeof window !== "undefined") {
+  const unlock = () => {
+    try {
+      void audio().resume();
+    } catch {
+      /* sin audio */
+    }
+    window.removeEventListener("pointerdown", unlock);
+    window.removeEventListener("keydown", unlock);
+  };
+  window.addEventListener("pointerdown", unlock);
+  window.addEventListener("keydown", unlock);
 }
 
 export function setSoundOn(on: boolean) {
@@ -47,11 +72,7 @@ export function onSoundChange(listener: () => void) {
 export function play(name: SoundName) {
   if (!soundOn()) return;
   try {
-    if (!context) {
-      context = new AudioContext();
-      setAudioContext(context);
-    }
-    void context.resume();
+    void audio().resume();
     zzfx(...SFX[name]);
   } catch {
     /* sin audio */
