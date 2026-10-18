@@ -227,6 +227,16 @@ test('el SQL del caster no filtra lo que no corresponde', () => {
 	assert.match(guard.slice(0, 900), /SELECT 1 FROM users WHERE id = \$1 AND role = 'caster'/);
 });
 
+test('la cuenta fija de caster sale de secrets, como la del admin, sin tocarla', () => {
+	const DB_SOURCE = fs.readFileSync(path.join(__dirname, '../db.js'), 'utf8');
+	const block = DB_SOURCE.slice(DB_SOURCE.indexOf('process.env.CASTER_ACCESS_CODE'));
+	assert.match(block, /VALUES \(\$1, \$2, 'caster'\)/);
+	assert.match(block, /ON CONFLICT \(access_code\) DO NOTHING/);
+	assert.match(block, /process\.env\.CASTER_USERNAME \|\| 'caster'/);
+	// La del admin sigue igual: mismo INSERT y mismo ON CONFLICT.
+	assert.match(DB_SOURCE, /ON CONFLICT \(username\) WHERE role = 'admin' DO NOTHING/);
+});
+
 test.after(async () => {
 	await fastify.close();
 	await submissionQueue.close();

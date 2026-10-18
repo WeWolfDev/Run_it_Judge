@@ -81,6 +81,18 @@ async function initDb() {
     console.warn('ADMIN_ACCESS_CODE no definido: no se crea el usuario admin');
   }
 
+  // Cuenta de caster fija, igual que la del admin: CASTER_USERNAME y
+  // CASTER_ACCESS_CODE en secrets. Sin el código no se crea nada. Si el admin la
+  // borra desde el panel, vuelve en el próximo arranque.
+  if (process.env.CASTER_ACCESS_CODE) {
+    await pool.query(
+      `INSERT INTO users (username, access_code, role)
+       VALUES ($1, $2, 'caster')
+       ON CONFLICT (access_code) DO NOTHING`,
+      [process.env.CASTER_USERNAME || 'caster', process.env.CASTER_ACCESS_CODE],
+    );
+  }
+
   if (process.env.RUN_IT_SEED_DEMO !== 'true') return;
 
   await pool.query(`
