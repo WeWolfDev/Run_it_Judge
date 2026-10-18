@@ -7,7 +7,7 @@ demo = sys.argv[1]
 here = os.path.dirname(os.path.abspath(__file__))
 dist = os.path.join(here, "dist", demo)
 html = open(os.path.join(dist, "index.html")).read()
-titles = {"admin": "Panel Admin Run It", "participante": "Vista Participante Run It", "pista": "Pista Run It", "login": "Login Run It", "proyeccion": "Pista proyectada Run It", "premios": "Ceremonia de premios Run It", "eliminado": "Eliminado Run It", "publico": "Vistas del público Run It", "votos": "Voto del público Run It", "solo": "Run It Demo Solo", "caster": "Run It Caster", "trailer": "Run It Tráiler"}
+titles = {"admin": "Panel Admin Run It", "participante": "Vista Participante Run It", "pista": "Pista Run It", "login": "Login Run It", "proyeccion": "Pista proyectada Run It", "premios": "Ceremonia de premios Run It", "eliminado": "Eliminado Run It", "publico": "Vistas del público Run It", "votos": "Voto del público Run It", "solo": "Run It Demo Solo", "caster": "Run It Caster", "trailer": "Run It Tráiler", "stream": "Run It en vivo"}
 
 css_files = re.findall(r'<link rel="stylesheet" crossorigin href="\./(assets/[^"]+\.css)">', html)
 css = "".join(open(os.path.join(dist, f)).read() for f in css_files)
@@ -59,7 +59,7 @@ if demo != "login":
     used_public |= {n for n in public if n.startswith("chars/")}
 # El tráiler se sube a redes: solo personajes con licencia libre (Tiny Heroes
 # de CraftPix, *_Monster_*). El resto de la colección tiene licencia pendiente.
-if demo == "trailer":
+if demo in ("trailer", "stream"):
     used_public = {n for n in used_public
                    if not (n.startswith("chars/") and "_Monster_" not in n)
                    and not n.startswith("character-")}
