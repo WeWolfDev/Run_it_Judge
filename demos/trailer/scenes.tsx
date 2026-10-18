@@ -17,7 +17,10 @@ import type { Ceremony as CeremonyData, CeremonyAward } from "@/lib/api";
 import { confetti } from "@/lib/confetti";
 import { characterAt } from "@/lib/characters";
 import { formatClock, verdictLabel } from "@/lib/runit";
+import { play } from "@/lib/sfx";
 import { cn } from "@/lib/utils";
+
+import { score } from "./audio";
 
 import { boardOf, characterOf, createRace, stepRace, type Race } from "./sim";
 
@@ -27,6 +30,21 @@ import { boardOf, characterOf, createRace, stepRace, type Race } from "./sim";
 const PIXEL: CSSProperties = {
   fontFamily: "'Press Start 2P', ui-monospace, monospace",
 };
+
+/** Pantalla vertical (celular): la pista y las pantallas de código cambian de composición. */
+export function usePortrait() {
+  const query = "(max-aspect-ratio: 1/1)";
+  const [portrait, setPortrait] = useState(
+    () => window.matchMedia(query).matches,
+  );
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const update = () => setPortrait(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  return portrait;
+}
 
 /** Re-render periódico: las escenas animan por tiempo transcurrido. */
 function useElapsed(stepMs = 100) {
@@ -76,7 +94,23 @@ function Arcade({
 }
 
 /** Frase en tipografía cinética: cada palabra entra con su retardo. */
-function Words({
+function Words(props: {
+  text: string;
+  accent?: string[];
+  size?: "md" | "lg" | "xl";
+}) {
+  // Un "blip" por palabra, al ritmo en que entran (mismo retardo que el CSS).
+  const count = props.text.split(" ").length;
+  useEffect(() => {
+    const timers = Array.from({ length: count }, (_, i) =>
+      setTimeout(() => score.hit("blip"), 150 + i * 130),
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [count]);
+  return <WordsText {...props} />;
+}
+
+function WordsText({
   text,
   accent = [],
   size = "md",
@@ -155,11 +189,20 @@ export function TrackScene() {
     return () => clearInterval(id);
   }, []);
   const r = race.current;
+  const portrait = usePortrait();
   return (
     <div className="tr-track">
-      <div className="tr-camera">
-        <ProjectedTrack round={r.round} board={boardOf(r)} events={r.events} />
-      </div>
+      {portrait ? (
+        <PortraitTrack race={r} />
+      ) : (
+        <div className="tr-camera">
+          <ProjectedTrack
+            round={r.round}
+            board={boardOf(r)}
+            events={r.events}
+          />
+        </div>
+      )}
       <div className="tr-lower-third tr-lower-third-brief">
         <span className="tr-lt-tag" style={PIXEL}>
           En vivo
@@ -168,6 +211,96 @@ export function TrackScene() {
           Ronda 3 · <b>20 jugadores</b> · clasifican 8
         </span>
       </div>
+    </div>
+  );
+}
+
+/**
+ * La pista en vertical: la de /pista está pensada para un proyector horizontal.
+ * Mismos datos (la simulación), en carriles que entran en el ancho del celular.
+ */
+function PortraitTrack({ race }: { race: Race }) {
+  const board = boardOf(race);
+  const lanes = board.slice(0, 10);
+  const solved = board.filter((entry) => entry.solved_at).length;
+  const now = Date.now();
+  const left = Math.max(0, race.round.endsAt - now);
+  const latest = race.events[0];
+  const announce =
+    latest?.kind === "solved" && now - latest.at < 2600 ? latest : null;
+  return (
+    <div className="tr-pt">
+      <header className="tr-pt-head">
+        <div className="min-w-0">
+          <p className="tr-pt-brand" style={PIXEL}>
+            Run It
+          </p>
+          <p className="tr-pt-round">
+            Ronda {race.round.number} · {race.round.problem}
+          </p>
+        </div>
+        <p className="tr-pt-clock" style={PIXEL}>
+          {formatClock(left)}
+        </p>
+      </header>
+      <p className="tr-pt-quota">
+        <PixelIcon name="trophy" className="h-[3.6vw] w-[3.6vw]" /> Clasificados{" "}
+        <b>
+          {solved}/{race.round.capacity}
+        </b>{" "}
+        · {board.length} jugadores
+      </p>
+      <ol className="tr-pt-lanes">
+        {lanes.map((entry, index) => {
+          const pct = Number(entry.best_pass_percentage);
+          const done = Boolean(entry.solved_at);
+          return (
+            <li
+              key={entry.participant_id}
+              className={cn(
+                "tr-pt-lane",
+                done && "tr-pt-lane-done",
+                index === race.round.capacity - 1 && "tr-pt-cut",
+              )}
+            >
+              <span className="tr-pt-rank" style={PIXEL}>
+                {index + 1}
+              </span>
+              <span className="tr-pt-runway">
+                <span className="tr-pt-name">
+                  {entry.display_name} <i>{Math.round(pct)}%</i>
+                </span>
+                <span
+                  className="tr-pt-runner"
+                  style={{ left: `calc(${pct}% - ${pct * 0.09}vw)` }}
+                >
+                  <MiniSprite name={entry.display_name} vmin={8} />
+                </span>
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+      <ul className="tr-pt-feed">
+        {race.events.slice(0, 4).map((event) => (
+          <li
+            key={event.id}
+            className={cn("tr-pt-event", `tr-pt-${event.kind}`)}
+          >
+            {event.kind === "solved"
+              ? `¡${event.name} clasifica! ${event.arrival}.°`
+              : event.kind === "fail"
+                ? `${event.name} falló un envío (+30 s)`
+                : `${event.name} pasa ${event.passed}/${event.total} tests`}
+          </li>
+        ))}
+      </ul>
+      {announce && (
+        <div key={announce.id} className="tr-pt-announce animate-run-it-pop">
+          <MiniSprite name={announce.name} vmin={16} />
+          <p style={PIXEL}>¡{announce.name} clasifica!</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -328,10 +461,11 @@ function CodingScreen({
   const accepted = screen.verdict === "accepted";
   const fired = useRef(false);
   useEffect(() => {
-    if (judged && accepted && !fired.current) {
-      fired.current = true;
-      confetti({ x: 0.27, y: 0.3 });
-    }
+    if (!judged || fired.current) return;
+    fired.current = true;
+    // Los mismos efectos de la app (ZzFX): aceptado o fallo.
+    play(accepted ? "win" : "error");
+    if (accepted) confetti({ x: 0.27, y: 0.3 });
   }, [judged, accepted]);
   const clock = 4 * 60_000 + 37_000 - elapsed;
   const progress = judged ? screen.passed / 30 : 0.2 + typed * 0.25;
@@ -622,6 +756,10 @@ export function OutroScene() {
       </div>
       <p className="tr-outro-run" style={PIXEL}>
         Run It
+      </p>
+      <p className="tr-outro-credits">
+        Personajes: Tiny Heroes de CraftPix.net · Fondos: ansimuz (CC0) · Pista:
+        Kenney (CC0) · Música original
       </p>
       <div className="tr-outro-fade" aria-hidden="true" />
     </div>

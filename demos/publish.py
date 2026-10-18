@@ -57,6 +57,12 @@ files = {f"assets/{n}": os.path.join(dist, "assets", n) for n in os.listdir(os.p
 # Las hojas de personajes se piden con rutas armadas en tiempo de ejecución.
 if demo != "login":
     used_public |= {n for n in public if n.startswith("chars/")}
+# El tráiler se sube a redes: solo personajes con licencia libre (Tiny Heroes
+# de CraftPix, *_Monster_*). El resto de la colección tiene licencia pendiente.
+if demo == "trailer":
+    used_public = {n for n in used_public
+                   if not (n.startswith("chars/") and "_Monster_" not in n)
+                   and not n.startswith("character-")}
 # Los casos de la demo solo se bajan con rutas armadas en tiempo de ejecución.
 if demo == "solo":
     used_public |= {n for n in public if n.startswith("solo-tests/")}

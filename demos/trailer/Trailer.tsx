@@ -8,6 +8,8 @@ import {
 
 import { cn } from "@/lib/utils";
 
+import { score, type Hit, type Section } from "./audio";
+
 import {
   AWARD_MS,
   AwardsScene,
@@ -24,6 +26,30 @@ import {
 // entre cada una, y deja saltar a cualquiera para grabar clips sueltos.
 // Teclas: Espacio reproducir/pausar el avance · ← → escena · 1-9, 0 · R desde
 // el inicio · F pantalla completa · H ocultar controles.
+
+/** Qué sección de la música suena en cada escena. */
+const SECTION: Record<string, Section> = {
+  intro: "intro",
+  lema: "build",
+  pista: "full",
+  enfrentate: "build",
+  codigo: "full",
+  ganador: "build",
+  campeon: "triumph",
+  "premios-titulo": "build",
+  premios: "triumph",
+  solo: "full",
+  animas: "build",
+  evento: "full",
+  logos: "outro",
+};
+/** El golpe de sonido de cada tipo de corte. */
+const CUT_HIT: Record<string, Hit> = {
+  flash: "impact",
+  glitch: "glitch",
+  boot: "boot",
+  white: "shimmer",
+};
 
 type Scene = {
   id: string;
@@ -161,11 +187,21 @@ export function Trailer() {
   const scene = SCENES[index]!;
   const done = useRef(false);
 
+  const [muted, setMuted] = useState(false);
+
   const go = useCallback((next: number) => {
     done.current = false;
     setIndex(Math.max(0, Math.min(SCENES.length - 1, next)));
     setTake((n) => n + 1);
   }, []);
+
+  // Música: cada escena pone su sección y su corte suena.
+  useEffect(() => {
+    if (!started) return;
+    score.setSection(SECTION[scene.id] ?? "full", take <= 1);
+    score.hit(CUT_HIT[scene.cut] ?? "impact");
+  }, [started, index, take, scene.id, scene.cut]);
+  useEffect(() => () => score.stop(), []);
 
   // Avance automático: cada escena dura lo suyo; al terminar la última, negro.
   useEffect(() => {
@@ -217,15 +253,16 @@ export function Trailer() {
         <p className="tr-start-eyebrow">Run It · tráiler</p>
         <h1 className="tr-start-title">Reproducción para grabar clips</h1>
         <p className="tr-start-copy">
-          {SCENES.length} escenas, {Math.round(TOTAL_MS / 1000)} s. Graba la
-          ventana en pantalla completa a 16:9 (1920×1080) para que la pista y
-          los textos queden a escala.
+          {SCENES.length} escenas, {Math.round(TOTAL_MS / 1000)} s. Graba en
+          pantalla completa a 16:9 (1920×1080), o en el celular en vertical
+          (9:16) para historias y reels.
         </p>
         <div className="tr-start-actions">
           <button
             type="button"
             className="tr-btn tr-btn-primary"
             onClick={() => {
+              score.start();
               toggleFullscreen(true);
               setStarted(true);
               go(0);
@@ -236,7 +273,10 @@ export function Trailer() {
           <button
             type="button"
             className="tr-btn"
-            onClick={() => setStarted(true)}
+            onClick={() => {
+              score.start();
+              setStarted(true);
+            }}
           >
             Reproducir aquí
           </button>
@@ -282,6 +322,17 @@ export function Trailer() {
           >
             {playing ? "Pausar" : "Seguir"}
           </button>
+          <button
+            type="button"
+            className="tr-hud-btn"
+            aria-pressed={!muted}
+            onClick={() => {
+              score.setMuted(!muted);
+              setMuted(!muted);
+            }}
+          >
+            Música: {muted ? "no" : "sí"}
+          </button>
           {SCENES.map((s, i) => (
             <button
               key={s.id}
@@ -293,6 +344,20 @@ export function Trailer() {
               {i < 9 ? i + 1 : i === 9 ? 0 : "·"} {s.label}
             </button>
           ))}
+          <button
+            type="button"
+            className="tr-hud-btn"
+            onClick={() => go(index - 1)}
+          >
+            ◀
+          </button>
+          <button
+            type="button"
+            className="tr-hud-btn"
+            onClick={() => go(index + 1)}
+          >
+            ▶
+          </button>
           <button type="button" className="tr-hud-btn" onClick={() => go(0)}>
             Desde el inicio
           </button>

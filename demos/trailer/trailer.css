@@ -780,3 +780,257 @@ body,
   background: rgb(7 4 15 / 0.85);
   border: 2px solid var(--gold);
 }
+
+/* ── Vertical (celular, 9:16) ──────────────────────────────────────────────
+   La pista tiene su propia composición (PortraitTrack); el resto se reacomoda
+   con estas reglas. En vertical vmin es el ancho: los tamaños se ajustan en vw. */
+
+.tr-pt {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 2vw;
+  padding: calc(5vw + env(safe-area-inset-top, 0px)) 4vw calc(4vw + env(safe-area-inset-bottom, 0px));
+  background:
+    radial-gradient(ellipse at 50% 0%, color-mix(in oklch, var(--primary) 22%, transparent), transparent 60%),
+    var(--background);
+  color: var(--foreground);
+  animation: tr-zoom-in 900ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.tr-pt-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 3vw;
+}
+.tr-pt-brand {
+  font-size: 5vw;
+  color: var(--primary);
+}
+.tr-pt-round {
+  margin-top: 1.5vw;
+  font-family: "Pixelify Sans", system-ui, sans-serif;
+  font-size: 4vw;
+}
+.tr-pt-clock {
+  font-size: 8vw;
+  font-variant-numeric: tabular-nums;
+}
+.tr-pt-quota {
+  display: flex;
+  align-items: center;
+  gap: 1.5vw;
+  font-size: 3.4vw;
+  color: var(--muted-foreground);
+}
+.tr-pt-quota b {
+  color: var(--success);
+}
+.tr-pt-lanes {
+  display: grid;
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 1vw;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tr-pt-lane {
+  position: relative;
+  display: grid;
+  grid-template-columns: 7vw minmax(0, 1fr);
+  align-items: center;
+  gap: 2vw;
+  padding-right: 3vw;
+  border: 1px solid var(--border);
+  border-radius: 2vw;
+  background: color-mix(in oklch, var(--card) 85%, transparent);
+  background-image: linear-gradient(90deg, transparent calc(100% - 3vw), repeating-conic-gradient(#fff 0 25%, #111 0 50%) calc(100% - 3vw) 0 / 1.5vw 1.5vw);
+}
+.tr-pt-lane-done {
+  border-color: var(--success);
+  background-color: color-mix(in oklch, var(--success) 14%, var(--card));
+}
+.tr-pt-cut::after {
+  content: "corte · clasifican 8";
+  position: absolute;
+  right: 0;
+  bottom: -2.6vw;
+  z-index: 2;
+  padding: 0.4vw 1.6vw;
+  background: var(--danger);
+  color: #fff;
+  font-family: "Press Start 2P", ui-monospace, monospace;
+  font-size: 2vw;
+}
+.tr-pt-rank {
+  text-align: center;
+  font-size: 3.4vw;
+}
+.tr-pt-runway {
+  position: relative;
+  height: 100%;
+  min-height: 9vw;
+}
+.tr-pt-name {
+  position: absolute;
+  top: 0.8vw;
+  left: 0;
+  font-family: "Pixelify Sans", system-ui, sans-serif;
+  font-size: 3.4vw;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tr-pt-name i {
+  font-style: normal;
+  color: var(--muted-foreground);
+}
+.tr-pt-runner {
+  position: absolute;
+  bottom: 0;
+  transition: left 1.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.tr-pt-feed {
+  display: grid;
+  gap: 1.2vw;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tr-pt-event {
+  padding: 1.6vw 2.4vw;
+  border-radius: 1.6vw;
+  background: color-mix(in oklch, var(--card) 90%, transparent);
+  font-size: 3.2vw;
+  animation: tr-fade-up 400ms both;
+}
+.tr-pt-solved {
+  background: color-mix(in oklch, var(--success) 25%, var(--card));
+  color: var(--success);
+}
+.tr-pt-fail {
+  color: var(--danger);
+}
+.tr-pt-announce {
+  position: absolute;
+  left: 6vw;
+  right: 6vw;
+  top: 40%;
+  z-index: 5;
+  display: grid;
+  justify-items: center;
+  gap: 2vw;
+  padding: 4vw;
+  border: 3px solid var(--success);
+  background: color-mix(in oklch, #07040f 88%, transparent);
+  box-shadow: 0 0 6vw color-mix(in oklch, var(--success) 45%, transparent);
+  text-align: center;
+}
+.tr-pt-announce p {
+  font-size: 4.6vw;
+  line-height: 1.4;
+  color: var(--success);
+}
+
+@media (max-aspect-ratio: 1/1) {
+  /* Títulos: un poco más grandes, el ancho es lo que manda. */
+  .tr-words-md { font-size: 5.6vw; }
+  .tr-words-lg { font-size: 7.4vw; }
+  .tr-words-xl { font-size: 12vw; }
+  .tr-words { max-width: 90vw; }
+  .tr-logo { font-size: 17vw; }
+  .tr-kicker { font-size: 4.4vw; letter-spacing: 0.3em; }
+  .tr-under { font-size: 3.2vw; }
+  .tr-title-stage { padding-inline: 5vw; }
+  .tr-sun { width: 70vw; height: 70vw; bottom: 34%; }
+  .tr-floor { inset: 64% -80% -10% -80%; }
+  .tr-runners { bottom: 18%; }
+
+  /* Pantallas de código: una columna, sin perspectiva, letra legible. */
+  .tr-grid {
+    inset: calc(4vw + env(safe-area-inset-top, 0px)) 3vw calc(26vw + env(safe-area-inset-bottom, 0px));
+    grid-template-columns: 1fr;
+    grid-template-rows: repeat(4, minmax(0, 1fr));
+    gap: 2.4vw;
+    transform: none;
+    transform-origin: 50% 0;
+  }
+  .tr-grid-focus {
+    transform: translateY(2vw) scale(1.9);
+  }
+  .tr-screen {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    border-radius: 2.4vw;
+  }
+  .tr-screen-lane {
+    display: none;
+  }
+  .tr-screen-top {
+    gap: 2vw;
+    padding: 1.6vw 2.4vw;
+  }
+  .tr-screen-name { font-size: 3.8vw; }
+  .tr-screen-meta { font-size: 2.4vw; }
+  .tr-screen-clock { font-size: 3.8vw; }
+  .tr-editor { margin: 1.4vw 2.4vw 0; }
+  .tr-editor-tab { font-size: 2.4vw; padding: 1vw 2vw; }
+  .tr-code { font-size: 2.6vw; padding: 1.2vw 2vw; }
+  .tr-code-line { grid-template-columns: 4.4vw 1fr; }
+  .tr-caret { width: 1.6vw; height: 3vw; }
+  .tr-screen-bottom { min-height: 0; padding: 1.4vw 2.4vw; }
+  .tr-screen-status { font-size: 2.6vw; }
+  .tr-verdict { font-size: 2.4vw; padding: 1.2vw 2vw; }
+
+  /* Rótulos y premios abajo, a lo ancho. */
+  .tr-lower-third {
+    left: 4vw;
+    right: 4vw;
+    bottom: calc(5vw + env(safe-area-inset-bottom, 0px));
+    padding: 2vw 3vw 2vw 2vw;
+  }
+  .tr-lt-tag { font-size: 2.4vw; padding: 1.4vw 1.8vw; }
+  .tr-lt-text { font-size: 3.8vw; }
+  .tr-gifts {
+    left: 50%;
+    right: auto;
+    translate: -50% 0;
+    font-size: 3vw;
+    bottom: calc(6vw + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Evento y salida. */
+  .tr-event-cta { font-size: 3vw; }
+  .tr-outro-logos { flex-direction: column; gap: 4vw; }
+  .tr-outro-logo { width: 42vw; height: 42vw; }
+  .tr-outro-x { font-size: 10vw; }
+  .tr-outro-run { font-size: 4vw; }
+
+  /* Controles: solo anterior, pausa y siguiente. */
+  .tr-hud-chip:not(.tr-hud-chip-on) {
+    display: none;
+  }
+}
+
+@media (max-aspect-ratio: 1/1) {
+  .tr-logo { font-size: 13vw; white-space: nowrap; }
+  .tr-event-title { font-size: 15vw !important; }
+  .tr-event-box { width: 84vw !important; padding: 4vw !important; }
+  .tr-event-box > * + * { margin-top: 2.4vw !important; }
+  .tr-event-box p { font-size: 3.6vw !important; }
+  .tr-event-box .tr-fake-field { min-height: 10vw; padding: 0 3vw; }
+  .tr-event-box .login-start { padding-block: 3vw !important; }
+  .tr-event-cta { font-size: 3.4vw; padding: 2vw 3vw; }
+}
+
+.tr-outro-credits {
+  max-width: 80vw;
+  font-family: "Pixelify Sans", system-ui, sans-serif;
+  font-size: 1.6vmin;
+  text-align: center;
+  color: #5b5480;
+  animation: tr-fade-up 700ms 1.8s both;
+}
+@media (max-aspect-ratio: 1/1) {
+  .tr-outro-credits { font-size: 2.8vw; }
+}

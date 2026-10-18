@@ -29,9 +29,18 @@ export const PLAYERS = [
   "maria.bfs",
 ];
 
-/** Personaje fijo por jugador, repartido por toda la colección. */
+/**
+ * Solo personajes que se pueden mostrar en un video público: Tiny Heroes de
+ * CraftPix (licencia gratuita, uso en proyectos permitido; ver CREDITS.md).
+ * El resto de la colección tiene licencia pendiente o de compra sin confirmar.
+ */
+const LICENSED = ["Monstruo Rosa", "Búho", "Dude"]
+  .map((name) => CHARACTERS.findIndex((character) => character.name === name))
+  .filter((index) => index >= 0);
+
+/** Personaje fijo por jugador, entre los de licencia libre para el tráiler. */
 export const characterOf = (name: string) =>
-  (PLAYERS.indexOf(name) * 7 + 3 + CHARACTERS.length) % CHARACTERS.length;
+  LICENSED[Math.max(0, PLAYERS.indexOf(name)) % LICENSED.length] ?? 0;
 
 type Runner = {
   id: string;
