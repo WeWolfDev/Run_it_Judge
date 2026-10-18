@@ -8,15 +8,36 @@ const connection = {
   password: process.env.REDIS_PASSWORD || undefined,
 };
 
-const submissionQueue = new Queue('run-it-submissions', {
-  connection,
-  defaultJobOptions: {
-    attempts: 2,
-    backoff: { type: 'exponential', delay: 1000 },
-    removeOnComplete: 1000,
-    removeOnFail: 5000,
-  },
-});
+// La cola se crea al primer uso, no al cargar el módulo: BullMQ abre la
+// conexión a Redis en el constructor. Así un proceso que solo importa index.js
+// (los tests DB-free) no conecta a Redis, y no queda una conexión a medio abrir
+// al cerrar (EPIPE / ECONNREFUSED después de terminar el test). El servidor la
+// crea igual enseguida: /ready y el primer envío la usan.
+let queue = null;
+
+function getQueue() {
+  if (!queue) {
+    queue = new Queue('run-it-submissions', {
+      connection,
+      defaultJobOptions: {
+        attempts: 2,
+        backoff: { type: 'exponential', delay: 1000 },
+        removeOnComplete: 1000,
+        removeOnFail: 5000,
+      },
+    });
+    // Sin oyente, un error de conexión de Redis sale como evento sin manejar.
+    queue.on('error', (error) => console.error('[run-it] cola de envíos:', error.message));
+  }
+  return queue;
+}
+
+const submissionQueue = {
+  add: (...args) => getQueue().add(...args),
+  getJobCounts: (...args) => getQueue().getJobCounts(...args),
+  /** Cierra la conexión si se llegó a abrir. */
+  close: () => (queue ? queue.close() : Promise.resolve()),
+};
 
 // Tope de ejecuciones simultáneas en Judge0 para todo el proceso, sumando los
 // casos de todos los jobs. Igual a COUNT de judge0.conf: con más, Judge0 las

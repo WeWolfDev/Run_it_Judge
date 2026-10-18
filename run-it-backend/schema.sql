@@ -34,6 +34,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_admin_username_key ON users (username) W
 -- Reemplaza al índice que venía con el UNIQUE: el login filtra por username.
 CREATE INDEX IF NOT EXISTS users_username_idx ON users (username);
 
+-- Casters: cuentas de solo lectura para quien narra el torneo (ven el enunciado,
+-- la pista, el voto y el código de los envíos). Las crea el admin desde Accesos.
+-- Se amplía el CHECK del rol con DROP IF EXISTS, como access_codes_status_check.
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users
+  ADD CONSTRAINT users_role_check
+  CHECK (role IN ('admin', 'participant', 'caster'));
+
 -- El admin no se borra por ningún camino: ni endpoint, ni cascada, ni un DELETE
 -- a mano. Tampoco se lo degrada a participante, que es la forma de volverlo
 -- borrable. Sin esto, borrarlo deja el panel sin acceso hasta el próximo
@@ -52,6 +60,15 @@ CREATE OR REPLACE TRIGGER users_protect_admin
   BEFORE DELETE OR UPDATE OF role ON users
   FOR EACH ROW EXECUTE FUNCTION users_protect_admin();
 
+-- tournaments va antes que access_codes: access_codes.tournament_id la
+-- referencia, y en una base vacía el CREATE TABLE fallaba si todavía no existía.
+CREATE TABLE IF NOT EXISTS tournaments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'finished')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS access_codes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   code TEXT NOT NULL UNIQUE,
@@ -68,8 +85,8 @@ CREATE TABLE IF NOT EXISTS access_codes (
   expires_at TIMESTAMPTZ
 );
 
--- tournaments is created after access_codes in this file, so the foreign key
--- above is added once the referenced table exists.
+-- Bases creadas antes de la columna: se agrega junto con su foreign key (en
+-- una base nueva ya vienen del CREATE TABLE y el bloque no hace nada).
 ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS tournament_id UUID;
 ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 DO $$
@@ -95,13 +112,6 @@ CREATE INDEX IF NOT EXISTS access_codes_tournament_status_idx
   ON access_codes(tournament_id, status);
 CREATE INDEX IF NOT EXISTS access_codes_expires_at_idx
   ON access_codes(expires_at) WHERE status = 'unused';
-
-CREATE TABLE IF NOT EXISTS tournaments (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'finished')),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
 
 CREATE TABLE IF NOT EXISTS problems (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import ParticipantView from "@/components/ParticipantView";
-import { getSession } from "@/lib/session";
+import { getSession, homeFor } from "@/lib/session";
 
 export const Route = createFileRoute("/participante")({
   head: () => ({
@@ -33,7 +33,7 @@ function ParticipantPage() {
     }
 
     if (session.role !== "participant") {
-      void navigate({ to: "/admin" });
+      void navigate({ to: homeFor(session.role) });
       return;
     }
 

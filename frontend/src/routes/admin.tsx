@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import AdminPanel from "@/components/AdminPanel";
-import { getSession } from "@/lib/session";
+import { getSession, homeFor } from "@/lib/session";
 
 export const Route = createFileRoute("/admin")({
   head: () => ({
@@ -33,7 +33,7 @@ function AdminPage() {
     }
 
     if (session.role !== "admin") {
-      void navigate({ to: "/participante" });
+      void navigate({ to: homeFor(session.role) });
       return;
     }
 

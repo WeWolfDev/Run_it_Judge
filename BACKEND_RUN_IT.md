@@ -175,6 +175,12 @@ GET  /rounds/:id/leaderboard
 GET  /tournaments/:id/leaderboard admin
 POST /rounds/:id/submissions           participant
 GET  /public/rounds/active             público
+GET  /casters                          admin, cuentas de caster con su código
+POST /casters                          admin, crea una (nombre de 3 a 40)
+DELETE /casters/:id                    admin, solo cuentas de caster
+GET  /caster/overview                  caster o admin, ronda activa y la anterior
+GET  /caster/rounds/:id/submissions    caster o admin, sin código; vacío con niebla
+GET  /caster/submissions/:id           caster o admin, código y casos (sin tokens)
 ```
 
 ## Eventos Socket.io
@@ -222,6 +228,18 @@ socket.emit("round:snapshot", roundId);
   devuelve una sesión de participante.
 - `/access-codes/:code/claim` se conserva para códigos emitidos a usuarios
   que ya existen por otros medios.
+
+### Casters
+
+- Cuentas de solo lectura para quien narra el torneo, rol `caster`. Las crea el
+  admin en Acceso → Casters; entran por `/auth/login` con su nombre y un código
+  de 12 caracteres (más largo que el PIN: leen el código de todos).
+- `/caster` muestra el enunciado y los ejemplos de la ronda, la pista (o una
+  pizarra para explicar), los envíos con su veredicto y su código, y el voto.
+- El código de un envío Aceptado no sale hasta que la ronda cierra
+  (`isCodeLocked` en `caster.js`). Con niebla el caster tampoco ve los envíos.
+- Una cuenta borrada pierde el acceso en el acto: `requireCaster` revisa que el
+  usuario siga existiendo, aunque su sesión siga en Redis.
 
 ### Limitaciones conocidas (aceptadas en MVP)
 

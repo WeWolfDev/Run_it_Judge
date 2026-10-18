@@ -31,6 +31,10 @@ export function useLiveRace() {
         if (cancelled) return;
         if (!active) {
           if (!roundRef.current) setLoad("none");
+          // La ronda en pantalla ya no está activa: cerró mientras el socket
+          // estaba caído o la pestaña en segundo plano (se perdió round:closed).
+          else if (!roundRef.current.closed)
+            setRound((current) => (current ? { ...current, closed: true } : current));
           return;
         }
         // round_number viene en r.*; el tipo de api.ts no lo declara.
@@ -84,7 +88,12 @@ export function useLiveRace() {
     // Sin unirse a la sala: participant:progress también sale a todos, y con
     // las dos vías cada evento llegaría dos veces al feed.
     const feed = createSocketFeed("");
-    feed?.on("feed:connected", fetchBoard);
+    // Al (re)conectar o volver a la pestaña: el ranking y, por si cambió o
+    // cerró mientras no se escuchaba, la ronda activa.
+    feed?.on("feed:connected", () => {
+      fetchBoard();
+      setReloadKey((key) => key + 1);
+    });
     feed?.on("participant:progress", (event) => {
       const entry = boardRef.current.find((e) => e.participant_id === event.participant_id);
       // Solo los de esta ronda; después de resolver los envíos no cuentan.

@@ -1,3 +1,4 @@
+import { onResync } from "./resync";
 import { getSession } from "./session";
 
 /**
@@ -239,10 +240,17 @@ export interface RunItEvents {
   "hits:applied": { round_id: string; poll_id: string; hit: string };
   // Un hit cambió el reloj o el cupo de la ronda.
   "round:updated": { round_id: string; ends_at: string; capacity: number };
+  // Hay una ronda nueva (la primera o la siguiente) o cambió el plan de rondas:
+  // quien espera sin ronda activa vuelve a leer la sala de espera.
+  "round:created": { round_id: string; round_number: number; participants: number };
+  "rounds:planned": { tournament_id: string };
+  // El admin corrigió el problema (nombre, enunciado, pista o casos).
+  "problem:updated": { problem_id: string };
   "submission:queued": SubmissionQueuedEvent;
   "submission:judged": SubmissionJudgedEvent;
-  // Local, no lo emite el servidor: cada conexión y reconexión del socket. Lo
-  // que se perdió mientras estaba caído se recupera volviendo a pedirlo.
+  // Local, no lo emite el servidor: cada conexión y reconexión del socket, y
+  // cada vez que la página vuelve (lib/resync.ts). Lo que se perdió mientras
+  // estaba caído o en segundo plano se recupera volviendo a pedirlo.
   "feed:connected": undefined;
 }
 
@@ -270,6 +278,7 @@ export function createSocketFeed(roundId = import.meta.env["VITE_ROUND_ID"]): Ru
   const handlers = new Map<string, Array<(payload: unknown) => void>>();
   let socket: import("socket.io-client").Socket | null = null;
   let disconnected = false;
+  const caughtUp = () => handlers.get("feed:connected")?.forEach((handler) => handler(undefined));
 
   void import("socket.io-client").then(({ io }) => {
     if (disconnected) return;
@@ -279,11 +288,27 @@ export function createSocketFeed(roundId = import.meta.env["VITE_ROUND_ID"]): Ru
         socket?.emit("round:join", roundId);
         socket?.emit("round:snapshot", roundId);
       }
-      handlers.get("feed:connected")?.forEach((handler) => handler(undefined));
+      caughtUp();
+    });
+    // Si el servidor cortó (reinicio, deploy), socket.io no reintenta solo.
+    socket.on("disconnect", (reason) => {
+      if (reason === "io server disconnect" && !disconnected) socket?.connect();
     });
     socket.onAny((event, payload) => {
       handlers.get(event)?.forEach((handler) => handler(payload));
     });
+  });
+
+  // La página vuelve (suspensión, pestaña en segundo plano, red): tras un rato
+  // fuera el socket puede creerse conectado y estar muerto hasta el ping
+  // timeout, así que se reconecta. Si no, solo se vuelve a pedir lo que se ve.
+  const stopResync = onResync(({ awayMs }) => {
+    if (disconnected || !socket) return;
+    if (awayMs > 20_000 || !socket.connected) {
+      socket.disconnect().connect();
+      return;
+    }
+    caughtUp();
   });
 
   return {
@@ -294,6 +319,7 @@ export function createSocketFeed(roundId = import.meta.env["VITE_ROUND_ID"]): Ru
     },
     disconnect() {
       disconnected = true;
+      stopResync();
       socket?.disconnect();
       handlers.clear();
     },

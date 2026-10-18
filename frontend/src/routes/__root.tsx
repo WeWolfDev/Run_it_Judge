@@ -11,7 +11,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
-import { clearSession, getSession, type Session } from "../lib/session";
+import { clearSession, getSession, homeFor, onSessionChange, type Session } from "../lib/session";
 import { logout } from "../lib/api";
 import { PixelIcon } from "../components/PixelIcon";
 import { applyPalette, PALETTE_BOOT_SCRIPT, PALETTES, storedPalette } from "../lib/palette";
@@ -197,8 +197,10 @@ function RoleNavigation() {
   const navigate = useRouter();
   const [session, setSession] = useState<Session | null>(null);
 
+  // Se relee con cada login o salida, sin esperar a recargar la página.
   useEffect(() => {
     setSession(getSession());
+    return onSessionChange(() => setSession(getSession()));
   }, []);
 
   if (!session) return null;
@@ -207,14 +209,22 @@ function RoleNavigation() {
     <header className="border-b border-border bg-card">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3">
         <Link
-          to={session.role === "admin" ? "/admin" : "/participante"}
+          to={homeFor(session.role)}
           className="text-sm text-primary"
           style={{ fontFamily: "'Press Start 2P', ui-monospace, monospace" }}
         >
           Run&nbsp;It
         </Link>
         <nav className="flex items-center gap-4 text-sm text-muted-foreground">
-          {session.role === "participant" ? (
+          {session.role === "caster" ? (
+            <Link
+              to="/caster"
+              className="flex items-center gap-1.5"
+              activeProps={{ className: "text-foreground font-medium" }}
+            >
+              <PixelIcon name="star" className="h-4 w-4 text-primary" /> Caster
+            </Link>
+          ) : session.role === "participant" ? (
             <Link
               to="/participante"
               className="flex items-center gap-1.5"
@@ -237,6 +247,13 @@ function RoleNavigation() {
                 activeProps={{ className: "text-foreground font-medium" }}
               >
                 <PixelIcon name="flag" className="h-4 w-4 text-primary" /> Pista
+              </Link>
+              <Link
+                to="/caster"
+                className="flex items-center gap-1.5"
+                activeProps={{ className: "text-foreground font-medium" }}
+              >
+                <PixelIcon name="star" className="h-4 w-4 text-primary" /> Caster
               </Link>
             </>
           )}

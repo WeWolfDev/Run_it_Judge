@@ -40,7 +40,7 @@ export async function login(username: string, accessCode: string) {
   if (!response.ok) throw new Error(body.error || "No se pudo iniciar sesión");
   return body as {
     token: string;
-    user: { id: string; username: string; role: "admin" | "participant" };
+    user: { id: string; username: string; role: "admin" | "participant" | "caster" };
   };
 }
 

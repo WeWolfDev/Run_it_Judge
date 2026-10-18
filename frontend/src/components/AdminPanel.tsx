@@ -5,6 +5,7 @@ import { parseCodeforcesZip } from "@/lib/test-case-parser";
 import { ProblemStatement } from "@/components/ProblemStatement";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RowCheckbox, SelectAllCheckbox } from "@/components/BulkSelect";
+import { CasterAccounts } from "@/components/CasterAccounts";
 import { CeremonyPanel } from "@/components/CeremonyPanel";
 import { HitsPanel } from "@/components/hits/HitsPanel";
 import { PixelIcon, type PixelIconName } from "@/components/PixelIcon";
@@ -3455,6 +3456,7 @@ export function AdminPanel({
 
           {message && <p className="mt-2 text-xs text-muted-foreground">{message}</p>}
         </section>
+        <CasterAccounts />
       </TabsContent>
 
       <TabsContent value="historial" className="space-y-5">

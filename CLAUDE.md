@@ -415,8 +415,6 @@ Ordenados por impacto. No están resueltos.
 
 **Frontend**
 
-- `ParticipantView` carga el enunciado al montar: si el admin lo corrige con la
-  ronda en curso, el participante lo ve al recargar o reconectarse.
 - Sin estados de carga ni de error en las rutas.
 - 6 warnings de `react-refresh` degradan el HMR a full reload.
 
