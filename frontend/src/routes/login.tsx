@@ -11,7 +11,7 @@ import { useArcadeDeck, type DeckSide } from "@/hooks/use-arcade-deck";
 import { nextBackdrop, type BackdropId } from "@/lib/login-backdrop";
 import { cn } from "@/lib/utils";
 import { homeFor, setSession } from "@/lib/session";
-import { login, register } from "@/lib/api";
+import { getActiveRound, login, register } from "@/lib/api";
 import { play } from "@/lib/sfx";
 
 const PIXEL = { fontFamily: "'Press Start 2P', ui-monospace, monospace" };
@@ -53,8 +53,21 @@ function LoginScreen({ onKey }: { onKey: (side: DeckSide) => void }) {
   // elegirlo ahí haría que el HTML no coincida con el primer render.
   const [backdrop, setBackdrop] = useState<BackdropId | null>(null);
 
+  // La demo solo se ofrece solo fuera del torneo: con una ronda en juego el
+  // enlace no aparece (y /practica tampoco la deja abrir).
+  const [practiceOpen, setPracticeOpen] = useState(false);
+
   useEffect(() => {
     setBackdrop(nextBackdrop());
+    let cancelled = false;
+    void getActiveRound()
+      .then((active) => {
+        if (!cancelled) setPracticeOpen(!active);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -189,6 +202,12 @@ function LoginScreen({ onKey }: { onKey: (side: DeckSide) => void }) {
           >
             {registerMode ? "Ya tengo un acceso" : "Registrarme con un código"}
           </button>
+
+          {practiceOpen && (
+            <Link to="/practica" className="block text-center text-xs text-accent hover:underline">
+              ¿Sin código? Practica en la demo solo
+            </Link>
+          )}
 
           <Link
             to="/pista"

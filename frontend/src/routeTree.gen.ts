@@ -17,6 +17,7 @@ import { Route as LegalRouteImport } from './routes/legal'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ParticipanteRouteImport } from './routes/participante'
 import { Route as PistaRouteImport } from './routes/pista'
+import { Route as PracticaRouteImport } from './routes/practica'
 import { Route as PublicoRouteImport } from './routes/publico'
 import { Route as ReglasRouteImport } from './routes/reglas'
 import { Route as VotarRouteImport } from './routes/votar'
@@ -64,6 +65,11 @@ const PistaRoute = PistaRouteImport.update({
   path: '/pista',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PracticaRoute = PracticaRouteImport.update({
+  id: '/practica',
+  path: '/practica',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PublicoRoute = PublicoRouteImport.update({
   id: '/publico',
   path: '/publico',
@@ -104,6 +110,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/participante': typeof ParticipanteRoute
   '/pista': typeof PistaRoute
+  '/practica': typeof PracticaRoute
   '/publico': typeof PublicoRoute
   '/reglas': typeof ReglasRoute
   '/votar': typeof VotarRoute
@@ -119,6 +126,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/participante': typeof ParticipanteRoute
   '/pista': typeof PistaRoute
+  '/practica': typeof PracticaRoute
   '/publico': typeof PublicoRoute
   '/reglas': typeof ReglasRoute
   '/votar': typeof VotarRoute
@@ -136,6 +144,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/participante': typeof ParticipanteRoute
   '/pista': typeof PistaRoute
+  '/practica': typeof PracticaRoute
   '/publico': typeof PublicoRoute
   '/reglas': typeof ReglasRoute
   '/votar': typeof VotarRoute
@@ -154,6 +163,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/participante'
     | '/pista'
+    | '/practica'
     | '/publico'
     | '/reglas'
     | '/votar'
@@ -169,6 +179,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/participante'
     | '/pista'
+    | '/practica'
     | '/publico'
     | '/reglas'
     | '/votar'
@@ -185,6 +196,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/participante'
     | '/pista'
+    | '/practica'
     | '/publico'
     | '/reglas'
     | '/votar'
@@ -202,6 +214,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   ParticipanteRoute: typeof ParticipanteRoute
   PistaRoute: typeof PistaRoute
+  PracticaRoute: typeof PracticaRoute
   PublicoRoute: typeof PublicoRoute
   ReglasRoute: typeof ReglasRoute
   VotarRoute: typeof VotarRoute
@@ -263,6 +276,13 @@ declare module '@tanstack/react-router' {
       path: '/pista'
       fullPath: '/pista'
       preLoaderRoute: typeof PistaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/practica': {
+      id: '/practica'
+      path: '/practica'
+      fullPath: '/practica'
+      preLoaderRoute: typeof PracticaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/publico': {
@@ -333,6 +353,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   ParticipanteRoute: ParticipanteRoute,
   PistaRoute: PistaRoute,
+  PracticaRoute: PracticaRoute,
   PublicoRoute: PublicoRoute,
   ReglasRoute: ReglasRoute,
   VotarRoute: VotarRoute,
