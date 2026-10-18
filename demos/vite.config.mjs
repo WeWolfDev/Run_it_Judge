@@ -16,7 +16,7 @@ export default {
   resolve: {
     alias: [
       // Las demos solo y caster usan los componentes actuales del frontend, no la copia de src/.
-      { find: /^@\//, replacement: here(["solo", "caster"].includes(demo) ? "../frontend/src/" : "./src/") },
+      { find: /^@\//, replacement: here(["solo", "caster", "trailer"].includes(demo) ? "../frontend/src/" : "./src/") },
       { find: /^socket\.io-client$/, replacement: here("./fake/socket.ts") },
     ],
   },
