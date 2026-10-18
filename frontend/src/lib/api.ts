@@ -1,3 +1,5 @@
+import { backendFetch } from "./backend-fetch";
+
 const API_URL = import.meta.env["VITE_API_URL"] ?? "";
 
 function authHeaders() {
@@ -229,7 +231,7 @@ export type OrphanUser = {
 };
 
 export async function getOrphanUsers() {
-  const response = await fetch(`${API_URL}/users/orphans`, { headers: authHeaders() });
+  const response = await backendFetch("/users/orphans", { headers: authHeaders() });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "No se pudieron cargar los usuarios");
   return body as OrphanUser[];
@@ -237,7 +239,7 @@ export async function getOrphanUsers() {
 
 // Borra solo los ids revisados; el servidor vuelve a comprobar que sigan huérfanos.
 export async function deleteOrphanUsers(ids: string[]) {
-  const response = await fetch(`${API_URL}/users/orphans`, {
+  const response = await backendFetch("/users/orphans", {
     method: "DELETE",
     headers: { "content-type": "application/json", ...authHeaders() },
     body: JSON.stringify({ ids }),

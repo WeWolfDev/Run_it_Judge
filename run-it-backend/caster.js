@@ -21,6 +21,20 @@ function validateCasterName(raw) {
 }
 
 /**
+ * Código elegido por el admin para una cuenta de caster (opcional: si no lo da,
+ * se genera uno). Se guarda normalizado, como los PIN: el login acepta
+ * minúsculas, espacios y guiones. De 8 a 64 letras o dígitos.
+ */
+function validateCasterCode(raw) {
+	if (raw === undefined || raw === null || raw === '') return { code: null };
+	const code = typeof raw === 'string' ? raw.trim().toUpperCase().replace(/[^A-Z0-9]/g, '') : '';
+	if (code.length < 8 || code.length > 64) {
+		return { error: 'El código del caster debe tener entre 8 y 64 letras o dígitos' };
+	}
+	return { code }
+}
+
+/**
  * El código de un envío Aceptado no se muestra hasta que cierra la ronda: el
  * caster lo podría pasar a la transmisión y sería la solución para los demás.
  */
@@ -103,6 +117,6 @@ function casterSubmissionDetail(row) {
 }
 
 module.exports = {
-	CASTER_CODE_LENGTH, validateCasterName, isCodeLocked, publicCases, submissionPenalty,
+	CASTER_CODE_LENGTH, validateCasterName, validateCasterCode, isCodeLocked, publicCases, submissionPenalty,
 	casterSubmissions, casterSubmissionDetail,
 };
