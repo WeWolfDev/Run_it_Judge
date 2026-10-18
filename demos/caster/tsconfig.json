@@ -1,0 +1,5 @@
+{
+  "extends": "../../frontend/tsconfig.json",
+  "include": ["./**/*.ts", "./**/*.tsx", "../../frontend/src/vite-env.d.ts"],
+  "compilerOptions": { "noEmit": true, "paths": { "@/*": ["../../frontend/src/*"] } }
+}
