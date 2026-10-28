@@ -17,6 +17,7 @@ import {
   createProblem,
   createRound,
   createTournament,
+  deleteAccessCodes,
   deleteOrphanUsers,
   deleteProblem,
   deleteProblems,
@@ -313,6 +314,10 @@ export function AdminPanel({
   const [codes, setCodes] = useState<AccessCode[]>([]);
   const [loadingCodes, setLoadingCodes] = useState(false);
   const [busyCodes, setBusyCodes] = useState(false);
+  // Códigos sin usar marcados para borrar, y los que esperan confirmación (los
+  // marcados, o uno solo si se pidió desde su fila).
+  const [selectedCodeIds, setSelectedCodeIds] = useState<Set<string>>(() => new Set());
+  const [codesToDelete, setCodesToDelete] = useState<string[] | null>(null);
   const [tournaments, setTournaments] = useState<OpenTournament[]>([]);
   const [problemName, setProblemName] = useState("");
   const [problemStatement, setProblemStatement] = useState("");
@@ -451,6 +456,18 @@ export function AdminPanel({
   const unusedCodes = visibleCodes
     .filter((code) => code.status === "unused")
     .map((code) => code.code);
+  // Los únicos que se pueden borrar: un reclamado guarda quién lo usó.
+  const deletableCodeIds = useMemo(
+    () =>
+      codes
+        .filter(
+          (code) =>
+            code.status === "unused" &&
+            !(code.expires_at && Date.parse(code.expires_at) <= Date.now()),
+        )
+        .map((code) => code.id),
+    [codes],
+  );
   const active = liveParticipants.filter((p) => p.status === "racing").length;
 
   const refreshCodes = useMemo(
@@ -466,6 +483,41 @@ export function AdminPanel({
     },
     [codeTournamentId],
   );
+
+  // Poda: al releer la lista, lo que ya no está o se reclamó sale de la
+  // selección, y una confirmación pendiente sobre otra selección se descarta.
+  useEffect(() => {
+    const present = new Set(deletableCodeIds);
+    if ([...selectedCodeIds].every((id) => present.has(id))) return;
+    setSelectedCodeIds(new Set([...selectedCodeIds].filter((id) => present.has(id))));
+    setCodesToDelete(null);
+  }, [deletableCodeIds, selectedCodeIds]);
+
+  const changeCodeSelection = (next: Set<string>) => {
+    setSelectedCodeIds(next);
+    setCodesToDelete(null);
+  };
+
+  const confirmDeleteCodes = async () => {
+    if (!codesToDelete?.length) return;
+    setBusyCodes(true);
+    try {
+      const result = await deleteAccessCodes(codesToDelete);
+      let done = `Se borraron ${countLabel(result.deleted.length, "código", "códigos")}.`;
+      if (result.skipped) {
+        done += ` ${countLabel(result.skipped, "no se borró: ya se había usado o no existía", "no se borraron: ya se habían usado o no existían")}.`;
+      }
+      setSelectedCodeIds(new Set());
+      setCodesToDelete(null);
+      await refreshCodes();
+      setMessage(done);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudieron borrar los códigos");
+      void refreshCodes();
+    } finally {
+      setBusyCodes(false);
+    }
+  };
 
   const refreshTournaments = useMemo(
     () => async () => {
@@ -3359,15 +3411,35 @@ export function AdminPanel({
               <table className="w-full text-left text-xs">
                 <thead className="sticky top-0 bg-muted text-muted-foreground">
                   <tr>
+                    <th className="w-6 px-2 py-1.5">
+                      <SelectAllCheckbox
+                        label="Seleccionar todos los códigos sin usar"
+                        selectableIds={deletableCodeIds}
+                        selected={selectedCodeIds}
+                        onChange={changeCodeSelection}
+                        disabled={busyCodes}
+                      />
+                    </th>
                     <th className="px-2 py-1.5 font-medium">Código</th>
                     <th className="px-2 py-1.5 font-medium">Estado</th>
                     <th className="px-2 py-1.5 font-medium">Vence</th>
-                    <th className="px-2 py-1.5 text-right font-medium">Copiar</th>
+                    <th className="px-2 py-1.5 text-right font-medium">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {visibleCodes.map((item) => (
                     <tr key={item.id} className="border-t border-border">
+                      <td className="px-2 py-1.5">
+                        {item.status === "unused" && (
+                          <RowCheckbox
+                            id={item.id}
+                            label={`Seleccionar ${item.code}`}
+                            selected={selectedCodeIds}
+                            onChange={changeCodeSelection}
+                            disabled={busyCodes}
+                          />
+                        )}
+                      </td>
                       <td className="px-2 py-1.5 font-mono text-foreground">
                         {item.code}
                         {item.display_name ? (
@@ -3386,13 +3458,23 @@ export function AdminPanel({
                       </td>
                       <td className="px-2 py-1.5 text-right">
                         {item.status === "unused" ? (
-                          <button
-                            type="button"
-                            onClick={() => void copyCodes(item.id, [item.code])}
-                            className="rounded-md border border-border px-2 py-0.5 font-medium text-foreground hover:bg-muted"
-                          >
-                            {copiedKey === item.id ? "✓" : "Copiar"}
-                          </button>
+                          <span className="inline-flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => void copyCodes(item.id, [item.code])}
+                              className="rounded-md border border-border px-2 py-0.5 font-medium text-foreground hover:bg-muted"
+                            >
+                              {copiedKey === item.id ? "✓" : "Copiar"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busyCodes}
+                              onClick={() => setCodesToDelete([item.id])}
+                              className="rounded-md border border-danger px-2 py-0.5 font-medium text-danger hover:opacity-70 disabled:opacity-50"
+                            >
+                              Borrar
+                            </button>
+                          </span>
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}
@@ -3401,6 +3483,54 @@ export function AdminPanel({
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+          {deletableCodeIds.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
+              <span className="text-muted-foreground">
+                {countLabel(selectedCodeIds.size, "seleccionado", "seleccionados")}
+              </span>
+              <button
+                type="button"
+                disabled={selectedCodeIds.size === 0 || busyCodes}
+                onClick={() => setCodesToDelete([...selectedCodeIds])}
+                className="rounded-lg border border-danger px-3 py-1 font-medium text-danger hover:opacity-70 disabled:opacity-50"
+              >
+                Borrar {countLabel(selectedCodeIds.size, "código", "códigos")}
+              </button>
+            </div>
+          )}
+          {codesToDelete && (
+            <div
+              role="alertdialog"
+              aria-label="Borrar códigos de acceso"
+              className="mt-2 space-y-2 rounded-lg border border-danger bg-danger-soft p-3 text-xs text-danger"
+            >
+              <p className="font-medium">
+                {codesToDelete.length === 1
+                  ? `¿Borrar el código ${codes.find((code) => code.id === codesToDelete[0])?.code ?? ""}?`
+                  : `¿Borrar ${codesToDelete.length} códigos sin usar?`}{" "}
+                Nadie podrá registrarse con {codesToDelete.length === 1 ? "él" : "ellos"}. No se
+                puede deshacer.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={busyCodes}
+                  onClick={() => void confirmDeleteCodes()}
+                  className="rounded-lg bg-danger px-3 py-1.5 font-medium text-danger-foreground disabled:opacity-50"
+                >
+                  {busyCodes ? "Borrando..." : "Borrar"}
+                </button>
+                <button
+                  type="button"
+                  disabled={busyCodes}
+                  onClick={() => setCodesToDelete(null)}
+                  className="rounded-lg border border-danger px-3 py-1.5 font-medium"
+                >
+                  Cancelar
+                </button>
+              </div>
             </div>
           )}
           {loadingCodes && <p className="mt-2 text-xs text-muted-foreground">Cargando…</p>}
