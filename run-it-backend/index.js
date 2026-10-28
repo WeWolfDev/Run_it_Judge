@@ -1238,6 +1238,21 @@ fastify.post('/access-codes/revoke', async (request, reply) => {
 	return { revoked: result.rowCount, codes: result.rows.map((row) => row.code) };
 });
 
+// Borra códigos sueltos que el admin eligió en la lista. Solo los sin usar: un
+// código reclamado guarda quién lo usó y con qué nombre, y register lo mira para
+// no repetir nombres en el torneo. Si alguien lo reclama mientras tanto, el
+// WHERE se vuelve a evaluar sobre la fila bloqueada y ese código no se borra.
+fastify.delete('/access-codes', async (request, reply) => {
+	if (!(await requireRole(request, reply, 'admin'))) return;
+	const ids = parseIdList(request.body?.ids);
+	if (!ids) return reply.code(400).send({ error: 'ids debe ser una lista de 1 a 500 ids de código' });
+	const result = await query(
+		`DELETE FROM access_codes WHERE id = ANY($1::uuid[]) AND status = 'unused' RETURNING id, code`,
+		[ids],
+	);
+	return { deleted: result.rows, skipped: ids.length - result.rowCount };
+});
+
 fastify.post('/tournaments/:id/finish', async (request, reply) => {
 	if (!(await requireRole(request, reply, 'admin'))) return;
 	const result = await withTransaction(async (client) => {

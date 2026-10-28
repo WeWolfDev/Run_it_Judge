@@ -268,6 +268,19 @@ export async function revokeAccessCodes(input: { tournamentId?: string | null; c
   return body as { revoked: number; codes: string[] };
 }
 
+// Solo borra los que siguen sin usar; skipped cuenta los que no (reclamados o
+// que ya no existían).
+export async function deleteAccessCodes(ids: string[]) {
+  const response = await fetch(`${API_URL}/access-codes`, {
+    method: "DELETE",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ ids }),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "No se pudieron borrar los códigos");
+  return body as { deleted: { id: string; code: string }[]; skipped: number };
+}
+
 export async function finishTournament(tournamentId: string) {
   const response = await fetch(`${API_URL}/tournaments/${tournamentId}/finish`, {
     method: "POST",
