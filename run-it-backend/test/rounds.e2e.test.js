@@ -473,6 +473,28 @@ test('los códigos invalidados no aparecen en la lista', { skip }, async () => {
 	assert.deepEqual(listed.map((row) => row.code), [codes[1].code]);
 });
 
+test('la ronda 1 de otro torneo no admite ni ofrece a quien no es de ahí', { skip }, async (t) => {
+	const own = await createTournamentWithRound('propio', state.problem.id, 1);
+	const other = await createTournamentWithRound('ajeno', state.problem.id, 1);
+	const { gil } = await register(own.tournament.id, ['gil']);
+	assert.equal((await join(own.round.id, gil)).status, 200);
+
+	const foreign = await join(other.round.id, gil);
+	t.diagnostic(`inscribirse en la ronda 1 de otro torneo -> ${foreign.status} ${foreign.body.error}`);
+	assert.equal(foreign.status, 403);
+	assert.equal(foreign.body.error, 'Tu acceso es de otro torneo: no podés inscribirte en este');
+	assert.deepEqual(await roster(other.round.id), []);
+
+	const upcoming = await ok('GET', '/public/rounds/upcoming', undefined, gil.token);
+	t.diagnostic(`sala de espera -> ${JSON.stringify(upcoming)}`);
+	assert.notEqual(upcoming?.id, other.round.id);
+
+	// Un código sin torneo no ata a ninguno: sigue pudiendo entrar.
+	const { codes } = await ok('POST', '/access-codes/generate', { count: 1, ttlMinutes: 5 }, state.adminToken);
+	const { token, user } = await ok('POST', '/auth/register', { username: `e2e-libre-${state.nonce}`, accessCode: codes[0].code });
+	assert.equal((await join(other.round.id, { token, id: user.id })).status, 200);
+});
+
 test.after(async () => {
 	if (!enabled) return;
 	// Ninguna ronda de la prueba queda activa: /public/rounds/active las mostraría.

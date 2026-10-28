@@ -1020,6 +1020,22 @@ async function roundMember(roundId, userId) {
 	return result.rows[0] || null
 }
 
+// Quién puede inscribirse solo en la primera ronda de un torneo: quien ya está
+// en ese torneo, o quien no está atado a otro, ni por el código con el que se
+// registró ni por haber jugado otro torneo. Sin este corte, un eliminado de un
+// torneo que recargaba la página caía en la sala de espera de la ronda 1 de
+// otro torneo abierto y quedaba inscripto ahí. Un código sin torneo no ata a
+// ninguno. Lo usan la sala de espera y el join, con el mismo criterio.
+function selfEnrollAllowedSql(tournament, user) {
+	return `(
+	  EXISTS (SELECT 1 FROM participants own WHERE own.tournament_id = ${tournament} AND own.user_id = ${user})
+	  OR (
+	    NOT EXISTS (SELECT 1 FROM access_codes ac WHERE ac.claimed_by_user_id = ${user} AND ac.tournament_id <> ${tournament})
+	    AND NOT EXISTS (SELECT 1 FROM participants other WHERE other.user_id = ${user} AND other.tournament_id <> ${tournament})
+	  )
+	)`;
+}
+
 // Si el participante ya está en el torneo de esta ronda, con el personaje que
 // eligió. El navegador no alcanza para saberlo: guardaba "ya eligió" por nombre
 // de usuario para siempre, y otro torneo (u otra persona con el mismo nombre en
@@ -1068,7 +1084,15 @@ fastify.post('/rounds/:id/participants/join', async (request, reply) => {
 		}
 		return member;
 	}
-	// Primera ronda del torneo: el participante se inscribe solo.
+	// Primera ronda del torneo: el participante se inscribe solo, si el torneo
+	// es el suyo.
+	const allowed = await query(
+		`SELECT ${selfEnrollAllowedSql('$1', '$2')} AS allowed`,
+		[round.rows[0].tournament_id, request.user.id],
+	);
+	if (!allowed.rows[0].allowed) {
+		return reply.code(403).send({ error: 'Tu acceso es de otro torneo: no podés inscribirte en este' });
+	}
 	const displayName = request.body?.displayName || request.user.username;
 	// Fuera de rango se guarda 0 en vez de rechazar: un personaje mal formado no
 	// puede impedir la entrada a la ronda.
@@ -1820,7 +1844,10 @@ fastify.get('/public/rounds/upcoming', async (request) => {
 		 FROM rounds r JOIN tournaments t ON t.id = r.tournament_id
 		 WHERE r.status = 'pending' AND t.status <> 'finished'
 		   AND (
-		     NOT EXISTS (SELECT 1 FROM rounds prev WHERE prev.tournament_id = r.tournament_id AND prev.round_number < r.round_number)
+		     (
+		       NOT EXISTS (SELECT 1 FROM rounds prev WHERE prev.tournament_id = r.tournament_id AND prev.round_number < r.round_number)
+		       AND ${selfEnrollAllowedSql('r.tournament_id', '$1')}
+		     )
 		     OR EXISTS (
 		       SELECT 1 FROM round_participants rp JOIN participants p ON p.id = rp.participant_id
 		       WHERE rp.round_id = r.id AND p.user_id = $1 AND p.status = 'active'
