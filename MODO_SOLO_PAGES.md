@@ -70,6 +70,33 @@ No hace falta cambiar el código: con `base: "./"` funciona igual en la raíz.
 - `#privacidad` y `#terminos` están registrados en la pantalla de consentimiento
   de Google: si cambian esas direcciones, actualizarlas allá también.
 
+## Mapa de aprendizaje
+
+Después de *Press start* se abre el mapa (`frontend/src/components/solo/aprende/`):
+mundos con temas, cada tema con su lección, una animación paso a paso y
+ejercicios sin reloj, más la contrarreloj de siempre y el ranking global.
+
+| Pieza | Dónde |
+| --- | --- |
+| Mundos, temas, lecciones y enunciados | `aprende/content.ts` |
+| Soluciones de referencia y generadores de casos | `aprende/solutions.ts` |
+| Casos de prueba (no editar a mano) | `public/solo-tests/ini-*.json` |
+| Animaciones de las lecciones | `aprende/animations.tsx` |
+| Progreso (navegador y cuenta) | `aprende/useProgress.ts` |
+| Catálogo de puntos y ranking en Supabase | `deploy/supabase/003_solo_mapa_y_ranking.sql` |
+
+Para agregar un ejercicio:
+
+1. Su solución, sus ejemplos y su generador en `solutions.ts`.
+2. Su enunciado y sus puntos en `content.ts`, dentro de un tema.
+3. `npm run aprende:tests` para escribir el JSON de casos.
+4. Una fila en `ejercicios` con los mismos puntos, en un script SQL nuevo
+   (`004_...`). Sin esa fila, el progreso de ese ejercicio no se guarda en la
+   cuenta (la clave foránea lo rechaza) aunque sí en el navegador.
+
+Solo el mundo Principiante tiene temas (temario provisional); Intermedio y
+Avanzado se ven bloqueados como "próximamente".
+
 ## Cuentas (opcional)
 
 Se juega sin cuenta. Con cuenta se guarda un apodo y, cuando exista el roadmap,
@@ -82,10 +109,13 @@ sigue siendo estático.
 | Estado de la cuenta | `frontend/src/components/solo/account/useAccount.ts` |
 | Botón, apodo, cerrar sesión, borrar cuenta | `frontend/src/components/solo/account/SoloAccount.tsx` |
 | Tablas, permisos, RLS y `borrar_mi_cuenta()` | `deploy/supabase/001_solo_cuentas_y_progreso.sql` |
+| Límites (formato del tema, 300 temas por cuenta, columnas editables) | `deploy/supabase/002_solo_limites.sql` |
+| Catálogo de ejercicios, ranking opcional (`ranking_global`, `mi_ranking`) | `deploy/supabase/003_solo_mapa_y_ranking.sql` |
 
 Configuración del proyecto en Supabase (ya hecha; anotarla si se rehace):
 
-- **SQL Editor:** correr `deploy/supabase/001_solo_cuentas_y_progreso.sql`.
+- **SQL Editor:** correr en orden `001_solo_cuentas_y_progreso.sql`,
+  `002_solo_limites.sql` y `003_solo_mapa_y_ranking.sql`, de `deploy/supabase/`.
   Se puede volver a correr. Un cambio de esquema va en un archivo nuevo
   (`002_...`), nunca editando el anterior.
 - **Data API** activada y **Automatically expose new tables** apagada: cada

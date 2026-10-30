@@ -140,7 +140,7 @@ export async function execute(
 const tests = new Map<string, Promise<{ inputs: string[]; outputs: string[] }>>();
 
 /** Los 30 casos del problema (los mismos de los .zip), bajados al primer envío. */
-export function testsOf(problem: Problem) {
+export function testsOf(problem: Pick<Problem, "id">) {
   let pending = tests.get(problem.id);
   if (!pending) {
     pending = fetch(`${import.meta.env.BASE_URL}solo-tests/${problem.id}.json`).then((response) => {
@@ -167,7 +167,12 @@ export function caseVerdict(run: CaseRun, expected: string) {
 }
 
 /** Envío: los 30 casos. Devuelve el primer veredicto que falla y cuántos pasaron. */
-export async function judge(problem: Problem, language: Language, code: string, stage: Stage) {
+export async function judge(
+  problem: Pick<Problem, "id" | "seconds">,
+  language: Language,
+  code: string,
+  stage: Stage,
+) {
   stage("Bajando los casos de prueba…");
   const { inputs, outputs } = await testsOf(problem);
   const { runs, compileError } = await execute(language, code, inputs, problem.seconds, stage);

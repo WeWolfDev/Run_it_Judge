@@ -13,7 +13,7 @@ import { ADDRESS } from "@/lib/legal";
 
 export type LegalPage = "privacidad" | "terminos" | "seguridad" | "creditos";
 
-const UPDATED = "30 de octubre de 2026";
+const UPDATED = "31 de octubre de 2026";
 const PIXEL = { fontFamily: "'Press Start 2P', ui-monospace, monospace" };
 const REPO = "https://github.com/WeWolfDev/Run_it_Judge";
 
@@ -165,7 +165,11 @@ function Privacy() {
             inventado; te pedimos no usar tu nombre real.
           </li>
           <li>
-            <B>Progreso</B>: los temas que completaste, la fecha y tu mejor tiempo en cada uno.
+            <B>Progreso</B>: qué ejercicios del mapa resolviste y la fecha. Con eso se calculan tus
+            XP.
+          </li>
+          <li>
+            <B>Si lo activas, tu participación en el ranking global</B> (sí o no).
           </li>
           <li>
             <B>Datos técnicos</B> del inicio de sesión (fecha, dirección IP, navegador), que el
@@ -185,9 +189,13 @@ function Privacy() {
         </List>
         <p>
           Son finalidades necesarias: sin ellas la cuenta no funciona. No usamos tus datos para
-          publicidad, no los vendemos y no hacemos perfiles. Si en el futuro agregamos algo que
-          muestre tu apodo a otros (por ejemplo, un ranking del club), lo avisaremos aquí antes y
-          podrás decidir si participas.
+          publicidad, no los vendemos y no hacemos perfiles.
+        </p>
+        <p>
+          <B>Ranking global (opcional).</B> Solo si lo activas en la sección Ranking, cualquier
+          persona que abra el sitio ve tu <B>apodo</B>, tus <B>XP</B> y cuántos ejercicios
+          resolviste. Nunca tu correo ni tu nombre de perfil. Viene desactivado y puedes apagarlo
+          cuando quieras: tu apodo deja de aparecer en ese momento.
         </p>
       </Section>
 
@@ -239,9 +247,11 @@ function Privacy() {
       <Section title="7. Lo que se guarda en tu navegador">
         <p>
           No usamos cookies de rastreo ni de publicidad. En el almacenamiento local de tu navegador
-          se guardan tu personaje, la paleta, el sonido, tus mejores tiempos y, si entraste, tu
-          sesión. Si usas una computadora compartida, como la del laboratorio,{" "}
-          <B>cierra sesión al terminar</B>. Puedes borrar todo desde la configuración del navegador.
+          se guardan tu personaje, la paleta, el sonido, tus mejores tiempos, los ejercicios que
+          resolviste en el mapa, el borrador de tu código en cada ejercicio y, si entraste, tu
+          sesión. Al cerrar sesión se borra de este navegador el progreso de tu cuenta. Si usas una
+          computadora compartida, como la del laboratorio, <B>cierra sesión al terminar</B>. Puedes
+          borrar todo desde la configuración del navegador.
         </p>
       </Section>
 
@@ -364,14 +374,22 @@ function Terms() {
         </List>
       </Section>
 
-      <Section title="5. Suspensión y baja">
+      <Section title="5. Ranking global">
+        <p>
+          El ranking es de práctica y de honor: el juez corre en tu navegador. Inflar puntos con
+          herramientas externas o resolver con la cuenta de otra persona va contra estas reglas.
+          Podemos quitar del ranking una cuenta que lo haga. Aparecer en el ranking es opcional.
+        </p>
+      </Section>
+
+      <Section title="6. Suspensión y baja">
         <p>
           Puedes borrar tu cuenta cuando quieras desde el juego. Podemos suspender o borrar una
           cuenta que incumpla estos términos; salvo en casos graves, primero te avisaremos.
         </p>
       </Section>
 
-      <Section title="6. Sin garantías">
+      <Section title="7. Sin garantías">
         <p>
           El sitio se ofrece gratis y <B>tal como está</B>. Hacemos lo posible para que funcione,
           pero puede tener errores, pausarse (por ejemplo, si el servicio de cuentas se suspende por
@@ -381,7 +399,7 @@ function Terms() {
         </p>
       </Section>
 
-      <Section title="7. Responsabilidad">
+      <Section title="8. Responsabilidad">
         <p>
           En la medida que lo permita la ley, WeWolf no responde por daños derivados del uso del
           sitio, de su indisponibilidad o de la pérdida de progreso. Nada de esto limita los
@@ -389,14 +407,14 @@ function Terms() {
         </p>
       </Section>
 
-      <Section title="8. Privacidad">
+      <Section title="9. Privacidad">
         <p>
           Cómo tratamos tus datos está en el <Link href="#privacidad">aviso de privacidad</Link>,
           que forma parte de estos términos.
         </p>
       </Section>
 
-      <Section title="9. Cambios">
+      <Section title="10. Cambios">
         <p>
           Podemos actualizar estos términos. Publicaremos la nueva versión aquí con su fecha; si el
           cambio es importante, lo avisaremos en el sitio. Seguir usándolo después significa que lo
@@ -404,7 +422,7 @@ function Terms() {
         </p>
       </Section>
 
-      <Section title="10. Ley aplicable y contacto">
+      <Section title="11. Ley aplicable y contacto">
         <p>
           Estos términos se rigen por las leyes de los Estados Unidos Mexicanos. Para cualquier
           controversia, las partes se someten a los tribunales de Mérida, Yucatán. Dudas o reclamos:{" "}
@@ -480,7 +498,8 @@ function Security() {
             sin que la revisemos.
           </li>
           <li>
-            <B>Datos mínimos.</B> Solo guardamos un apodo y tu progreso. Lo que no se guarda no se
+            <B>Datos mínimos.</B> Solo guardamos un apodo y qué ejercicios resolviste. Los puntos
+            del ranking los calcula el servidor con un catálogo fijo. Lo que no se guarda no se
             puede filtrar.
           </li>
           <li>

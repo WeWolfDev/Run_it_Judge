@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client";
 
-import { SoloApp } from "@/components/solo/SoloApp";
+import { SoloApp, SoloFramed } from "@/components/solo/SoloApp";
 import { storedPalette } from "@/lib/palette";
 import { applyPixelCursor } from "@/lib/pixel-cursor";
 
@@ -11,6 +11,11 @@ import "./styles.css";
 // Se compila con vite.solo.config.ts (npm run build:solo).
 document.documentElement.dataset["palette"] = storedPalette();
 
-createRoot(document.getElementById("root")!).render(<SoloApp />);
+// GitHub Pages no deja enviar la cabecera frame-ancestors: si otra página mete
+// el sitio en un iframe (para engañar clics sobre los botones de cuenta), no se
+// muestra el juego, solo un enlace para abrirlo en su propia pestaña.
+const framed = window.top !== window.self;
 
-applyPixelCursor();
+createRoot(document.getElementById("root")!).render(framed ? <SoloFramed /> : <SoloApp />);
+
+if (!framed) applyPixelCursor();

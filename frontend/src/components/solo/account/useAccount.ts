@@ -3,8 +3,9 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/solo-supabase";
 
 // Estado de la cuenta del modo solo. La cuenta es opcional: sin ella se juega
-// igual. Con ella solo se guarda un apodo (tabla perfiles) y, cuando exista el
-// roadmap, el progreso (tabla progreso). Ver el aviso en SoloLegal.tsx.
+// igual. Con ella solo se guarda un apodo (tabla perfiles) y los ejercicios
+// resueltos del mapa (tabla progreso, aprende/useProgress.ts). Ver el aviso en
+// SoloLegal.tsx.
 
 export type Provider = "github" | "google";
 
@@ -12,7 +13,7 @@ export type AccountState =
   | { status: "loading" }
   | { status: "signedOut"; notice?: string }
   | { status: "needsNickname" }
-  | { status: "ready"; apodo: string }
+  | { status: "ready"; apodo: string; userId: string }
   | { status: "error"; message: string };
 
 /** Mismas reglas que el check de perfiles.apodo en Supabase. */
@@ -51,7 +52,7 @@ export function useAccount() {
       setState({ status: "error", message: "No se pudo cargar tu cuenta. Intenta de nuevo." });
       return;
     }
-    setState(data ? { status: "ready", apodo: data.apodo } : { status: "needsNickname" });
+    setState(data ? { status: "ready", apodo: data.apodo, userId } : { status: "needsNickname" });
   }, []);
 
   useEffect(() => {
@@ -89,7 +90,7 @@ export function useAccount() {
         ? "Ese apodo ya lo usa alguien más."
         : "No se pudo guardar el apodo. Intenta de nuevo.";
     }
-    setState({ status: "ready", apodo });
+    setState({ status: "ready", apodo, userId: data.user.id });
     return null;
   }, []);
 
