@@ -82,10 +82,12 @@ sigue siendo estático.
 | Estado de la cuenta | `frontend/src/components/solo/account/useAccount.ts` |
 | Botón, apodo, cerrar sesión, borrar cuenta | `frontend/src/components/solo/account/SoloAccount.tsx` |
 | Tablas, permisos, RLS y `borrar_mi_cuenta()` | `deploy/supabase/001_solo_cuentas_y_progreso.sql` |
+| Límites (formato del tema, 300 temas por cuenta, columnas editables) | `deploy/supabase/002_solo_limites.sql` |
 
 Configuración del proyecto en Supabase (ya hecha; anotarla si se rehace):
 
-- **SQL Editor:** correr `deploy/supabase/001_solo_cuentas_y_progreso.sql`.
+- **SQL Editor:** correr `001_solo_cuentas_y_progreso.sql` y después
+  `002_solo_limites.sql`, los dos de `deploy/supabase/`.
   Se puede volver a correr. Un cambio de esquema va en un archivo nuevo
   (`002_...`), nunca editando el anterior.
 - **Data API** activada y **Automatically expose new tables** apagada: cada

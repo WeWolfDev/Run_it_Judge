@@ -49,3 +49,14 @@ export function SoloApp() {
     </>
   );
 }
+
+/** Lo único que se muestra si el sitio está dentro de un iframe (solo-main.tsx). */
+export function SoloFramed() {
+  return (
+    <p className="grid min-h-dvh place-items-center bg-background p-6 text-center text-sm text-foreground">
+      <a href={window.location.href} target="_top" className="text-primary underline">
+        Abre Run It Solo en su propia pestaña
+      </a>
+    </p>
+  );
+}
