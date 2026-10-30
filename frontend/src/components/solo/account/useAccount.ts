@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { setSelectedCharacter } from "@/lib/session";
 import { supabase } from "@/lib/solo-supabase";
+
+import { nicknameProblem } from "./nickname";
 
 // Estado de la cuenta del modo solo. La cuenta es opcional: sin ella se juega
 // igual. Con ella solo se guarda un apodo (tabla perfiles) y los ejercicios
@@ -13,11 +16,31 @@ export type AccountState =
   | { status: "loading" }
   | { status: "signedOut"; notice?: string }
   | { status: "needsNickname" }
-  | { status: "ready"; apodo: string; userId: string }
+  | {
+      status: "ready";
+      apodo: string;
+      userId: string;
+      /** Suspendida por el equipo (apodo ofensivo u otra falta a los términos). */
+      bloqueado: boolean;
+      /** Fecha de alta del perfil (ISO), si la base la devuelve. */
+      desde: string | null;
+    }
   | { status: "error"; message: string };
 
-/** Mismas reglas que el check de perfiles.apodo en Supabase. */
-export const NICKNAME = /^[A-Za-z0-9_-]{3,20}$/;
+export { NICKNAME } from "./nickname";
+
+type Perfil = { apodo: string; bloqueado?: boolean; creado_en?: string; personaje?: number };
+
+/** Usuario local del personaje elegido (el mismo de la contrarreloj y el mapa). */
+export const PLAYER = "demo-solo";
+
+/** Error del servidor al guardar un apodo, en palabras del usuario. */
+function nicknameError(error: { code?: string; message?: string }) {
+  if (error.code === "23505") return "Ese apodo ya lo usa alguien más.";
+  if (error.message?.includes("apodo_no_permitido"))
+    return "Ese apodo no está permitido: no se aceptan groserías, insultos ni contenido ofensivo.";
+  return "No se pudo guardar el apodo. Intenta de nuevo.";
+}
 
 // Lo que deja el regreso del login en la URL (?code=, ?error=). Se borra para
 // que recargar o compartir el enlace no lo repita.
@@ -43,16 +66,36 @@ export function useAccount() {
       setState((current) => (current.status === "signedOut" ? current : { status: "signedOut" }));
       return;
     }
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("perfiles")
-      .select("apodo")
+      .select("apodo, bloqueado, creado_en, personaje")
       .eq("id", userId)
-      .maybeSingle<{ apodo: string }>();
+      .maybeSingle<Perfil>();
+    // Sin 004_solo_perfil_y_moderacion.sql todavía no existe `bloqueado`.
+    if (error?.code === "42703") {
+      ({ data, error } = await supabase
+        .from("perfiles")
+        .select("apodo")
+        .eq("id", userId)
+        .maybeSingle<Perfil>());
+    }
     if (error) {
       setState({ status: "error", message: "No se pudo cargar tu cuenta. Intenta de nuevo." });
       return;
     }
-    setState(data ? { status: "ready", apodo: data.apodo, userId } : { status: "needsNickname" });
+    // El personaje guardado en la cuenta manda sobre el de este navegador.
+    if (typeof data?.personaje === "number") setSelectedCharacter(PLAYER, data.personaje);
+    setState(
+      data
+        ? {
+            status: "ready",
+            apodo: data.apodo,
+            userId,
+            bloqueado: data.bloqueado ?? false,
+            desde: data.creado_en ?? null,
+          }
+        : { status: "needsNickname" },
+    );
   }, []);
 
   useEffect(() => {
@@ -79,20 +122,35 @@ export function useAccount() {
 
   /** Devuelve el error para mostrar junto al campo, o null si se guardó. */
   const saveNickname = useCallback(async (apodo: string) => {
-    if (!NICKNAME.test(apodo)) {
-      return "Usa de 3 a 20 letras sin acentos, números, guion o guion bajo.";
-    }
+    const problem = nicknameProblem(apodo);
+    if (problem) return problem;
     const { data } = await supabase.auth.getUser();
     if (!data.user) return "Tu sesión terminó. Vuelve a entrar.";
     const { error } = await supabase.from("perfiles").insert({ id: data.user.id, apodo });
-    if (error) {
-      return error.code === "23505"
-        ? "Ese apodo ya lo usa alguien más."
-        : "No se pudo guardar el apodo. Intenta de nuevo.";
-    }
-    setState({ status: "ready", apodo, userId: data.user.id });
+    if (error) return nicknameError(error);
+    setState({
+      status: "ready",
+      apodo,
+      userId: data.user.id,
+      bloqueado: false,
+      desde: new Date().toISOString(),
+    });
     return null;
   }, []);
+
+  /** Cambia el apodo de una cuenta que ya tiene uno. */
+  const renameNickname = useCallback(
+    async (apodo: string) => {
+      if (state.status !== "ready") return "Entra a tu cuenta para cambiar el apodo.";
+      const problem = nicknameProblem(apodo);
+      if (problem) return problem;
+      const { error } = await supabase.from("perfiles").update({ apodo }).eq("id", state.userId);
+      if (error) return nicknameError(error);
+      setState({ ...state, apodo });
+      return null;
+    },
+    [state],
+  );
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
@@ -115,7 +173,25 @@ export function useAccount() {
     await load(data.session?.user.id ?? null);
   }, [load]);
 
-  return { state, signIn, saveNickname, signOut, deleteAccount, retry };
+  /** Guarda en la cuenta el personaje elegido (en el navegador ya lo guardó el carrusel). */
+  const saveCharacter = useCallback(
+    async (index: number) => {
+      if (state.status !== "ready" || state.bloqueado) return;
+      await supabase.from("perfiles").update({ personaje: index }).eq("id", state.userId);
+    },
+    [state],
+  );
+
+  return {
+    state,
+    signIn,
+    saveNickname,
+    renameNickname,
+    saveCharacter,
+    signOut,
+    deleteAccount,
+    retry,
+  };
 }
 
 export type Account = ReturnType<typeof useAccount>;

@@ -38,6 +38,8 @@ export function useProgress(account: AccountState) {
   );
   const [syncError, setSyncError] = useState<string | null>(null);
   const userId = account.status === "ready" ? account.userId : null;
+  // Una cuenta suspendida no sincroniza: el servidor rechazaría lo nuevo.
+  const syncId = account.status === "ready" && !account.bloqueado ? account.userId : null;
 
   // Al cerrar sesión (o borrar la cuenta) se borra la copia local: en una
   // computadora compartida, quien entre después no debe ver ni heredar lo tuyo.
@@ -53,14 +55,14 @@ export function useProgress(account: AccountState) {
 
   // Con sesión: sube lo resuelto en este navegador y baja lo de la cuenta.
   useEffect(() => {
-    if (!userId) return;
+    if (!syncId) return;
     let cancelled = false;
     void (async () => {
       const local = readLocal();
       const { data, error } = await supabase
         .from("progreso")
         .select("tema, completado_en")
-        .eq("usuario", userId);
+        .eq("usuario", syncId);
       if (cancelled) return;
       if (error) {
         setSyncError("No se pudo cargar tu progreso de la cuenta. Se guarda en este navegador.");
@@ -74,7 +76,7 @@ export function useProgress(account: AccountState) {
       const missing = Object.entries(local).filter(([id]) => !(id in remote));
       if (missing.length > 0) {
         const { error: upError } = await supabase.from("progreso").upsert(
-          missing.map(([tema, completado_en]) => ({ usuario: userId, tema, completado_en })),
+          missing.map(([tema, completado_en]) => ({ usuario: syncId, tema, completado_en })),
           { onConflict: "usuario,tema", ignoreDuplicates: true },
         );
         if (cancelled) return;
@@ -88,7 +90,7 @@ export function useProgress(account: AccountState) {
     return () => {
       cancelled = true;
     };
-  }, [userId]);
+  }, [syncId]);
 
   const markSolved = useCallback(
     (id: string) => {
@@ -100,11 +102,11 @@ export function useProgress(account: AccountState) {
         writeLocal(next);
         return next;
       });
-      if (userId) {
+      if (syncId) {
         void supabase
           .from("progreso")
           .upsert(
-            { usuario: userId, tema: id, completado_en: at },
+            { usuario: syncId, tema: id, completado_en: at },
             { onConflict: "usuario,tema", ignoreDuplicates: true },
           )
           .then(({ error }) => {
@@ -112,7 +114,7 @@ export function useProgress(account: AccountState) {
           });
       }
     },
-    [userId],
+    [syncId],
   );
 
   const points = ALL_EXERCISES.reduce((sum, e) => sum + (e.id in solved ? e.points : 0), 0);

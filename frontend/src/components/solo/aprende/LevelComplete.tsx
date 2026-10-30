@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { PixelIcon } from "@/components/PixelIcon";
 import { Sprite } from "@/components/Sprite";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { PLAYER } from "@/components/solo/account/useAccount";
 import { getSelectedCharacter } from "@/lib/session";
 
 import type { Exercise, Topic } from "./content";
@@ -13,7 +14,6 @@ import type { NextStep } from "./useProgress";
 // siguiente) o salir al mapa. Con Esc o la X se cierra y sigues viendo tu código.
 
 const PIXEL = { fontFamily: "'Press Start 2P', ui-monospace, monospace" };
-const PLAYER = "demo-solo";
 
 export function LevelComplete({
   exercise,

@@ -99,8 +99,8 @@ Avanzado se ven bloqueados como "próximamente".
 
 ## Cuentas (opcional)
 
-Se juega sin cuenta. Con cuenta se guarda un apodo y, cuando exista el roadmap,
-el progreso. Las guarda Supabase (proyecto `qyqodhnhltiyzzzdekoy`); el sitio
+Se juega sin cuenta. Con cuenta se guardan el apodo, el personaje y los
+ejercicios resueltos del mapa. Las guarda Supabase (proyecto `qyqodhnhltiyzzzdekoy`); el sitio
 sigue siendo estático.
 
 | Pieza | Dónde |
@@ -111,11 +111,16 @@ sigue siendo estático.
 | Tablas, permisos, RLS y `borrar_mi_cuenta()` | `deploy/supabase/001_solo_cuentas_y_progreso.sql` |
 | Límites (formato del tema, 300 temas por cuenta, columnas editables) | `deploy/supabase/002_solo_limites.sql` |
 | Catálogo de ejercicios, ranking opcional (`ranking_global`, `mi_ranking`) | `deploy/supabase/003_solo_mapa_y_ranking.sql` |
+| Moderación de apodos, suspensión (`bloqueado`) y personaje en la cuenta | `deploy/supabase/004_solo_perfil_y_moderacion.sql` |
+| Reglas del apodo en el sitio (copia de las listas) | `frontend/src/components/solo/account/nickname.ts` |
 
 Configuración del proyecto en Supabase (ya hecha; anotarla si se rehace):
 
 - **SQL Editor:** correr en orden `001_solo_cuentas_y_progreso.sql`,
-  `002_solo_limites.sql` y `003_solo_mapa_y_ranking.sql`, de `deploy/supabase/`.
+  `002_solo_limites.sql`, `003_solo_mapa_y_ranking.sql` y
+  `004_solo_perfil_y_moderacion.sql`, de `deploy/supabase/`. Si se vuelve a
+  correr uno viejo, correr después los que le siguen: cada script redefine
+  permisos y funciones de los anteriores.
   Se puede volver a correr. Un cambio de esquema va en un archivo nuevo
   (`002_...`), nunca editando el anterior.
 - **Data API** activada y **Automatically expose new tables** apagada: cada
@@ -134,6 +139,28 @@ client secrets de GitHub o Google: viven solo en el panel de Supabase.
 
 El plan gratuito de Supabase pausa el proyecto tras un tiempo sin uso. Si el
 login deja de responder después de vacaciones, reactivarlo desde el panel.
+
+## Moderación de apodos
+
+El servidor rechaza los apodos con palabras de `palabras_prohibidas` (trigger
+`perfiles_revisar_apodo`), también escondidas con números o letras repetidas;
+`palabras_permitidas` evita falsos positivos ("computadora", "diputado"). El
+sitio avisa antes con una copia de las listas en `account/nickname.ts`: al
+agregar una palabra, en los dos lados.
+
+Desde el SQL Editor de Supabase:
+
+```sql
+-- Banear a alguien (deja de salir en el ranking y de guardar avance)
+update public.perfiles set bloqueado = true where apodo = 'X';
+-- Quitar el baneo
+update public.perfiles set bloqueado = false where apodo = 'X';
+-- Prohibir una palabra más (raíz normalizada: minúsculas, sin acentos)
+insert into public.palabras_prohibidas values ('raiz');
+```
+
+El usuario no puede cambiar `bloqueado`: solo tiene permiso sobre `apodo`,
+`en_ranking` y `personaje`.
 
 ## Datos del responsable
 

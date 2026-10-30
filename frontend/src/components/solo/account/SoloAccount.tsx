@@ -11,7 +11,8 @@ import {
 } from "@/components/ui/dialog";
 
 import { ProviderButton } from "./ProviderButton";
-import { NICKNAME, type Account, type Provider } from "./useAccount";
+import { nicknameProblem } from "./nickname";
+import type { Account, Provider } from "./useAccount";
 
 // Cuenta opcional del modo solo, en la barra de arriba: entrar con GitHub o
 // Google, elegir un apodo, cerrar sesión y borrar la cuenta. Jugar no la
@@ -244,18 +245,27 @@ function NicknameForm({
   );
 }
 
-/** Campo del apodo. Sin piezas del diálogo: también va en la pantalla de inicio. */
+/** Campo del apodo. Sin piezas del diálogo: también va en la pantalla de inicio y el perfil. */
 export function NicknameFields({
   onSave,
   onSignOut,
+  initial = "",
+  submitLabel = "Guardar apodo",
+  cancelLabel = "Salir de la cuenta",
 }: {
   onSave: (apodo: string) => Promise<string | null>;
   onSignOut: () => void;
+  initial?: string;
+  submitLabel?: string;
+  cancelLabel?: string;
 }) {
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const valid = NICKNAME.test(value);
+  // Aviso en vivo: formato y palabras prohibidas (el servidor vuelve a revisar).
+  const problem = value.length >= 3 ? nicknameProblem(value) : null;
+  const valid = value.length >= 3 && problem === null && value !== initial;
+  const message = error ?? problem;
   return (
     <form
       className="grid gap-3"
@@ -281,23 +291,24 @@ export function NicknameFields({
           maxLength={20}
           autoComplete="off"
           autoFocus
-          aria-invalid={error !== null}
+          aria-invalid={message !== null}
           aria-describedby="solo-apodo-ayuda"
           className="rounded-lg border border-input bg-background px-3 py-2 text-center font-mono text-foreground outline-none focus:border-ring"
         />
         <span
           id="solo-apodo-ayuda"
-          className={error ? "text-danger" : "text-xs text-muted-foreground"}
+          className={message ? "text-xs text-danger" : "text-xs text-muted-foreground"}
         >
-          {error ?? "De 3 a 20 caracteres: letras sin acentos, números, guion o guion bajo."}
+          {message ??
+            "De 3 a 20 caracteres: letras sin acentos, números, guion o guion bajo. Sin groserías ni insultos."}
         </span>
       </label>
       <div className="flex flex-wrap justify-center gap-2">
         <button type="submit" className={PRIMARY} disabled={!valid || saving}>
-          {saving ? "Guardando…" : "Guardar apodo"}
+          {saving ? "Guardando…" : submitLabel}
         </button>
         <button type="button" className={BUTTON} onClick={onSignOut}>
-          Salir de la cuenta
+          {cancelLabel}
         </button>
       </div>
     </form>

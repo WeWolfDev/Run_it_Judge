@@ -1,0 +1,330 @@
+import { useEffect, useState, type ReactNode } from "react";
+
+import { CharacterCarousel } from "@/components/CharacterCarousel";
+import { PixelIcon } from "@/components/PixelIcon";
+import { NicknameFields, SignInOptions } from "@/components/solo/account/SoloAccount";
+import { PLAYER, type Account } from "@/components/solo/account/useAccount";
+import { Sprite } from "@/components/Sprite";
+import { characterAt } from "@/lib/characters";
+import { getSelectedCharacter } from "@/lib/session";
+import { supabase } from "@/lib/solo-supabase";
+
+import { ALL_EXERCISES, levelOf, WORLDS } from "./content";
+import { topicState, type Progress } from "./useProgress";
+
+// Perfil del jugador: personaje (se elige de la lista de siempre y, con cuenta,
+// se guarda en ella), datos de la cuenta, avance por tema y acciones de la
+// cuenta. Sin cuenta muestra el avance de este navegador y cómo entrar.
+
+const PIXEL = { fontFamily: "'Press Start 2P', ui-monospace, monospace" };
+const PROVIDER: Record<string, string> = { github: "GitHub", google: "Google" };
+
+export function Profile({
+  account,
+  progress,
+  onRanking,
+}: {
+  account: Account;
+  progress: Progress;
+  onRanking: () => void;
+}) {
+  const { state } = account;
+  const [character, setCharacter] = useState<number | null>(null);
+  const [choosing, setChoosing] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [provider, setProvider] = useState<string | null>(null);
+  const ready = state.status === "ready" ? state : null;
+
+  useEffect(() => setCharacter(getSelectedCharacter(PLAYER)), [state.status]);
+  const userId = ready?.userId ?? null;
+  useEffect(() => {
+    if (!userId) return;
+    void supabase.auth.getUser().then(({ data }) => {
+      const id = data.user?.app_metadata["provider"];
+      setProvider(typeof id === "string" ? (PROVIDER[id] ?? id) : null);
+    });
+  }, [userId]);
+
+  const topics = WORLDS[0]!.topics;
+  const solvedCount = ALL_EXERCISES.filter((e) => e.id in progress.solved).length;
+  const doneTopics = topics.filter(
+    (_, i) => topicState(topics, i, progress.solved) === "done",
+  ).length;
+  const level = levelOf(progress.points);
+
+  return (
+    <div className="grid gap-5 lg:grid-cols-[22rem_minmax(0,1fr)]">
+      <div className="grid content-start gap-5">
+        {/* Tarjeta del jugador */}
+        <section className="grid justify-items-center gap-3 rounded-xl border-2 border-primary bg-card p-6 text-center shadow-[6px_6px_0_0_var(--primary)]">
+          <div className="grid h-36 place-items-end">
+            {character !== null && <Sprite index={character} state="idle" scale={1} />}
+          </div>
+          <p className="text-[10px] text-muted-foreground" style={PIXEL}>
+            {character !== null ? characterAt(character).name : ""}
+          </p>
+          <h1 className="text-base text-foreground" style={PIXEL}>
+            {ready ? ready.apodo : "Jugador sin cuenta"}
+          </h1>
+          {ready?.bloqueado && (
+            <p className="rounded-md bg-danger-soft px-2 py-1 text-xs text-danger">
+              Cuenta suspendida
+            </p>
+          )}
+          <div className="w-full">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span style={PIXEL} className="text-[10px] text-foreground">
+                Nivel {level}
+              </span>
+              <span className="font-mono tabular-nums">{progress.points} XP</span>
+            </div>
+            <div className="mt-1.5 h-3 overflow-hidden rounded bg-muted">
+              <div className="h-full bg-accent" style={{ width: `${progress.points % 100}%` }} />
+            </div>
+            <p className="mt-1 text-right text-[11px] text-muted-foreground">
+              {100 - (progress.points % 100)} XP para el nivel {level + 1}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setChoosing((open) => !open)}
+            className="login-start w-full bg-primary py-2.5 text-[10px] text-primary-foreground"
+            style={PIXEL}
+          >
+            {choosing ? "Cerrar la lista" : "Cambiar personaje"}
+          </button>
+        </section>
+
+        {/* Datos de la cuenta */}
+        <section className="rounded-xl border border-border bg-card p-5">
+          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+            <PixelIcon name="users" className="h-4 w-4 text-primary" /> Datos del usuario
+          </h2>
+          {ready ? (
+            <dl className="grid gap-2 text-sm">
+              <Data label="Apodo">
+                <span className="font-mono">{ready.apodo}</span>
+                {!ready.bloqueado && (
+                  <button
+                    type="button"
+                    onClick={() => setRenaming((open) => !open)}
+                    className="ml-2 text-xs text-primary hover:underline"
+                  >
+                    {renaming ? "Cancelar" : "Cambiar"}
+                  </button>
+                )}
+              </Data>
+              {renaming && (
+                <div className="rounded-lg border border-border p-3">
+                  <NicknameFields
+                    initial={ready.apodo}
+                    submitLabel="Guardar"
+                    cancelLabel="Cancelar"
+                    onSave={async (apodo) => {
+                      const error = await account.renameNickname(apodo);
+                      if (!error) setRenaming(false);
+                      return error;
+                    }}
+                    onSignOut={() => setRenaming(false)}
+                  />
+                </div>
+              )}
+              <Data label="Entras con">{provider ?? "—"}</Data>
+              <Data label="Miembro desde">
+                {ready.desde
+                  ? new Date(ready.desde).toLocaleDateString("es-MX", { dateStyle: "long" })
+                  : "—"}
+              </Data>
+              <Data label="Estado">
+                {ready.bloqueado ? (
+                  <span className="text-danger">Suspendida</span>
+                ) : (
+                  <span className="text-success">Activa</span>
+                )}
+              </Data>
+              <Data label="Ranking">
+                <button type="button" onClick={onRanking} className="text-primary hover:underline">
+                  Ver o cambiar mi participación
+                </button>
+              </Data>
+            </dl>
+          ) : state.status === "loading" ? (
+            <p className="text-sm text-muted-foreground">Revisando tu cuenta…</p>
+          ) : (
+            <div className="grid gap-3">
+              <p className="text-sm text-muted-foreground">
+                Juegas sin cuenta: tu avance vive solo en este navegador. Entra para guardarlo,
+                elegir un apodo y aparecer en el ranking.
+              </p>
+              <SignInOptions
+                notice={state.status === "signedOut" ? state.notice : undefined}
+                onSignIn={(p) => void account.signIn(p)}
+              />
+            </div>
+          )}
+          {ready?.bloqueado && (
+            <p className="mt-3 rounded-lg bg-danger-soft px-3 py-2 text-xs leading-relaxed text-danger">
+              Tu cuenta está suspendida por no cumplir los{" "}
+              <a href="#terminos" className="underline">
+                términos
+              </a>{" "}
+              (por ejemplo, un apodo ofensivo). No apareces en el ranking y tu avance ya no se
+              guarda en la cuenta. Si crees que es un error, escribe a wolfdev.contacto@gmail.com.
+            </p>
+          )}
+        </section>
+
+        {ready && <AccountActions account={account} />}
+      </div>
+
+      <div className="grid content-start gap-5">
+        {choosing && (
+          <section className="rounded-xl border border-border bg-card p-5">
+            <h2 className="mb-3 text-sm font-semibold text-foreground">Elige tu personaje</h2>
+            <CharacterCarousel
+              username={PLAYER}
+              onSelect={(index) => {
+                setCharacter(index);
+                setChoosing(false);
+                void account.saveCharacter(index);
+              }}
+            />
+          </section>
+        )}
+
+        {/* Estadísticas */}
+        <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat label="Nivel" value={String(level)} />
+          <Stat label="XP" value={String(progress.points)} accent />
+          <Stat label="Ejercicios" value={`${solvedCount}/${ALL_EXERCISES.length}`} />
+          <Stat label="Temas completos" value={`${doneTopics}/${topics.length}`} />
+        </section>
+
+        {/* Avance por tema */}
+        <section className="rounded-xl border border-border bg-card p-5">
+          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+            <PixelIcon name="flag" className="h-4 w-4 text-primary" /> Mundo 1 · {WORLDS[0]!.title}
+          </h2>
+          <ul className="grid gap-2.5">
+            {topics.map((topic, i) => {
+              const solved = topic.exercises.filter((e) => e.id in progress.solved).length;
+              const stateOf = topicState(topics, i, progress.solved);
+              return (
+                <li
+                  key={topic.id}
+                  className="grid grid-cols-[minmax(0,10rem)_minmax(0,1fr)_auto] items-center gap-3 text-sm"
+                >
+                  <span
+                    className={`truncate ${stateOf === "locked" ? "text-muted-foreground" : "text-foreground"}`}
+                  >
+                    {i + 1}. {topic.title}
+                  </span>
+                  <span className="flex gap-1">
+                    {topic.exercises.map((e) => (
+                      <span
+                        key={e.id}
+                        className={`h-2.5 flex-1 ${e.id in progress.solved ? "bg-[#2dd4bf]" : "bg-muted"}`}
+                      />
+                    ))}
+                  </span>
+                  <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                    {solved}/{topic.exercises.length}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function AccountActions({ account }: { account: Account }) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <section className="rounded-xl border border-border bg-card p-5">
+      <h2 className="mb-3 text-sm font-semibold text-foreground">Cuenta</h2>
+      {!confirming ? (
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => void account.signOut()}
+            className="rounded-lg border border-border px-3 py-2 text-sm text-foreground hover:bg-muted"
+          >
+            Cerrar sesión
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            className="rounded-lg border border-danger px-3 py-2 text-sm text-danger hover:bg-danger-soft"
+          >
+            Borrar mi cuenta
+          </button>
+        </div>
+      ) : (
+        <div className="grid gap-3 rounded-lg border border-danger p-3">
+          <p className="text-sm text-foreground">
+            Se borran para siempre tu cuenta, tu apodo y tu progreso. No se puede deshacer.
+          </p>
+          {error && <p className="text-sm text-danger">{error}</p>}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setBusy(true);
+                void account.deleteAccount().then((message) => {
+                  setBusy(false);
+                  setError(message);
+                });
+              }}
+              className="rounded-lg bg-danger px-3 py-2 text-sm font-medium text-danger-foreground disabled:opacity-50"
+            >
+              {busy ? "Borrando…" : "Sí, borrar todo"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              className="rounded-lg border border-border px-3 py-2 text-sm text-foreground hover:bg-muted"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function Data({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border pb-2 last:border-0">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="text-right text-foreground">{children}</dd>
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  accent = false,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+}) {
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p
+        className={`mt-1 font-mono text-xl font-semibold ${accent ? "text-silk-2" : "text-foreground"}`}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}

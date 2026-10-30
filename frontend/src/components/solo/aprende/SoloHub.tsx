@@ -8,6 +8,7 @@ import { Preferences, SoloDemo } from "@/components/solo/SoloDemo";
 import { levelOf, WORLDS } from "./content";
 import { LevelComplete } from "./LevelComplete";
 import { Practice } from "./Practice";
+import { Profile } from "./Profile";
 import { Ranking } from "./Ranking";
 import { TopicView } from "./TopicView";
 import { nextStep, useProgress, type NextStep } from "./useProgress";
@@ -24,12 +25,14 @@ type View =
   | { kind: "topic"; topic: string }
   | { kind: "exercise"; topic: string; exercise: string }
   | { kind: "race" }
-  | { kind: "ranking" };
+  | { kind: "ranking" }
+  | { kind: "profile" };
 
 const TABS = [
   { kind: "map", label: "Mapa", icon: "flag" },
   { kind: "race", label: "Contrarreloj", icon: "clock" },
   { kind: "ranking", label: "Ranking", icon: "trophy" },
+  { kind: "profile", label: "Perfil", icon: "users" },
 ] as const;
 
 type Celebration = { topic: string; exercise: string; firstTime: boolean; next: NextStep };
@@ -62,6 +65,10 @@ export function SoloHub({ account, onExit }: { account: Account; onExit: () => v
   let body;
   if (view.kind === "race") body = <SoloDemo embedded />;
   else if (view.kind === "ranking") body = <Ranking account={account} />;
+  else if (view.kind === "profile")
+    body = (
+      <Profile account={account} progress={progress} onRanking={() => go({ kind: "ranking" })} />
+    );
   else if (view.kind === "map")
     body = <WorldMap solved={progress.solved} onOpen={(topic) => go({ kind: "topic", topic })} />;
   else {
@@ -148,6 +155,12 @@ export function SoloHub({ account, onExit }: { account: Account; onExit: () => v
             <SoloAccount account={account} />
           </div>
         </div>
+        {account.state.status === "ready" && account.state.bloqueado && (
+          <p className="border-t border-border bg-danger-soft px-5 py-1.5 text-center text-xs text-danger">
+            Tu cuenta está suspendida por no cumplir los términos: no apareces en el ranking y tu
+            avance no se guarda en la cuenta. Más detalles en tu perfil.
+          </p>
+        )}
         {progress.syncError && (
           <p className="border-t border-border bg-danger-soft px-5 py-1.5 text-center text-xs text-danger">
             {progress.syncError}
