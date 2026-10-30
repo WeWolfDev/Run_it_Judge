@@ -1,19 +1,25 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { PixelIcon } from "@/components/PixelIcon";
+import { Sprite } from "@/components/Sprite";
+import { getSelectedCharacter } from "@/lib/session";
 
 import { WORLDS, type Topic } from "./content";
+import { CheckeredFlag, MapBackdrop, Track } from "./MapScene";
 import { topicState, type Solved, type TopicState } from "./useProgress";
 
-// Mapa de mundos: cada tema es una parada en el camino. Un tema se desbloquea
-// al resolver al menos un ejercicio del anterior y se completa al resolverlos
-// todos. Los mundos sin temas se ven bloqueados como "próximamente".
-// Coordenadas en un lienzo de 1000 × 760; en pantallas chicas el mapa se
-// desplaza de lado dentro de su caja.
+// Mapa de mundos: tres islas flotantes en pixel art (MapScene) unidas por la
+// pista de carreras. Cada tema es una parada; tu personaje espera en el tema que
+// toca. Un tema se desbloquea al resolver al menos un ejercicio del anterior y
+// se completa al resolverlos todos. Los mundos sin temas se ven bloqueados como
+// "próximamente". Coordenadas en un lienzo de 1000 × 760 (el mismo de
+// MapScene); en pantallas chicas el mapa se desplaza de lado dentro de su caja.
 
 const PIXEL = { fontFamily: "'Press Start 2P', ui-monospace, monospace" };
 const W = 1000;
 const H = 760;
+/** El mismo usuario que la contrarreloj (SoloDemo): el personaje elegido ahí. */
+const PLAYER = "demo-solo";
 
 /** Paradas del mundo 1, en orden (x, y en el lienzo). */
 const STOPS: [number, number][] = [
@@ -32,6 +38,7 @@ const SOON_2: [number, number][] = [
   [790, 560],
   [860, 420],
 ];
+const BOSS: [number, number] = [775, 225];
 
 export function WorldMap({
   solved,
@@ -44,16 +51,17 @@ export function WorldMap({
   const topics = world.topics;
   const states = topics.map((_, i) => topicState(topics, i, solved));
   const firstOpen = states.findIndex((s) => s === "current");
-  const [selected, setSelected] = useState<number | "soon2" | "soon3">(
-    firstOpen === -1 ? topics.length - 1 : firstOpen,
-  );
+  const here = firstOpen === -1 ? topics.length - 1 : firstOpen;
+  const [selected, setSelected] = useState<number | "soon2" | "soon3">(here);
+  const [character, setCharacter] = useState<number | null>(null);
+  useEffect(() => setCharacter(getSelectedCharacter(PLAYER)), []);
 
-  const path = STOPS.map(([x, y]) => `${x},${y}`).join(" ");
   const done = states.filter((s) => s === "done").length;
+  const [px, py] = STOPS[here]!;
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
-      <div className="overflow-x-auto rounded-xl border border-border bg-[#0b0613]">
+      <div className="overflow-x-auto rounded-xl border-2 border-[#2a2440] bg-[#07040d] shadow-[0_0_24px_color-mix(in_oklch,var(--primary)_18%,transparent)]">
         <p className="px-3 pt-2 text-[11px] text-muted-foreground sm:hidden">
           Desliza el mapa de lado para ver los otros mundos.
         </p>
@@ -63,52 +71,16 @@ export function WorldMap({
             className="absolute inset-0 h-full w-full"
             aria-hidden="true"
           >
-            {/* Estrellas fijas */}
-            {Array.from({ length: 40 }, (_, k) => (
-              <rect
-                key={k}
-                x={(k * 197) % W}
-                y={(k * 89) % H}
-                width="3"
-                height="3"
-                fill="white"
-                opacity={0.15 + ((k * 7) % 5) / 20}
-              />
-            ))}
-            <ellipse cx="310" cy="510" rx="290" ry="250" fill="#0f3a3a" opacity="0.85" />
-            <ellipse cx="760" cy="500" rx="210" ry="190" fill="#2a2563" opacity="0.8" />
-            <ellipse cx="770" cy="160" rx="150" ry="120" fill="#4a1636" opacity="0.85" />
-            <polyline
-              points={path}
-              fill="none"
-              stroke="#5eead4"
-              strokeWidth="6"
-              strokeDasharray="14 12"
-              opacity="0.7"
-            />
-            <polyline
-              points={`500,520 ${SOON_2.map(([x, y]) => `${x},${y}`).join(" ")} 770,190`}
-              fill="none"
-              stroke="#8b8aa8"
-              strokeWidth="5"
-              strokeDasharray="12 12"
-              opacity="0.45"
-            />
+            <MapBackdrop />
+            <Track points={[STOPS[STOPS.length - 1]!, ...SOON_2, BOSS]} progress={0} dim />
+            <Track points={STOPS} progress={here + 1} />
+            <CheckeredFlag x={62} y={668} />
+            <CheckeredFlag x={812} y={250} />
           </svg>
 
-          <WorldLabel x={190} y={280} text={`Mundo 1 · ${world.title}`} color="text-[#5eead4]" />
-          <WorldLabel
-            x={760}
-            y={330}
-            text={`Mundo 2 · ${WORLDS[1]!.title}`}
-            color="text-[#a5a3ff]"
-          />
-          <WorldLabel
-            x={770}
-            y={35}
-            text={`Mundo 3 · ${WORLDS[2]!.title}`}
-            color="text-[#ff7ab6]"
-          />
+          <Sign x={170} y={252} world={1} title={world.title} color="#5eead4" />
+          <Sign x={660} y={326} world={2} title={WORLDS[1]!.title} color="#a5a3ff" />
+          <Sign x={775} y={28} world={3} title={WORLDS[2]!.title} color="#ff7ab6" />
 
           {topics.map((topic, i) => {
             const [x, y] = STOPS[i]!;
@@ -138,8 +110,8 @@ export function WorldMap({
             />
           ))}
           <Node
-            x={770}
-            y={170}
+            x={BOSS[0]}
+            y={BOSS[1]}
             state="locked"
             number={0}
             trophy
@@ -147,6 +119,16 @@ export function WorldMap({
             selected={selected === "soon3"}
             onClick={() => setSelected("soon3")}
           />
+
+          {character !== null && (
+            <div
+              className="pointer-events-none absolute -translate-x-1/2 -translate-y-full motion-safe:animate-bounce"
+              style={{ left: `${((px + 34) / W) * 100}%`, top: `${((py - 18) / H) * 100}%` }}
+              aria-hidden="true"
+            >
+              <Sprite index={character} state="idle" scale={0.5} />
+            </div>
+          )}
         </div>
       </div>
 
@@ -172,21 +154,42 @@ export function WorldMap({
   );
 }
 
-function WorldLabel({ x, y, text, color }: { x: number; y: number; text: string; color: string }) {
+/** Letrero pixel con el nombre del mundo. */
+function Sign({
+  x,
+  y,
+  world,
+  title,
+  color,
+}: {
+  x: number;
+  y: number;
+  world: number;
+  title: string;
+  color: string;
+}) {
   return (
     <p
-      className={`absolute -translate-x-1/2 -translate-y-1/2 whitespace-nowrap text-[10px] ${color}`}
-      style={{ ...PIXEL, left: `${(x / W) * 100}%`, top: `${(y / H) * 100}%` }}
+      className="absolute -translate-x-1/2 -translate-y-1/2 whitespace-nowrap border-2 bg-[#07040d]/90 px-2.5 py-1.5 text-[9px] shadow-[3px_3px_0_0_rgb(0_0_0_/_0.6)]"
+      style={{
+        ...PIXEL,
+        left: `${(x / W) * 100}%`,
+        top: `${(y / H) * 100}%`,
+        color,
+        borderColor: color,
+      }}
     >
-      {text}
+      Mundo {world} · {title}
     </p>
   );
 }
 
+// Botones de arcade: cara redonda, brillo arriba y canto oscuro abajo.
 const NODE: Record<TopicState, string> = {
-  done: "bg-[#5eead4] text-[#073b3a] border-[#99f6e4]",
-  current: "bg-primary text-primary-foreground border-white",
-  locked: "bg-[#1c1830] text-muted-foreground border-[#3b3556]",
+  done: "bg-[#2dd4bf] text-[#04302b] shadow-[inset_0_-5px_0_0_#0f766e,0_4px_0_0_#04302b]",
+  current:
+    "bg-primary text-primary-foreground shadow-[inset_0_-5px_0_0_rgb(0_0_0_/_0.25),0_4px_0_0_rgb(0_0_0_/_0.6),0_0_22px_var(--primary)]",
+  locked: "bg-[#1c1830] text-[#6b6488] shadow-[inset_0_-5px_0_0_#100d1d,0_4px_0_0_#05030a]",
 };
 
 function Node({
@@ -214,25 +217,39 @@ function Node({
       onClick={onClick}
       aria-pressed={selected}
       aria-label={`${label}: ${state === "done" ? "completado" : state === "current" ? "disponible" : "bloqueado"}`}
-      className="group absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1.5"
+      className="group absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2"
       style={{ left: `${(x / W) * 100}%`, top: `${(y / H) * 100}%` }}
     >
-      <span
-        className={`grid h-14 w-14 place-items-center rounded-xl border-2 shadow-[4px_4px_0_0_rgb(0_0_0_/_0.5)] transition-transform group-hover:-translate-y-0.5 ${NODE[state]} ${selected ? "ring-4 ring-white/80" : ""}`}
-        style={PIXEL}
-      >
-        {trophy ? (
-          <PixelIcon name="trophy" className="h-7 w-7 text-[#fbbf24]" />
-        ) : state === "done" ? (
-          <PixelIcon name="check" className="h-6 w-6" />
-        ) : state === "locked" ? (
-          <Lock />
-        ) : (
-          <span className="text-base">{number}</span>
+      <span className="relative grid place-items-center">
+        {state === "current" && (
+          <span className="absolute inset-0 rounded-full bg-primary/40 motion-safe:animate-ping" />
         )}
+        <span
+          className={`relative grid h-14 w-14 place-items-center rounded-full border-2 border-black/60 transition-transform group-hover:-translate-y-0.5 ${NODE[state]} ${
+            selected ? "outline outline-4 outline-offset-2 outline-white/85" : ""
+          }`}
+          style={PIXEL}
+        >
+          <span className="pointer-events-none absolute left-3 top-2 h-2 w-4 rounded-full bg-white/35" />
+          {trophy ? (
+            <PixelIcon name="trophy" className="h-7 w-7 text-[#fbbf24]" />
+          ) : state === "done" ? (
+            <PixelIcon name="check" className="h-6 w-6" />
+          ) : state === "locked" ? (
+            <Lock />
+          ) : (
+            <span className="text-base">{number}</span>
+          )}
+        </span>
       </span>
       <span
-        className={`max-w-[9rem] text-center text-[11px] leading-tight drop-shadow ${state === "current" ? "text-primary" : "text-foreground"}`}
+        className={`max-w-[9rem] rounded bg-[#07040d]/75 px-1.5 py-0.5 text-center text-[11px] leading-tight ${
+          state === "current"
+            ? "text-primary"
+            : state === "done"
+              ? "text-[#5eead4]"
+              : "text-[#a29cc0]"
+        }`}
       >
         {label}
       </span>

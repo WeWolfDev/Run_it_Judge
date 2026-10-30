@@ -1,10 +1,13 @@
 import { useEffect, useState, type ReactNode } from "react";
 
+import { ChevronLeft, ChevronRight, Pause, Play, RotateCcw } from "lucide-react";
+
 import type { AnimationId } from "./content";
 
 // Animaciones de las lecciones: cada una es una lista de cuadros (lo que se ve y
-// una explicación) que se recorre con Paso, Anterior o Auto. Sin bibliotecas:
-// divs con los colores del tema.
+// una explicación) que se recorre como un reproductor: reiniciar, anterior,
+// reproducir/pausa, siguiente y una línea de tiempo. Sin bibliotecas de
+// animación: divs con los colores del tema.
 
 type Frame = { view: ReactNode; caption: string };
 
@@ -29,58 +32,113 @@ function Stepper({ frames }: { frames: Frame[] }) {
     return () => clearTimeout(id);
   }, [auto, index, last]);
 
-  const button =
-    "rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-40";
+  const go = (next: number) => {
+    setAuto(false);
+    setIndex(Math.max(0, Math.min(last, next)));
+  };
+  const toggle = () => {
+    if (!auto && index === last) setIndex(0);
+    setAuto((on) => !on);
+  };
+
   return (
     <div className="grid gap-3">
-      <div className="min-h-[9rem] overflow-x-auto rounded-xl border border-border bg-background/60 p-4">
+      <div className="min-h-[9rem] overflow-x-auto rounded-xl border border-border bg-background/60 p-4 [&_*]:[font-variant-ligatures:none]">
         {frame.view}
       </div>
       <p className="min-h-[2.5rem] text-sm text-foreground" aria-live="polite">
         {frame.caption}
       </p>
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          className={button}
-          onClick={() => setIndex((i) => Math.max(0, i - 1))}
-          disabled={index === 0}
-        >
-          Anterior
-        </button>
-        <button
-          type="button"
-          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-40"
-          onClick={() => setIndex((i) => Math.min(last, i + 1))}
-          disabled={index === last}
-        >
-          Paso
-        </button>
-        <button
-          type="button"
-          className={button}
-          onClick={() => {
-            if (index === last) setIndex(0);
-            setAuto((on) => !on);
-          }}
-        >
-          {auto ? "Pausa" : "Auto"}
-        </button>
-        <button
-          type="button"
-          className={button}
-          onClick={() => {
-            setAuto(false);
-            setIndex(0);
-          }}
-        >
-          Reiniciar
-        </button>
-        <span className="ml-auto font-mono text-xs tabular-nums text-muted-foreground">
-          {index + 1} / {frames.length}
+
+      {/* Controles de reproductor: reiniciar, anterior, reproducir/pausa, siguiente. */}
+      <div
+        className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-background/60 px-3 py-2"
+        role="group"
+        aria-label="Controles de la animación"
+        onKeyDown={(event) => {
+          if (event.key === "ArrowLeft") go(index - 1);
+          if (event.key === "ArrowRight") go(index + 1);
+        }}
+      >
+        <div className="flex items-center gap-1.5">
+          <IconButton label="Reiniciar" onClick={() => go(0)} disabled={index === 0 && !auto}>
+            <RotateCcw className="h-4 w-4" />
+          </IconButton>
+          <IconButton label="Paso anterior" onClick={() => go(index - 1)} disabled={index === 0}>
+            <ChevronLeft className="h-5 w-5" />
+          </IconButton>
+          <button
+            type="button"
+            onClick={toggle}
+            aria-label={auto ? "Pausar" : "Reproducir"}
+            title={auto ? "Pausar" : "Reproducir"}
+            aria-pressed={auto}
+            className="grid h-11 w-11 place-items-center rounded-full bg-primary text-primary-foreground shadow-[0_0_14px_color-mix(in_oklch,var(--primary)_55%,transparent)] transition-transform hover:scale-105 active:scale-95"
+          >
+            {auto ? (
+              <Pause className="h-5 w-5" fill="currentColor" />
+            ) : (
+              <Play className="ml-0.5 h-5 w-5" fill="currentColor" />
+            )}
+          </button>
+          <IconButton
+            label="Paso siguiente"
+            onClick={() => go(index + 1)}
+            disabled={index === last}
+          >
+            <ChevronRight className="h-5 w-5" />
+          </IconButton>
+        </div>
+
+        {/* Línea de tiempo: un segmento por paso; se puede saltar a cualquiera. */}
+        <div className="flex min-w-[6rem] flex-1 items-center gap-1">
+          {frames.map((_, k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => go(k)}
+              aria-label={`Ir al paso ${k + 1}`}
+              aria-current={k === index ? "step" : undefined}
+              className={`h-2 flex-1 rounded-full transition-colors ${
+                k < index
+                  ? "bg-primary/60"
+                  : k === index
+                    ? "bg-primary"
+                    : "bg-muted hover:bg-muted-foreground/40"
+              }`}
+            />
+          ))}
+        </div>
+        <span className="font-mono text-xs tabular-nums text-muted-foreground">
+          {index + 1}/{frames.length}
         </span>
       </div>
     </div>
+  );
+}
+
+function IconButton({
+  label,
+  onClick,
+  disabled,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+      className="grid h-9 w-9 place-items-center rounded-full border border-border text-foreground transition-colors hover:bg-muted disabled:opacity-30"
+    >
+      {children}
+    </button>
   );
 }
 
