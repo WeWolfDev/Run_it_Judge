@@ -70,6 +70,41 @@ No hace falta cambiar el código: con `base: "./"` funciona igual en la raíz.
 - `#privacidad` y `#terminos` están registrados en la pantalla de consentimiento
   de Google: si cambian esas direcciones, actualizarlas allá también.
 
+## Cuentas (opcional)
+
+Se juega sin cuenta. Con cuenta se guarda un apodo y, cuando exista el roadmap,
+el progreso. Las guarda Supabase (proyecto `qyqodhnhltiyzzzdekoy`); el sitio
+sigue siendo estático.
+
+| Pieza | Dónde |
+| --- | --- |
+| Cliente y clave publishable | `frontend/src/lib/solo-supabase.ts` |
+| Estado de la cuenta | `frontend/src/components/solo/account/useAccount.ts` |
+| Botón, apodo, cerrar sesión, borrar cuenta | `frontend/src/components/solo/account/SoloAccount.tsx` |
+| Tablas, permisos, RLS y `borrar_mi_cuenta()` | `deploy/supabase/001_solo_cuentas_y_progreso.sql` |
+
+Configuración del proyecto en Supabase (ya hecha; anotarla si se rehace):
+
+- **SQL Editor:** correr `deploy/supabase/001_solo_cuentas_y_progreso.sql`.
+  Se puede volver a correr. Un cambio de esquema va en un archivo nuevo
+  (`002_...`), nunca editando el anterior.
+- **Data API** activada y **Automatically expose new tables** apagada: cada
+  tabla nueva necesita su `grant` y sus políticas, como en el script.
+- **Automatic RLS** activado.
+- **Sign In / Providers:** GitHub (con *Allow users without an email*) y Google
+  activados; **Email desactivado**.
+- **URL Configuration:** Site URL `https://wewolfdev.github.io/Run_it_Judge/`;
+  Redirect URLs `https://wewolfdev.github.io/Run_it_Judge/**` y
+  `http://127.0.0.1:4100/**`.
+- La app de GitHub (OAuth App) y el cliente de Google apuntan a
+  `https://qyqodhnhltiyzzzdekoy.supabase.co/auth/v1/callback`.
+
+Nunca va en el repo la clave secreta (`sb_secret_...` o `service_role`) ni los
+client secrets de GitHub o Google: viven solo en el panel de Supabase.
+
+El plan gratuito de Supabase pausa el proyecto tras un tiempo sin uso. Si el
+login deja de responder después de vacaciones, reactivarlo desde el panel.
+
 ## Datos del responsable
 
 El correo de contacto y el domicilio están en `frontend/src/lib/legal.ts`. Los

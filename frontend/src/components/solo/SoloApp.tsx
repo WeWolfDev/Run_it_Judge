@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { SoloAccount } from "@/components/solo/account/SoloAccount";
 import { SoloDemo } from "@/components/solo/SoloDemo";
 import { SoloFooter, SoloLegal, type LegalPage } from "@/components/solo/SoloLegal";
 
@@ -27,7 +28,7 @@ export function SoloApp() {
   return (
     <>
       <div hidden={legal !== null}>
-        <SoloDemo />
+        <SoloDemo account={<SoloAccount />} />
         <SoloFooter />
       </div>
       {legal && <SoloLegal page={legal} />}

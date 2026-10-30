@@ -5,12 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!--
       GitHub Pages no deja poner cabeceras: la política va aquí. Solo admite
-      código del sitio y de jsDelivr (Clang y Pyodide en versiones fijas).
+      código del sitio y de jsDelivr (Clang y Pyodide en versiones fijas), y
+      solo se conecta a Supabase para la cuenta opcional (lib/solo-supabase.ts).
       Monaco y KaTeX meten estilos en línea: por eso style-src 'unsafe-inline'.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; connect-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; object-src 'none'; base-uri 'self'; form-action 'none'"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; connect-src 'self' https://cdn.jsdelivr.net https://qyqodhnhltiyzzzdekoy.supabase.co; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; object-src 'none'; base-uri 'self'; form-action 'none'"
     />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <title>Run It Solo</title>
