@@ -13,7 +13,7 @@ import { ADDRESS } from "@/lib/legal";
 
 export type LegalPage = "privacidad" | "terminos" | "seguridad" | "creditos";
 
-const UPDATED = "31 de octubre de 2026";
+const UPDATED = "30 de octubre de 2026";
 const PIXEL = { fontFamily: "'Press Start 2P', ui-monospace, monospace" };
 const REPO = "https://github.com/WeWolfDev/Run_it_Judge";
 
@@ -167,6 +167,12 @@ function Privacy() {
           <li>
             <B>Progreso</B>: qué ejercicios del mapa resolviste y la fecha. Con eso se calculan tus
             XP.
+          </li>
+          <li>
+            <B>El personaje</B> que eliges en tu perfil.
+          </li>
+          <li>
+            <B>Si la cuenta está suspendida</B> por no cumplir los términos (sí o no).
           </li>
           <li>
             <B>Si lo activas, tu participación en el ranking global</B> (sí o no).
@@ -334,11 +340,20 @@ function Terms() {
             Eres responsable de tu cuenta de GitHub o Google y de cerrar sesión en computadoras
             compartidas.
           </li>
-          <li>
-            El <B>apodo</B> no puede ser ofensivo, discriminatorio, sexual, ni hacerse pasar por
-            otra persona. Podemos cambiarlo o pedir que lo cambies.
-          </li>
         </List>
+        <p>
+          <B>Reglas del apodo.</B> El apodo es público si activas el ranking, así que{" "}
+          <B>
+            no puede contener groserías, insultos, palabras sexuales, discriminatorias o de odio
+          </B>
+          , ni hacerse pasar por otra persona o por el equipo de Run It (por ejemplo, «admin» o
+          «oficial»). El sitio rechaza los apodos con palabras prohibidas, también si se esconden
+          con números o letras repetidas.
+        </p>
+        <p>
+          <B>Quien use un apodo ofensivo o intente evadir el filtro será baneado:</B> su cuenta se
+          suspende, deja de aparecer en el ranking y su avance ya no se guarda en la cuenta.
+        </p>
       </Section>
 
       <Section title="3. Uso permitido">
@@ -384,8 +399,10 @@ function Terms() {
 
       <Section title="6. Suspensión y baja">
         <p>
-          Puedes borrar tu cuenta cuando quieras desde el juego. Podemos suspender o borrar una
-          cuenta que incumpla estos términos; salvo en casos graves, primero te avisaremos.
+          Puedes borrar tu cuenta cuando quieras desde el juego. Podemos suspender (banear) o borrar
+          una cuenta que incumpla estos términos, por ejemplo por un apodo ofensivo o por inflar
+          puntos. Una cuenta suspendida no aparece en el ranking y no guarda avance; lo verás en tu
+          perfil. Si crees que es un error, escribe a <Contact />.
         </p>
       </Section>
 

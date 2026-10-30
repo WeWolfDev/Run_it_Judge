@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { PixelIcon } from "@/components/PixelIcon";
 import { Sprite } from "@/components/Sprite";
+import { PLAYER } from "@/components/solo/account/useAccount";
 import { getSelectedCharacter } from "@/lib/session";
 
 import { WORLDS, type Topic } from "./content";
@@ -18,8 +19,6 @@ import { topicState, type Solved, type TopicState } from "./useProgress";
 const PIXEL = { fontFamily: "'Press Start 2P', ui-monospace, monospace" };
 const W = 1000;
 const H = 760;
-/** El mismo usuario que la contrarreloj (SoloDemo): el personaje elegido ahí. */
-const PLAYER = "demo-solo";
 
 /** Paradas del mundo 1, en orden (x, y en el lienzo). */
 const STOPS: [number, number][] = [
