@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { PixelIcon } from "@/components/PixelIcon";
 import { SoloAccount } from "@/components/solo/account/SoloAccount";
@@ -6,14 +6,16 @@ import type { Account } from "@/components/solo/account/useAccount";
 import { Preferences, SoloDemo } from "@/components/solo/SoloDemo";
 
 import { levelOf, WORLDS } from "./content";
+import { LevelComplete } from "./LevelComplete";
 import { Practice } from "./Practice";
 import { Ranking } from "./Ranking";
 import { TopicView } from "./TopicView";
-import { useProgress } from "./useProgress";
+import { nextStep, useProgress, type NextStep } from "./useProgress";
 import { WorldMap } from "./WorldMap";
 
 // Modo solo después de "Press start": mapa de aprendizaje (temas, lecciones y
-// ejercicios sin reloj), la contrarreloj de siempre y el ranking global.
+// ejercicios sin reloj), la contrarreloj de siempre y el ranking global. Al
+// aceptar un ejercicio aparece la pantalla de nivel superado (LevelComplete).
 
 const PIXEL = { fontFamily: "'Press Start 2P', ui-monospace, monospace" };
 
@@ -30,8 +32,20 @@ const TABS = [
   { kind: "ranking", label: "Ranking", icon: "trophy" },
 ] as const;
 
+type Celebration = { topic: string; exercise: string; firstTime: boolean; next: NextStep };
+
+/** Pausa antes de la pantalla de nivel superado: deja ver el confeti y el veredicto. */
+const CELEBRATE_MS = 1100;
+
 export function SoloHub({ account, onExit }: { account: Account; onExit: () => void }) {
   const [view, setView] = useState<View>({ kind: "map" });
+  const [celebration, setCelebration] = useState<Celebration | null>(null);
+  const [pending, setPending] = useState<Celebration | null>(null);
+  useEffect(() => {
+    if (!pending) return;
+    const id = setTimeout(() => setCelebration(pending), CELEBRATE_MS);
+    return () => clearTimeout(id);
+  }, [pending]);
   const progress = useProgress(account.state);
   const topics = WORLDS[0]!.topics;
   const level = levelOf(progress.points);
@@ -39,6 +53,8 @@ export function SoloHub({ account, onExit }: { account: Account; onExit: () => v
 
   const tab = view.kind === "topic" || view.kind === "exercise" ? "map" : view.kind;
   const go = (next: View) => {
+    setPending(null);
+    setCelebration(null);
     setView(next);
     window.scrollTo(0, 0);
   };
@@ -69,7 +85,15 @@ export function SoloHub({ account, onExit }: { account: Account; onExit: () => v
           key={exercise.id}
           exercise={exercise}
           solved={exercise.id in progress.solved}
-          onSolved={() => progress.markSolved(exercise.id)}
+          onAccepted={(firstTime) => {
+            if (firstTime) progress.markSolved(exercise.id);
+            setPending({
+              topic: topic.id,
+              exercise: exercise.id,
+              firstTime,
+              next: nextStep(WORLDS, 0, index, exercise.id, progress.solved),
+            });
+          }}
           onBack={() => go({ kind: "topic", topic: topic.id })}
           backLabel={`Volver a ${topic.title}`}
         />
@@ -131,6 +155,55 @@ export function SoloHub({ account, onExit }: { account: Account; onExit: () => v
         )}
       </header>
       <main className={view.kind === "race" ? "" : "mx-auto max-w-7xl px-5 py-6"}>{body}</main>
+      {celebration && (
+        <Celebrate
+          celebration={celebration}
+          solved={progress.solved}
+          go={go}
+          close={() => {
+            setPending(null);
+            setCelebration(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function Celebrate({
+  celebration,
+  solved,
+  go,
+  close,
+}: {
+  celebration: Celebration;
+  solved: Record<string, string>;
+  go: (view: View) => void;
+  close: () => void;
+}) {
+  const topic = WORLDS[0]!.topics.find((t) => t.id === celebration.topic);
+  const exercise = topic?.exercises.find((e) => e.id === celebration.exercise);
+  if (!topic || !exercise) return null;
+  const { next } = celebration;
+  const solvedInTopic = topic.exercises.filter(
+    (e) => e.id in solved || e.id === exercise.id,
+  ).length;
+  return (
+    <LevelComplete
+      exercise={exercise}
+      topic={topic}
+      firstTime={celebration.firstTime}
+      solvedInTopic={solvedInTopic}
+      next={next}
+      onNext={() =>
+        next.kind === "exercise"
+          ? go({ kind: "exercise", topic: next.topic.id, exercise: next.exerciseId })
+          : next.kind === "end"
+            ? go({ kind: "map" })
+            : go({ kind: "topic", topic: next.topic.id })
+      }
+      onMap={() => go({ kind: "map" })}
+      onClose={close}
+    />
   );
 }

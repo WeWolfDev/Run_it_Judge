@@ -132,3 +132,36 @@ export function topicState(topics: Topic[], index: number, solved: Solved): Topi
   if (!prev || prev.exercises.some((e) => e.id in solved)) return "current";
   return "locked";
 }
+
+/** Qué sigue después de resolver un ejercicio (pantalla de nivel superado). */
+export type NextStep =
+  | { kind: "exercise"; topic: Topic; exerciseId: string; name: string }
+  | { kind: "topic"; topic: Topic }
+  | { kind: "world"; topic: Topic; world: string }
+  | { kind: "end"; nextWorld: string | null };
+
+/**
+ * Siguiente paso tras resolver `exerciseId` de `topics[index]`, contando ese
+ * ejercicio como resuelto: otro ejercicio sin resolver del mismo tema; si el
+ * tema quedó completo, el tema siguiente; si el mundo quedó completo, el primer
+ * tema del mundo siguiente, o el final si todavía no tiene temas.
+ */
+export function nextStep(
+  worlds: { title: string; topics: Topic[] }[],
+  worldIndex: number,
+  index: number,
+  exerciseId: string,
+  solved: Solved,
+): NextStep {
+  const now = { ...solved, [exerciseId]: "ahora" };
+  const topics = worlds[worldIndex]!.topics;
+  const topic = topics[index]!;
+  const pending = topic.exercises.find((e) => !(e.id in now));
+  if (pending) return { kind: "exercise", topic, exerciseId: pending.id, name: pending.name };
+  const nextTopic = topics[index + 1];
+  if (nextTopic) return { kind: "topic", topic: nextTopic };
+  const nextWorld = worlds[worldIndex + 1];
+  const first = nextWorld?.topics[0];
+  if (nextWorld && first) return { kind: "world", topic: first, world: nextWorld.title };
+  return { kind: "end", nextWorld: nextWorld?.title ?? null };
+}

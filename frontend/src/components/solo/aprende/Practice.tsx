@@ -31,13 +31,14 @@ function readDraft(id: string, language: Language) {
 export function Practice({
   exercise,
   solved,
-  onSolved,
+  onAccepted,
   onBack,
   backLabel,
 }: {
   exercise: Exercise;
   solved: boolean;
-  onSolved: () => void;
+  /** Envío aceptado; `firstTime` si el ejercicio no estaba resuelto. */
+  onAccepted: (firstTime: boolean) => void;
   onBack: () => void;
   backLabel: string;
 }) {
@@ -139,11 +140,9 @@ export function Practice({
             ? `Aceptado otra vez · ${result.passed} casos`
             : `¡Aceptado! +${exercise.points} XP · ${result.passed} casos`,
         });
-        if (!solved) {
-          onSolved();
-          confetti({ x: 0.7, y: 0.35 });
-        }
+        if (!solved) confetti({ x: 0.7, y: 0.35 });
         play("win");
+        onAccepted(!solved);
       } else {
         setVerdict({
           ok: false,
