@@ -38,6 +38,16 @@ quedan las hojas que la app sirve en `frontend/public/`.
 | KaTeX | Khan Academy y colaboradores | MIT |
 | Press Start 2P, Pixelify Sans, Inter, JetBrains Mono | sus autores, vía Google Fonts | SIL OFL 1.1 |
 
+## Juez en el navegador (demo solo)
+
+No se versionan ni se publican con el sitio: el navegador los baja de jsDelivr.
+
+| Recurso | Autor | Licencia |
+| --- | --- | --- |
+| Clang y LLD a WebAssembly (`@yowasp/clang`, `src/components/solo/judge/compiler.worker.ts`) | YoWASP, sobre LLVM | ISC (YoWASP), Apache 2.0 con excepciones de LLVM (LLVM) |
+| Pyodide (`src/components/solo/judge/python.worker.ts`) | Proyecto Pyodide | MPL 2.0; CPython bajo la licencia PSF |
+| Ejercicios (`src/components/solo/problems.ts`) | WeWolf | Enunciados propios; formatos de Codeforces citados en `source` |
+
 ## Sin origen confirmado
 
 - `frontend/public/Login.mp4`, `Winner.mp4`: no se usan en el código. Confirmar origen antes de volver a usarlos.

@@ -31,7 +31,8 @@ import {
 // CRT, editor, Game Over, ceremonia) y corrige en el navegador.
 // Flujo: personaje (con tiempo y dificultad) → cuenta regresiva → ejercicio →
 // ganaste o perdiste → volver a jugar o al menú. Se entra desde el login
-// (/practica) y solo fuera del torneo: con una ronda en juego no está.
+// (/practica) y solo fuera del torneo: con una ronda en juego no está. También
+// se publica sola en GitHub Pages (src/solo-main.tsx), sin onExit.
 
 const PIXEL = { fontFamily: "'Press Start 2P', ui-monospace, monospace" };
 const USER = "demo-solo";
@@ -71,7 +72,7 @@ function readRecords(): Record<string, number> {
   }
 }
 
-export function SoloDemo({ onExit }: { onExit: () => void }) {
+export function SoloDemo({ onExit }: { onExit?: () => void }) {
   const [phase, setPhase] = useState<Phase>("pick");
   const [character, setCharacter] = useState(0);
   const [minutes, setMinutes] = useState(10);
@@ -209,8 +210,9 @@ function Choice<T extends string | number>({
 
 // Barra de arriba: la misma de la app (logo, paleta, sonido y salir). La demo
 // solo es para quien está fuera del torneo: con sesión se ve "Mi carrera" y nada
-// más; sin sesión, "Demo solo", y Salir vuelve al login.
-function TopBar({ onHome, onExit }: { onHome: () => void; onExit: () => void }) {
+// más; sin sesión, "Demo solo", y Salir vuelve al login. Publicada sola no hay
+// login al que volver y el botón no aparece.
+function TopBar({ onHome, onExit }: { onHome: () => void; onExit: (() => void) | undefined }) {
   const [palette, setPalette] = useState("");
   const [sound, setSound] = useState(false);
   useEffect(() => {
@@ -258,13 +260,15 @@ function TopBar({ onHome, onExit }: { onHome: () => void; onExit: () => void }) 
             Sonido: {sound ? "sí" : "no"}
           </button>
         </div>
-        <button
-          type="button"
-          onClick={onExit}
-          className="text-sm text-muted-foreground hover:text-foreground"
-        >
-          Volver al login
-        </button>
+        {onExit && (
+          <button
+            type="button"
+            onClick={onExit}
+            className="text-sm text-muted-foreground hover:text-foreground"
+          >
+            Volver al login
+          </button>
+        )}
       </div>
     </header>
   );

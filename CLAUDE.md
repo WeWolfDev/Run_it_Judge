@@ -203,7 +203,8 @@ RUN_IT_ROUNDS_E2E=1 node --test test/rounds.e2e.test.js  # rondas y problemas, b
 son preexistentes. Cualquier error distinto es tuyo.
 
 No hay CI. Estas verificaciones son manuales y hay que correrlas antes de
-commitear.
+commitear. El único workflow, `.github/workflows/solo-pages.yml`, publica el
+modo solo en GitHub Pages con cada push a `main`; no corre verificaciones.
 
 ### Producción
 
@@ -242,6 +243,8 @@ frontend/            App TanStack Start
   src/lib/api.ts     Cliente HTTP. VITE_API_URL="" = mismo origen
   src/lib/runit.ts   Tipos de eventos y cliente de Socket.io
   vite.config.ts     Wrapper de @lovable.dev/vite-tanstack-config
+  vite.solo.config.ts Build estático del modo solo para GitHub Pages (dist-solo/)
+  solo/index.html    Página del modo solo publicado aparte, con su CSP
   .output/           Build SSR. Lo sirve systemd en :3002. NO versionado
 
 run-it-backend/      API Fastify
@@ -403,6 +406,7 @@ El frontend con Vite no sufre esto.
 | `CODIGOS_ACCESO.md` | Códigos de acceso temporales y sus estados |
 | `LOCAL_CHANGES_CONFIG.md` | Por qué el desarrollo está aislado de `main` |
 | `CHANGELOG_RUN_IT.md` | Bitácora y pendientes conocidos |
+| `MODO_SOLO_PAGES.md` | Modo solo en GitHub Pages: build, publicación y avisos legales |
 
 ## Pendientes conocidos
 

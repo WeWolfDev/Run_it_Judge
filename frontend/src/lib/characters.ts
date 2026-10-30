@@ -28,6 +28,9 @@ export type CharacterDef = {
   gif?: { idle: string; run: string; width: number; height: number; scale: number };
 };
 
+// Base del build ("/" en el Run It, "./" en el modo solo de GitHub Pages).
+const ASSETS = import.meta.env.BASE_URL;
+
 const A = (
   sheet: string,
   row: number,
@@ -35,7 +38,7 @@ const A = (
   fps: number,
   extra: Partial<SpriteAnim> = {},
 ): SpriteAnim => ({
-  sheet: `/chars/${sheet}`,
+  sheet: `${ASSETS}chars/${sheet}`,
   row,
   frames,
   fps,
@@ -175,8 +178,8 @@ const others: CharacterDef[] = [
     scale: 4,
     // Arte de 33 px ampliado 7 veces en el GIF: se muestra a 33 × 4 = 132 px.
     gif: {
-      idle: "/character-white.gif",
-      run: "/character-white.gif",
+      idle: `${ASSETS}character-white.gif`,
+      run: `${ASSETS}character-white.gif`,
       width: 33,
       height: 33,
       scale: 4,
@@ -190,8 +193,8 @@ const others: CharacterDef[] = [
     fh: 33,
     scale: 4,
     gif: {
-      idle: "/character-blue.gif",
-      run: "/character-blue.gif",
+      idle: `${ASSETS}character-blue.gif`,
+      run: `${ASSETS}character-blue.gif`,
       width: 33,
       height: 33,
       scale: 4,
@@ -205,8 +208,8 @@ const others: CharacterDef[] = [
     fh: 34,
     scale: 4,
     gif: {
-      idle: "/chars/jungle_idle.gif",
-      run: "/chars/jungle_run.gif",
+      idle: `${ASSETS}chars/jungle_idle.gif`,
+      run: `${ASSETS}chars/jungle_run.gif`,
       width: 21,
       height: 34,
       scale: 4,
@@ -220,8 +223,8 @@ const others: CharacterDef[] = [
     fh: 35,
     scale: 4,
     gif: {
-      idle: "/chars/jungle_idle_o.gif",
-      run: "/chars/jungle_run_o.gif",
+      idle: `${ASSETS}chars/jungle_idle_o.gif`,
+      run: `${ASSETS}chars/jungle_run_o.gif`,
       width: 23,
       height: 35,
       scale: 4,

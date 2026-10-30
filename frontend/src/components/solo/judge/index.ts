@@ -143,7 +143,7 @@ const tests = new Map<string, Promise<{ inputs: string[]; outputs: string[] }>>(
 export function testsOf(problem: Problem) {
   let pending = tests.get(problem.id);
   if (!pending) {
-    pending = fetch(`/solo-tests/${problem.id}.json`).then((response) => {
+    pending = fetch(`${import.meta.env.BASE_URL}solo-tests/${problem.id}.json`).then((response) => {
       if (!response.ok) throw new Error(`No se pudieron bajar los casos (${response.status}).`);
       return response.json();
     });
