@@ -32,8 +32,8 @@ import {
 // Flujo: personaje (con tiempo y dificultad) → cuenta regresiva → ejercicio →
 // ganaste o perdiste → volver a jugar o al menú. Se entra desde el login
 // (/practica) y solo fuera del torneo: con una ronda en juego no está. También
-// se publica sola en GitHub Pages (src/solo-main.tsx), sin onExit y con la
-// cuenta opcional en `account`.
+// se publica sola en GitHub Pages (src/solo-main.tsx): ahí onExit vuelve a su
+// pantalla de inicio y `account` trae la cuenta opcional.
 
 const PIXEL = { fontFamily: "'Press Start 2P', ui-monospace, monospace" };
 const USER = "demo-solo";
@@ -211,8 +211,8 @@ function Choice<T extends string | number>({
 
 // Barra de arriba: la misma de la app (logo, paleta, sonido y salir). La demo
 // solo es para quien está fuera del torneo: con sesión se ve "Mi carrera" y nada
-// más; sin sesión, "Demo solo", y Salir vuelve al login. Publicada sola no hay
-// login al que volver y el botón no aparece.
+// más; sin sesión, "Demo solo", y Salir vuelve al login (en GitHub Pages, a su
+// pantalla de inicio). Sin onExit el botón no aparece.
 function TopBar({
   onHome,
   onExit,

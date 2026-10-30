@@ -116,3 +116,5 @@ export function useAccount() {
 
   return { state, signIn, saveNickname, signOut, deleteAccount, retry };
 }
+
+export type Account = ReturnType<typeof useAccount>;

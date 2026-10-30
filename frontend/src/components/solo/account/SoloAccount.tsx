@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 
 import { PixelIcon } from "@/components/PixelIcon";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -9,11 +10,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-import { NICKNAME, useAccount, type Provider } from "./useAccount";
+import { ProviderButton } from "./ProviderButton";
+import { NICKNAME, type Account, type Provider } from "./useAccount";
 
 // Cuenta opcional del modo solo, en la barra de arriba: entrar con GitHub o
 // Google, elegir un apodo, cerrar sesión y borrar la cuenta. Jugar no la
-// necesita. Lo que guarda está descrito en el aviso (#privacidad).
+// necesita. Lo que guarda está descrito en el aviso (#privacidad). SignInOptions
+// y NicknameForm también los usa la pantalla de inicio (SoloStart.tsx).
 
 const PIXEL = { fontFamily: "'Press Start 2P', ui-monospace, monospace" };
 const CONTENT = "w-[calc(100%-2rem)] max-w-md rounded-xl border-border bg-card";
@@ -22,13 +25,9 @@ const BUTTON =
 const PRIMARY =
   "rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50";
 
-const PROVIDERS: { id: Provider; label: string }[] = [
-  { id: "github", label: "Entrar con GitHub" },
-  { id: "google", label: "Entrar con Google" },
-];
+const PROVIDERS: Provider[] = ["github", "google"];
 
-export function SoloAccount() {
-  const account = useAccount();
+export function SoloAccount({ account }: { account: Account }) {
   const { state } = account;
   const [open, setOpen] = useState(false);
   // El apodo se pide al volver del login; si se cierra, queda en el botón.
@@ -134,7 +133,7 @@ function LegalLink({
 }: {
   href: string;
   children: ReactNode;
-  onLeave: () => void;
+  onLeave: (() => void) | undefined;
 }) {
   return (
     <a href={href} onClick={onLeave} className="text-primary hover:underline">
@@ -152,7 +151,6 @@ function SignInPanel({
   onSignIn: (provider: Provider) => void;
   onLeave: () => void;
 }) {
-  const [going, setGoing] = useState<Provider | null>(null);
   return (
     <Header title="Guarda tu progreso">
       <DialogDescription className="text-sm text-muted-foreground">
@@ -160,40 +158,94 @@ function SignInPanel({
         recuperarlo en otra computadora. Solo guardamos un apodo y tu progreso; tu código nunca sale
         de tu navegador.
       </DialogDescription>
-      {notice && <p className="rounded-lg bg-muted px-3 py-2 text-sm text-foreground">{notice}</p>}
-      <div className="grid gap-2">
-        {PROVIDERS.map((provider) => (
-          <button
-            key={provider.id}
-            type="button"
-            disabled={going !== null}
-            onClick={() => {
-              setGoing(provider.id);
-              onSignIn(provider.id);
-            }}
-            className={provider.id === "github" ? PRIMARY : BUTTON}
-          >
-            {going === provider.id ? "Abriendo…" : provider.label}
-          </button>
-        ))}
-      </div>
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        Al entrar aceptas los{" "}
-        <LegalLink href="#terminos" onLeave={onLeave}>
-          términos y condiciones
-        </LegalLink>{" "}
-        y el{" "}
-        <LegalLink href="#privacidad" onLeave={onLeave}>
-          aviso de privacidad
-        </LegalLink>
-        . Si eres menor de 18 años, necesitas el permiso de tu madre, padre o tutor. En una
-        computadora compartida, cierra sesión al terminar.
-      </p>
+      <SignInOptions notice={notice} onSignIn={onSignIn} onLeave={onLeave} />
     </Header>
   );
 }
 
+/**
+ * Aceptación de términos y aviso (como el login del torneo), botones de GitHub
+ * y Google y el recordatorio para menores y computadoras compartidas.
+ */
+export function SignInOptions({
+  notice,
+  onSignIn,
+  onLeave,
+}: {
+  notice: string | undefined;
+  onSignIn: (provider: Provider) => void;
+  onLeave?: () => void;
+}) {
+  const [accepted, setAccepted] = useState(false);
+  const [going, setGoing] = useState<Provider | null>(null);
+  return (
+    <div className="grid gap-3">
+      {notice && (
+        <p className="rounded-lg bg-muted px-3 py-2 text-center text-sm text-foreground">
+          {notice}
+        </p>
+      )}
+      <div className="flex items-start justify-center gap-2">
+        <Checkbox
+          id="solo-acepto"
+          checked={accepted}
+          onCheckedChange={(checked) => setAccepted(checked === true)}
+        />
+        <label
+          htmlFor="solo-acepto"
+          className="text-center text-xs font-normal leading-relaxed text-muted-foreground"
+        >
+          Acepto los{" "}
+          <LegalLink href="#terminos" onLeave={onLeave}>
+            términos y condiciones
+          </LegalLink>{" "}
+          y el{" "}
+          <LegalLink href="#privacidad" onLeave={onLeave}>
+            aviso de privacidad
+          </LegalLink>
+        </label>
+      </div>
+      <div className="grid gap-2">
+        {PROVIDERS.map((provider) => (
+          <ProviderButton
+            key={provider}
+            provider={provider}
+            busy={going === provider}
+            disabled={!accepted || going !== null}
+            onClick={() => {
+              setGoing(provider);
+              onSignIn(provider);
+            }}
+          />
+        ))}
+      </div>
+      <p className="text-center text-xs leading-relaxed text-muted-foreground">
+        Si eres menor de 18 años, necesitas el permiso de tu madre, padre o tutor. En una
+        computadora compartida, cierra sesión al terminar.
+      </p>
+    </div>
+  );
+}
+
 function NicknameForm({
+  onSave,
+  onSignOut,
+}: {
+  onSave: (apodo: string) => Promise<string | null>;
+  onSignOut: () => void;
+}) {
+  return (
+    <Header title="Elige tu apodo">
+      <DialogDescription className="text-sm text-muted-foreground">
+        Es lo único que te identifica en el juego. Puede ser inventado: no uses tu nombre real.
+      </DialogDescription>
+      <NicknameFields onSave={onSave} onSignOut={onSignOut} />
+    </Header>
+  );
+}
+
+/** Campo del apodo. Sin piezas del diálogo: también va en la pantalla de inicio. */
+export function NicknameFields({
   onSave,
   onSignOut,
 }: {
@@ -205,55 +257,50 @@ function NicknameForm({
   const [saving, setSaving] = useState(false);
   const valid = NICKNAME.test(value);
   return (
-    <Header title="Elige tu apodo">
-      <DialogDescription className="text-sm text-muted-foreground">
-        Es lo único que te identifica en el juego. Puede ser inventado: no uses tu nombre real.
-      </DialogDescription>
-      <form
-        className="grid gap-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!valid || saving) return;
-          setSaving(true);
-          void onSave(value).then((message) => {
-            setSaving(false);
-            setError(message);
-          });
-        }}
-      >
-        <label className="grid gap-1 text-sm">
-          <span className="text-muted-foreground">Apodo</span>
-          <input
-            id="solo-apodo"
-            value={value}
-            onChange={(event) => {
-              setValue(event.target.value.trim());
-              setError(null);
-            }}
-            maxLength={20}
-            autoComplete="off"
-            autoFocus
-            aria-invalid={error !== null}
-            aria-describedby="solo-apodo-ayuda"
-            className="rounded-lg border border-input bg-background px-3 py-2 font-mono text-foreground outline-none focus:border-ring"
-          />
-          <span
-            id="solo-apodo-ayuda"
-            className={error ? "text-danger" : "text-xs text-muted-foreground"}
-          >
-            {error ?? "De 3 a 20 caracteres: letras sin acentos, números, guion o guion bajo."}
-          </span>
-        </label>
-        <div className="flex flex-wrap gap-2">
-          <button type="submit" className={PRIMARY} disabled={!valid || saving}>
-            {saving ? "Guardando…" : "Guardar apodo"}
-          </button>
-          <button type="button" className={BUTTON} onClick={onSignOut}>
-            Salir de la cuenta
-          </button>
-        </div>
-      </form>
-    </Header>
+    <form
+      className="grid gap-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!valid || saving) return;
+        setSaving(true);
+        void onSave(value).then((message) => {
+          setSaving(false);
+          setError(message);
+        });
+      }}
+    >
+      <label className="grid gap-1 text-center text-sm">
+        <span className="text-muted-foreground">Apodo</span>
+        <input
+          id="solo-apodo"
+          value={value}
+          onChange={(event) => {
+            setValue(event.target.value.trim());
+            setError(null);
+          }}
+          maxLength={20}
+          autoComplete="off"
+          autoFocus
+          aria-invalid={error !== null}
+          aria-describedby="solo-apodo-ayuda"
+          className="rounded-lg border border-input bg-background px-3 py-2 text-center font-mono text-foreground outline-none focus:border-ring"
+        />
+        <span
+          id="solo-apodo-ayuda"
+          className={error ? "text-danger" : "text-xs text-muted-foreground"}
+        >
+          {error ?? "De 3 a 20 caracteres: letras sin acentos, números, guion o guion bajo."}
+        </span>
+      </label>
+      <div className="flex flex-wrap justify-center gap-2">
+        <button type="submit" className={PRIMARY} disabled={!valid || saving}>
+          {saving ? "Guardando…" : "Guardar apodo"}
+        </button>
+        <button type="button" className={BUTTON} onClick={onSignOut}>
+          Salir de la cuenta
+        </button>
+      </div>
+    </form>
   );
 }
 

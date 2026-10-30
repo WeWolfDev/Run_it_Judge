@@ -66,6 +66,12 @@ export const CREDIT_SECTIONS: Array<{ title: string; items: Credit[] }> = [
         url: "https://fonts.google.com",
       },
       {
+        what: "Logos de GitHub y Google (botones de inicio de sesión del modo solo)",
+        author: "GitHub, Inc. y Google LLC",
+        license: "Marcas registradas de sus dueños",
+        note: "Se usan solo para identificar el inicio de sesión, según sus guías de marca.",
+      },
+      {
         what: "Fórmulas matemáticas (KaTeX)",
         author: "Khan Academy y colaboradores",
         license: "MIT",
