@@ -36,6 +36,7 @@ quedan las hojas que la app sirve en `frontend/public/`.
 | Pixelarticons (`src/components/PixelIcon.tsx`) | Gerrit Halfmann | MIT |
 | ZzFX (`src/lib/zzfx.ts`) | Frank Force | MIT |
 | KaTeX | Khan Academy y colaboradores | MIT |
+| Logos de GitHub y Google (`src/components/solo/account/ProviderButton.tsx`) | GitHub, Inc. y Google LLC | Marcas registradas; solo en los botones de inicio de sesión, según sus guías de marca |
 | Press Start 2P, Pixelify Sans, Inter, JetBrains Mono | sus autores, vía Google Fonts | SIL OFL 1.1 |
 
 ## Juez en el navegador (demo solo)
