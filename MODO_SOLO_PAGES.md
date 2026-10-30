@@ -67,8 +67,8 @@ No hace falta cambiar el código: con `base: "./"` funciona igual en la raíz.
   la política de seguridad en `solo/index.html` y los textos de `SoloLegal.tsx`.
   El aviso dice que no se recaban datos: un ranking o un formulario lo cambian.
 
-## Pendientes
+## Datos del responsable
 
-- Correo de contacto y domicilio del responsable: `frontend/src/lib/legal.ts`.
-  Mientras estén en `null`, los avisos los marcan como pendientes, igual que en
-  `/legal/privacidad`.
+El correo de contacto y el domicilio están en `frontend/src/lib/legal.ts`. Los
+usan los avisos del modo solo y `/legal/privacidad` del torneo: se cambian en un
+solo lugar.
