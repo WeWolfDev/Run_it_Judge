@@ -163,6 +163,12 @@
       "url": "https://radix-ui.com/primitives"
     },
     {
+      "name": "@supabase/supabase-js",
+      "version": "2.117.3",
+      "license": "MIT",
+      "url": "https://github.com/supabase/supabase-js/tree/master/packages/core/supabase-js"
+    },
+    {
       "name": "@tailwindcss/vite",
       "version": "4.3.3",
       "license": "MIT",
@@ -251,6 +257,12 @@
       "version": "0.57.0",
       "license": "MIT",
       "url": "https://github.com/microsoft/monaco-editor"
+    },
+    {
+      "name": "qrcode",
+      "version": "1.5.4",
+      "license": "MIT",
+      "url": "http://github.com/soldair/node-qrcode"
     },
     {
       "name": "react",

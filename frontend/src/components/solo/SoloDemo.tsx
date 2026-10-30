@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { CharacterCarousel } from "@/components/CharacterCarousel";
 import { CodeEditor } from "@/components/CodeEditor";
@@ -32,7 +32,8 @@ import {
 // Flujo: personaje (con tiempo y dificultad) → cuenta regresiva → ejercicio →
 // ganaste o perdiste → volver a jugar o al menú. Se entra desde el login
 // (/practica) y solo fuera del torneo: con una ronda en juego no está. También
-// se publica sola en GitHub Pages (src/solo-main.tsx), sin onExit.
+// se publica sola en GitHub Pages (src/solo-main.tsx), sin onExit y con la
+// cuenta opcional en `account`.
 
 const PIXEL = { fontFamily: "'Press Start 2P', ui-monospace, monospace" };
 const USER = "demo-solo";
@@ -72,7 +73,7 @@ function readRecords(): Record<string, number> {
   }
 }
 
-export function SoloDemo({ onExit }: { onExit?: () => void }) {
+export function SoloDemo({ onExit, account }: { onExit?: () => void; account?: ReactNode }) {
   const [phase, setPhase] = useState<Phase>("pick");
   const [character, setCharacter] = useState(0);
   const [minutes, setMinutes] = useState(10);
@@ -96,7 +97,7 @@ export function SoloDemo({ onExit }: { onExit?: () => void }) {
 
   return (
     <div className="min-h-screen bg-background font-sans text-foreground">
-      <TopBar onHome={home} onExit={onExit} />
+      <TopBar onHome={home} onExit={onExit} account={account} />
       <div className="mx-auto max-w-7xl px-5 py-8">
         {phase === "pick" && (
           <section className="animate-run-it-rise rounded-xl border border-border bg-card p-5">
@@ -212,7 +213,15 @@ function Choice<T extends string | number>({
 // solo es para quien está fuera del torneo: con sesión se ve "Mi carrera" y nada
 // más; sin sesión, "Demo solo", y Salir vuelve al login. Publicada sola no hay
 // login al que volver y el botón no aparece.
-function TopBar({ onHome, onExit }: { onHome: () => void; onExit: (() => void) | undefined }) {
+function TopBar({
+  onHome,
+  onExit,
+  account,
+}: {
+  onHome: () => void;
+  onExit: (() => void) | undefined;
+  account: ReactNode;
+}) {
   const [palette, setPalette] = useState("");
   const [sound, setSound] = useState(false);
   useEffect(() => {
@@ -233,7 +242,7 @@ function TopBar({ onHome, onExit }: { onHome: () => void; onExit: (() => void) |
         >
           <PixelIcon name="gamepad" className="h-4 w-4 text-primary" /> Demo solo
         </button>
-        <div className="ml-auto flex items-center gap-3 text-sm">
+        <div className="ml-auto flex flex-wrap items-center gap-3 text-sm">
           <label className="flex items-center gap-2 text-muted-foreground">
             Paleta
             <select
@@ -259,6 +268,7 @@ function TopBar({ onHome, onExit }: { onHome: () => void; onExit: (() => void) |
           >
             Sonido: {sound ? "sí" : "no"}
           </button>
+          {account}
         </div>
         {onExit && (
           <button
