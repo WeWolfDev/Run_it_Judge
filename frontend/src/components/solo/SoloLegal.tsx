@@ -5,11 +5,13 @@ import { Contact, Pending, Section } from "@/components/legal/LegalParts";
 import { ADDRESS } from "@/lib/legal";
 
 // Páginas legales del modo solo publicado en GitHub Pages (src/solo-main.tsx).
-// El sitio no tiene servidor propio ni cuentas: estos textos describen eso y
-// difieren de /legal/privacidad del torneo. Al cambiar qué guarda el navegador
-// o a qué servicios se conecta, actualizar el texto y la fecha.
+// Se juega sin cuenta; la cuenta (GitHub o Google, vía Supabase) es opcional y
+// solo guarda un apodo y el progreso del roadmap. Difieren de /legal del torneo.
+// Al cambiar qué se guarda, dónde o con qué servicios, actualizar el texto y la
+// fecha. Los enlaces #privacidad y #terminos están en la pantalla de
+// consentimiento de Google: no cambiarlos.
 
-export type LegalPage = "privacidad" | "seguridad" | "creditos";
+export type LegalPage = "privacidad" | "terminos" | "seguridad" | "creditos";
 
 const UPDATED = "30 de octubre de 2026";
 const PIXEL = { fontFamily: "'Press Start 2P', ui-monospace, monospace" };
@@ -17,6 +19,7 @@ const REPO = "https://github.com/WeWolfDev/Run_it_Judge";
 
 const PAGES: { id: LegalPage; label: string }[] = [
   { id: "privacidad", label: "Aviso de privacidad" },
+  { id: "terminos", label: "Términos y condiciones" },
   { id: "seguridad", label: "Seguridad y protección" },
   { id: "creditos", label: "Créditos y licencias" },
 ];
@@ -80,6 +83,7 @@ export function SoloLegal({ page }: { page: LegalPage }) {
         </nav>
         <main className="min-w-0">
           {page === "privacidad" && <Privacy />}
+          {page === "terminos" && <Terms />}
           {page === "seguridad" && <Security />}
           {page === "creditos" && <CreditsContent />}
         </main>
@@ -99,97 +103,312 @@ function Title({ children }: { children: ReactNode }) {
 
 const B = ({ children }: { children: ReactNode }) => <b className="text-foreground">{children}</b>;
 
+function Link({ href, children }: { href: string; children: ReactNode }) {
+  const external = href.startsWith("http");
+  return (
+    <a
+      href={href}
+      className="text-primary hover:underline"
+      {...(external ? { target: "_blank", rel: "noreferrer" } : {})}
+    >
+      {children}
+    </a>
+  );
+}
+
+function List({ children }: { children: ReactNode }) {
+  return <ul className="list-disc space-y-1 pl-5">{children}</ul>;
+}
+
 function Privacy() {
   return (
     <article>
       <Title>Aviso de privacidad</Title>
+      <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
+        Aviso de privacidad integral conforme a la Ley Federal de Protección de Datos Personales en
+        Posesión de los Particulares. Resumen: <B>puedes jugar sin cuenta y sin dar ningún dato</B>.
+        Si decides crear una cuenta, solo guardamos lo necesario para conservar tu progreso.
+      </p>
 
       <Section title="1. Responsable">
         <p>
           <B>WeWolf</B>, organizador de Run It, con domicilio en{" "}
-          {ADDRESS ?? <Pending>[domicilio]</Pending>}, publica esta demo. Para cualquier asunto
-          sobre tus datos puedes escribir a <Contact />.
+          {ADDRESS ?? <Pending>[domicilio]</Pending>}, es responsable del tratamiento de tus datos
+          personales. Para cualquier asunto sobre tus datos escribe a <Contact />.
         </p>
       </Section>
 
-      <Section title="2. Qué datos recabamos">
+      <Section title="2. Si juegas sin cuenta">
         <p>
-          <B>Ninguno.</B> La demo solo no tiene cuentas, no pide tu nombre, correo ni teléfono y no
-          tiene un servidor propio que reciba información tuya.
+          <B>No recabamos ningún dato personal.</B> No pedimos nombre, correo ni teléfono.
         </p>
         <p>
           <B>Tu código no sale de tu computadora.</B> Se compila y se ejecuta dentro de tu
-          navegador. Los casos de prueba se descargan del sitio y la comparación también ocurre en
-          tu equipo. Nadie, tampoco el organizador, ve lo que escribes ni tus resultados.
+          navegador, y la comparación con los casos de prueba también ocurre en tu equipo. Nadie,
+          tampoco el organizador, ve lo que escribes.
         </p>
       </Section>
 
-      <Section title="3. Lo que se guarda en tu navegador">
+      <Section title="3. Si creas una cuenta (opcional)">
         <p>
-          La demo no usa cookies. Guarda en el almacenamiento local de tu navegador, solo en tu
-          equipo:
+          La cuenta sirve para guardar tu avance en el roadmap y recuperarlo en otra computadora.
+          Entras con <B>GitHub</B> o <B>Google</B>; no creamos ni guardamos contraseñas. Tratamos:
         </p>
-        <ul className="list-disc space-y-1 pl-5">
-          <li>el personaje que elegiste,</li>
-          <li>la paleta de colores y si el sonido está activado,</li>
-          <li>tu mejor tiempo en cada ejercicio.</li>
-        </ul>
-        <p>
-          Puedes borrarlo cuando quieras desde la configuración de tu navegador (datos de sitios).
-          Si usas una computadora compartida, como la del laboratorio, cualquiera que la use después
-          verá tu personaje y tus tiempos.
-        </p>
-      </Section>
-
-      <Section title="4. Servicios externos">
-        <p>
-          Para funcionar, tu navegador se conecta a servicios de terceros. Como con cualquier sitio
-          web, reciben tu dirección IP y los datos técnicos de tu navegador, pero{" "}
-          <B>no reciben tu código ni tus resultados</B>:
-        </p>
-        <ul className="list-disc space-y-1 pl-5">
+        <List>
           <li>
-            <B>GitHub Pages</B> (GitHub, Inc.), que aloja el sitio. Puede registrar las visitas
-            según la{" "}
-            <a
-              href="https://docs.github.com/es/site-policy/privacy-policies/github-general-privacy-statement"
-              target="_blank"
-              rel="noreferrer"
-              className="text-primary hover:underline"
-            >
-              declaración de privacidad de GitHub
-            </a>
-            .
+            <B>Datos que entrega GitHub o Google al iniciar sesión</B>: tu correo, el identificador
+            de tu cuenta en ese servicio y, si los tiene, tu nombre de perfil y tu foto. Los usamos
+            solo para identificarte al entrar; <B>no se muestran en el juego</B>.
           </li>
           <li>
-            <B>Google Fonts</B>, que entrega las tipografías.
+            <B>Apodo</B> que eliges. Es lo único que te identifica dentro del juego. Puede ser
+            inventado; te pedimos no usar tu nombre real.
           </li>
           <li>
-            <B>jsDelivr</B>, desde donde se descargan el compilador de C y C++ y, si eliges Python,
-            Pyodide.
+            <B>Progreso</B>: los temas que completaste, la fecha y tu mejor tiempo en cada uno.
           </li>
-        </ul>
-      </Section>
-
-      <Section title="5. Menores de edad">
+          <li>
+            <B>Datos técnicos</B> del inicio de sesión (fecha, dirección IP, navegador), que el
+            proveedor de cuentas registra por seguridad.
+          </li>
+        </List>
         <p>
-          La demo está pensada para alumnos del club, incluidos menores de edad. Como no pide ni
-          guarda datos personales, se puede usar sin registrarse y sin dar información de nadie.
+          Tu código fuente <B>nunca</B> se guarda en la cuenta. No tratamos datos personales
+          sensibles.
         </p>
       </Section>
 
-      <Section title="6. Tus derechos">
+      <Section title="4. Para qué los usamos">
+        <List>
+          <li>Crear tu cuenta, iniciar tu sesión y mantenerla segura.</li>
+          <li>Guardar y sincronizar tu progreso entre dispositivos.</li>
+        </List>
         <p>
-          Como no guardamos datos tuyos, no hay nada que consultar, corregir o borrar de nuestro
-          lado: lo único que existe está en tu navegador y lo controlas tú. Si tienes dudas, escribe
-          a <Contact />.
+          Son finalidades necesarias: sin ellas la cuenta no funciona. No usamos tus datos para
+          publicidad, no los vendemos y no hacemos perfiles. Si en el futuro agregamos algo que
+          muestre tu apodo a otros (por ejemplo, un ranking del club), lo avisaremos aquí antes y
+          podrás decidir si participas.
         </p>
       </Section>
 
-      <Section title="7. Cambios a este aviso">
+      <Section title="5. Con quién se comparten">
         <p>
-          Si la demo empieza a guardar datos en un servidor (por ejemplo, un ranking del club),
-          actualizaremos este aviso antes de hacerlo y lo publicaremos aquí con su fecha.
+          No vendemos ni transferimos tus datos a terceros para sus propios fines. Usamos estos
+          proveedores, que los tratan por cuenta nuestra o solo para que el sitio funcione:
+        </p>
+        <List>
+          <li>
+            <B>Supabase</B>, que guarda las cuentas y el progreso. Sus servidores pueden estar fuera
+            de México. <Link href="https://supabase.com/privacy">Aviso de Supabase</Link>.
+          </li>
+          <li>
+            <B>GitHub</B> y <B>Google</B>, solo si eliges entrar con ellos: confirman tu identidad y
+            nos entregan los datos del punto 3.
+          </li>
+          <li>
+            <B>GitHub Pages</B>, que aloja el sitio y puede registrar visitas (
+            <Link href="https://docs.github.com/es/site-policy/privacy-policies/github-general-privacy-statement">
+              declaración de GitHub
+            </Link>
+            ).
+          </li>
+          <li>
+            <B>Google Fonts</B> y <B>jsDelivr</B>, que entregan las tipografías y el compilador.
+            Reciben tu dirección IP como cualquier sitio web, pero no tus datos de cuenta.
+          </li>
+        </List>
+        <p>
+          Las remisiones a estos encargados no requieren tu consentimiento, pero te las informamos.
+          Solo entregaríamos datos a una autoridad si una ley o una orden judicial nos obliga.
+        </p>
+      </Section>
+
+      <Section title="6. Cuánto tiempo los conservamos">
+        <List>
+          <li>Mientras tengas tu cuenta.</li>
+          <li>
+            Con <B>Borrar mi cuenta</B> eliminamos de inmediato tu cuenta, tu apodo y tu progreso.
+            Si el proveedor guarda copias de respaldo, se eliminan en sus ciclos normales.
+          </li>
+          <li>
+            Podemos borrar cuentas sin actividad por más de 2 años, avisándote antes al correo.
+          </li>
+        </List>
+      </Section>
+
+      <Section title="7. Lo que se guarda en tu navegador">
+        <p>
+          No usamos cookies de rastreo ni de publicidad. En el almacenamiento local de tu navegador
+          se guardan tu personaje, la paleta, el sonido, tus mejores tiempos y, si entraste, tu
+          sesión. Si usas una computadora compartida, como la del laboratorio,{" "}
+          <B>cierra sesión al terminar</B>. Puedes borrar todo desde la configuración del navegador.
+        </p>
+      </Section>
+
+      <Section title="8. Menores de edad">
+        <p>
+          La demo está pensada para alumnos del club, incluidos menores de edad. Jugar sin cuenta no
+          requiere dar ningún dato.{" "}
+          <B>
+            Si eres menor de 18 años, necesitas el permiso de tu madre, padre o tutor para crear una
+            cuenta
+          </B>
+          . GitHub y Google, además, tienen su propia edad mínima. Si un tutor quiere borrar la
+          cuenta de un menor, puede escribir a <Contact />.
+        </p>
+      </Section>
+
+      <Section title="9. Tus derechos (ARCO)">
+        <p>
+          Puedes pedir <B>acceso</B> a tus datos, <B>rectificarlos</B>, <B>cancelarlos</B> u{" "}
+          <B>oponerte</B> a su tratamiento, y revocar tu consentimiento o limitar su uso.
+        </p>
+        <List>
+          <li>
+            La forma más rápida de cancelar: <B>Borrar mi cuenta</B>, dentro del juego.
+          </li>
+          <li>
+            Para todo lo demás, escribe a <Contact /> desde el correo de tu cuenta, con tu apodo y
+            lo que solicitas. Te respondemos en un máximo de 20 días hábiles.
+          </li>
+        </List>
+        <p>
+          Si consideras que tu derecho a la protección de datos fue vulnerado, puedes acudir a la
+          autoridad de protección de datos personales competente en México.
+        </p>
+      </Section>
+
+      <Section title="10. Cambios a este aviso">
+        <p>
+          Publicaremos cualquier cambio en esta página con su fecha. Si un cambio agrega una
+          finalidad nueva para tus datos, te lo pediremos al iniciar sesión antes de aplicarlo.
+        </p>
+      </Section>
+
+      <Section title="11. Consentimiento">
+        <p>
+          Al crear tu cuenta confirmas que leíste este aviso y aceptas el tratamiento de tus datos
+          para las finalidades descritas, y los <Link href="#terminos">términos y condiciones</Link>
+          .
+        </p>
+      </Section>
+    </article>
+  );
+}
+
+function Terms() {
+  return (
+    <article>
+      <Title>Términos y condiciones</Title>
+      <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
+        Estas reglas aplican a Run It Solo, la demo de práctica publicada por <B>WeWolf</B> (
+        {ADDRESS ?? <Pending>[domicilio]</Pending>}). Al usar el sitio las aceptas; si no estás de
+        acuerdo, no lo uses.
+      </p>
+
+      <Section title="1. Qué es">
+        <p>
+          Un sitio gratuito para practicar programación competitiva contra el reloj, con un roadmap
+          de aprendizaje. Es de práctica: los resultados <B>no cuentan</B> para los torneos de Run
+          It ni para ninguna calificación, salvo que el organizador del club lo diga por escrito.
+        </p>
+      </Section>
+
+      <Section title="2. Cuenta">
+        <List>
+          <li>La cuenta es opcional, personal y gratuita. Una por persona.</li>
+          <li>
+            Si eres menor de 18 años, necesitas el permiso de tu madre, padre o tutor para crearla.
+          </li>
+          <li>
+            Eres responsable de tu cuenta de GitHub o Google y de cerrar sesión en computadoras
+            compartidas.
+          </li>
+          <li>
+            El <B>apodo</B> no puede ser ofensivo, discriminatorio, sexual, ni hacerse pasar por
+            otra persona. Podemos cambiarlo o pedir que lo cambies.
+          </li>
+        </List>
+      </Section>
+
+      <Section title="3. Uso permitido">
+        <p>Puedes usar el sitio para aprender y practicar. No está permitido:</p>
+        <List>
+          <li>intentar acceder a datos de otras personas o vulnerar la seguridad del sitio;</li>
+          <li>
+            automatizar envíos, saturar el servicio o manipular el progreso con herramientas
+            externas;
+          </li>
+          <li>usar el sitio para algo ilegal o que dañe a otras personas.</li>
+        </List>
+        <p>
+          Si encuentras una falla de seguridad, repórtala como dice la página de{" "}
+          <Link href="#seguridad">seguridad</Link>: no la aproveches.
+        </p>
+      </Section>
+
+      <Section title="4. Tu código y nuestro contenido">
+        <List>
+          <li>
+            <B>El código que escribes es tuyo.</B> No lo guardamos ni lo vemos: se queda en tu
+            navegador.
+          </li>
+          <li>
+            Los enunciados, ejercicios, textos y diseño del juego son de WeWolf o de sus autores.
+            Puedes usarlos para estudiar; no para copiarlos y publicarlos como tuyos.
+          </li>
+          <li>
+            Los personajes, fuentes y bibliotecas de terceros tienen sus propias licencias, listadas
+            en <Link href="#creditos">créditos y licencias</Link>.
+          </li>
+        </List>
+      </Section>
+
+      <Section title="5. Suspensión y baja">
+        <p>
+          Puedes borrar tu cuenta cuando quieras desde el juego. Podemos suspender o borrar una
+          cuenta que incumpla estos términos; salvo en casos graves, primero te avisaremos.
+        </p>
+      </Section>
+
+      <Section title="6. Sin garantías">
+        <p>
+          El sitio se ofrece gratis y <B>tal como está</B>. Hacemos lo posible para que funcione,
+          pero puede tener errores, pausarse (por ejemplo, si el servicio de cuentas se suspende por
+          inactividad), cambiar o dejar de existir. El juez del navegador puede no dar los mismos
+          resultados que un juez oficial. Guarda por tu cuenta lo que no quieras perder, como tu
+          código.
+        </p>
+      </Section>
+
+      <Section title="7. Responsabilidad">
+        <p>
+          En la medida que lo permita la ley, WeWolf no responde por daños derivados del uso del
+          sitio, de su indisponibilidad o de la pérdida de progreso. Nada de esto limita los
+          derechos que la ley te reconoce y que no se pueden renunciar.
+        </p>
+      </Section>
+
+      <Section title="8. Privacidad">
+        <p>
+          Cómo tratamos tus datos está en el <Link href="#privacidad">aviso de privacidad</Link>,
+          que forma parte de estos términos.
+        </p>
+      </Section>
+
+      <Section title="9. Cambios">
+        <p>
+          Podemos actualizar estos términos. Publicaremos la nueva versión aquí con su fecha; si el
+          cambio es importante, lo avisaremos en el sitio. Seguir usándolo después significa que lo
+          aceptas.
+        </p>
+      </Section>
+
+      <Section title="10. Ley aplicable y contacto">
+        <p>
+          Estos términos se rigen por las leyes de los Estados Unidos Mexicanos. Para cualquier
+          controversia, las partes se someten a los tribunales de Mérida, Yucatán. Dudas o reclamos:{" "}
+          <Contact />.
         </p>
       </Section>
     </article>
@@ -201,16 +420,31 @@ function Security() {
     <article>
       <Title>Seguridad y protección</Title>
 
-      <Section title="Sin cuentas ni contraseñas">
+      <Section title="Cuentas sin contraseñas">
+        <List>
+          <li>
+            Se juega sin cuenta. Si creas una, entras con <B>GitHub</B> o <B>Google</B>: nosotros
+            nunca vemos ni guardamos una contraseña.
+          </li>
+          <li>
+            Las cuentas y el progreso los guarda <B>Supabase</B>. Reglas en la base de datos (RLS)
+            hacen que cada cuenta solo pueda leer y modificar <B>sus propios</B> datos; nadie sin
+            sesión puede leer nada.
+          </li>
+          <li>
+            La clave que aparece en el código del sitio es pública por diseño: no da acceso a los
+            datos de nadie sin esas reglas.
+          </li>
+          <li>Puedes borrar tu cuenta y todo tu progreso en cualquier momento, desde el juego.</li>
+        </List>
         <p>
-          La demo no tiene inicio de sesión, así que no hay contraseñas ni cuentas que puedan
-          filtrarse. No te pediremos datos personales: si alguna página que dice ser Run It te pide
-          una contraseña o un pago, no es nuestra.
+          Nunca te pediremos tu contraseña de GitHub o Google, un pago ni datos personales por
+          correo o mensaje. Si alguien lo hace en nombre de Run It, no somos nosotros.
         </p>
       </Section>
 
       <Section title="Tu código corre aislado en tu navegador">
-        <ul className="list-disc space-y-1 pl-5">
+        <List>
           <li>
             <B>C y C++</B> se compilan con Clang a WebAssembly y corren en segundo plano, aparte de
             la página (un Web Worker). El programa solo puede leer la entrada del caso y escribir su
@@ -223,7 +457,7 @@ function Security() {
             Cada caso tiene un límite de tiempo. Si un programa se cuelga, el navegador lo detiene y
             el juego sigue.
           </li>
-        </ul>
+        </List>
         <p>
           Lo que se ejecuta es el código que tú escribes. Si pegas código de otra persona, revísalo
           antes de enviarlo, como harías con cualquier programa.
@@ -231,10 +465,10 @@ function Security() {
       </Section>
 
       <Section title="Cómo protegemos el sitio">
-        <ul className="list-disc space-y-1 pl-5">
+        <List>
           <li>
-            <B>Conexión cifrada.</B> GitHub Pages sirve el sitio por HTTPS: nadie en la red del
-            laboratorio puede ver ni modificar lo que descargas.
+            <B>Conexión cifrada.</B> El sitio y el servicio de cuentas funcionan solo por HTTPS:
+            nadie en la red del laboratorio puede ver ni modificar lo que envías o descargas.
           </li>
           <li>
             <B>Política de seguridad de contenido.</B> La página solo acepta código del propio sitio
@@ -246,18 +480,14 @@ function Security() {
             sin que la revisemos.
           </li>
           <li>
-            <B>Código abierto.</B> Todo el código del sitio está en{" "}
-            <a
-              href={REPO}
-              target="_blank"
-              rel="noreferrer"
-              className="text-primary hover:underline"
-            >
-              GitHub
-            </a>
-            , y cada publicación sale de la rama principal por un proceso automático.
+            <B>Datos mínimos.</B> Solo guardamos un apodo y tu progreso. Lo que no se guarda no se
+            puede filtrar.
           </li>
-        </ul>
+          <li>
+            <B>Código abierto.</B> Todo el código del sitio está en <Link href={REPO}>GitHub</Link>,
+            y cada publicación sale de la rama principal por un proceso automático.
+          </li>
+        </List>
       </Section>
 
       <Section title="Juego limpio">
@@ -271,7 +501,8 @@ function Security() {
       <Section title="Reportar un problema de seguridad">
         <p>
           Si encuentras una falla de seguridad, escríbenos a <Contact /> con los pasos para
-          reproducirla. No la publiques en un issue de GitHub hasta que la hayamos corregido.
+          reproducirla. No la publiques en un issue de GitHub ni la aproveches hasta que la hayamos
+          corregido; te responderemos lo antes posible.
         </p>
       </Section>
     </article>
