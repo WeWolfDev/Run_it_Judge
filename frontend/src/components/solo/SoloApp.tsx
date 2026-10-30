@@ -3,14 +3,14 @@ import { useEffect, useState } from "react";
 import { SoloDemo } from "@/components/solo/SoloDemo";
 import { SoloFooter, SoloLegal, type LegalPage } from "@/components/solo/SoloLegal";
 
-const LEGAL: readonly string[] = ["privacidad", "seguridad", "creditos"];
+const LEGAL: readonly string[] = ["privacidad", "terminos", "seguridad", "creditos"];
 
 function legalFromHash(): LegalPage | null {
   const hash = window.location.hash.slice(1);
   return LEGAL.includes(hash) ? (hash as LegalPage) : null;
 }
 
-// Las páginas legales van por hash (#privacidad, #seguridad, #creditos) porque
+// Las páginas legales van por hash (#privacidad, #terminos, #seguridad, #creditos) porque
 // GitHub Pages no reescribe rutas. El juego queda montado detrás: abrir el aviso
 // a mitad de una partida no la pierde.
 export function SoloApp() {

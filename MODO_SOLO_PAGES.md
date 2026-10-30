@@ -14,7 +14,7 @@ Dirección: `https://wewolfdev.github.io/Run_it_Judge/`.
 | Configuración del build | `frontend/vite.solo.config.ts` |
 | Página | `frontend/solo/index.html` (incluye la política de seguridad de contenido) |
 | Entrada | `frontend/src/solo-main.tsx`: monta `SoloDemo` sin `onExit` |
-| Aviso de privacidad, seguridad y créditos | `frontend/src/components/solo/SoloLegal.tsx` (`#privacidad`, `#seguridad`, `#creditos`) |
+| Aviso de privacidad, términos, seguridad y créditos | `frontend/src/components/solo/SoloLegal.tsx` (`#privacidad`, `#terminos`, `#seguridad`, `#creditos`) |
 | Publicación automática | `.github/workflows/solo-pages.yml` |
 
 Comparte el código con el Run It: `components/solo/`, el carrusel, el editor y
@@ -65,7 +65,10 @@ No hace falta cambiar el código: con `base: "./"` funciona igual en la raíz.
   de jsDelivr.
 - Si se agrega un servicio externo (otra CDN, analítica, un backend), actualizar
   la política de seguridad en `solo/index.html` y los textos de `SoloLegal.tsx`.
-  El aviso dice que no se recaban datos: un ranking o un formulario lo cambian.
+  El aviso describe exactamente qué guarda la cuenta (apodo y progreso): un
+  ranking público, un formulario o un dato nuevo lo cambian.
+- `#privacidad` y `#terminos` están registrados en la pantalla de consentimiento
+  de Google: si cambian esas direcciones, actualizarlas allá también.
 
 ## Datos del responsable
 
