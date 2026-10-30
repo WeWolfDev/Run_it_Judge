@@ -15,7 +15,8 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "licenses": "node scripts/third-party.mjs"
+    "licenses": "node scripts/third-party.mjs",
+    "aprende:tests": "node scripts/aprende-tests.ts"
   },
   "overrides": {
     "rolldown": "1.2.1",

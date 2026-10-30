@@ -73,7 +73,16 @@ function readRecords(): Record<string, number> {
   }
 }
 
-export function SoloDemo({ onExit, account }: { onExit?: () => void; account?: ReactNode }) {
+export function SoloDemo({
+  onExit,
+  account,
+  embedded = false,
+}: {
+  onExit?: () => void;
+  account?: ReactNode;
+  /** Dentro del mapa (aprende/SoloHub): la barra de arriba la pone el mapa. */
+  embedded?: boolean;
+}) {
   const [phase, setPhase] = useState<Phase>("pick");
   const [character, setCharacter] = useState(0);
   const [minutes, setMinutes] = useState(10);
@@ -97,7 +106,7 @@ export function SoloDemo({ onExit, account }: { onExit?: () => void; account?: R
 
   return (
     <div className="min-h-screen bg-background font-sans text-foreground">
-      <TopBar onHome={home} onExit={onExit} account={account} />
+      {!embedded && <TopBar onHome={home} onExit={onExit} account={account} />}
       <div className="mx-auto max-w-7xl px-5 py-8">
         {phase === "pick" && (
           <section className="animate-run-it-rise rounded-xl border border-border bg-card p-5">
@@ -222,13 +231,6 @@ function TopBar({
   onExit: (() => void) | undefined;
   account: ReactNode;
 }) {
-  const [palette, setPalette] = useState("");
-  const [sound, setSound] = useState(false);
-  useEffect(() => {
-    setPalette(storedPalette());
-    setSound(soundOn());
-    return onSoundChange(() => setSound(soundOn()));
-  }, []);
   return (
     <header className="border-b border-border bg-card">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3">
@@ -243,31 +245,7 @@ function TopBar({
           <PixelIcon name="gamepad" className="h-4 w-4 text-primary" /> Demo solo
         </button>
         <div className="ml-auto flex flex-wrap items-center gap-3 text-sm">
-          <label className="flex items-center gap-2 text-muted-foreground">
-            Paleta
-            <select
-              value={palette}
-              onChange={(event) => {
-                setPalette(event.target.value);
-                applyPalette(event.target.value);
-              }}
-              className="rounded-md border border-input bg-background px-2 py-1 text-sm text-foreground outline-none focus:border-ring"
-            >
-              {PALETTES.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            onClick={() => setSoundOn(!sound)}
-            aria-pressed={sound}
-            className="rounded-md border border-border px-2 py-1 text-muted-foreground hover:text-foreground"
-          >
-            Sonido: {sound ? "sí" : "no"}
-          </button>
+          <Preferences />
           {account}
         </div>
         {onExit && (
@@ -281,6 +259,46 @@ function TopBar({
         )}
       </div>
     </header>
+  );
+}
+
+/** Paleta y sonido de la barra de arriba. También la usa el mapa (aprende/SoloHub). */
+export function Preferences() {
+  const [palette, setPalette] = useState("");
+  const [sound, setSound] = useState(false);
+  useEffect(() => {
+    setPalette(storedPalette());
+    setSound(soundOn());
+    return onSoundChange(() => setSound(soundOn()));
+  }, []);
+  return (
+    <>
+      <label className="flex items-center gap-2 text-muted-foreground">
+        Paleta
+        <select
+          value={palette}
+          onChange={(event) => {
+            setPalette(event.target.value);
+            applyPalette(event.target.value);
+          }}
+          className="rounded-md border border-input bg-background px-2 py-1 text-sm text-foreground outline-none focus:border-ring"
+        >
+          {PALETTES.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button
+        type="button"
+        onClick={() => setSoundOn(!sound)}
+        aria-pressed={sound}
+        className="rounded-md border border-border px-2 py-1 text-muted-foreground hover:text-foreground"
+      >
+        Sonido: {sound ? "sí" : "no"}
+      </button>
+    </>
   );
 }
 
