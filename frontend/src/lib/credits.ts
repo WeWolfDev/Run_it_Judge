@@ -73,4 +73,29 @@ export const CREDIT_SECTIONS: Array<{ title: string; items: Credit[] }> = [
       },
     ],
   },
+  {
+    title: "Juez en el navegador (demo solo)",
+    items: [
+      {
+        what: "Compilador de C y C++ (Clang y LLD compilados a WebAssembly)",
+        author: "YoWASP, sobre LLVM",
+        license: "ISC (YoWASP) · Apache 2.0 con excepciones de LLVM (LLVM)",
+        url: "https://yowasp.org",
+        note: "Se descarga de jsDelivr la primera vez que compilas; no forma parte de este sitio.",
+      },
+      {
+        what: "Python en el navegador (Pyodide)",
+        author: "Proyecto Pyodide y colaboradores",
+        license: "MPL 2.0 · CPython bajo la licencia de la Python Software Foundation",
+        url: "https://pyodide.org",
+        note: "Se descarga de jsDelivr la primera vez que eliges Python.",
+      },
+      {
+        what: "Ejercicios de la demo",
+        author: "WeWolf",
+        license: "Enunciados propios",
+        note: "Los formatos de entrada y salida siguen problemas de Codeforces, citados en cada uno.",
+      },
+    ],
+  },
 ];

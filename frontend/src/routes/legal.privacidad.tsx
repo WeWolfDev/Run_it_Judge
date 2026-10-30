@@ -1,5 +1,7 @@
-import type { ReactNode } from "react";
 import { createFileRoute } from "@tanstack/react-router";
+
+import { Contact, Pending, Section } from "@/components/legal/LegalParts";
+import { ADDRESS } from "@/lib/legal";
 
 export const Route = createFileRoute("/legal/privacidad")({
   component: PrivacyPage,
@@ -17,36 +19,9 @@ export const Route = createFileRoute("/legal/privacidad")({
 // Aviso de privacidad integral (Ley Federal de Protección de Datos Personales en
 // Posesión de los Particulares). Describe lo que el sistema guarda de verdad:
 // al cambiar qué datos se recaban o cuánto se conservan, actualizar este texto
-// y la fecha. Los datos de contacto y domicilio del responsable están
-// pendientes: se marcan a la vista hasta completarlos.
+// y la fecha. Los datos de contacto y domicilio del responsable están en
+// lib/legal.ts: mientras falten se marcan a la vista.
 const UPDATED = "5 de octubre de 2026";
-const CONTACT_EMAIL: string | null = null;
-const ADDRESS: string | null = null;
-
-function Pending({ children }: { children: ReactNode }) {
-  return (
-    <mark className="rounded bg-danger-soft px-1 text-danger" title="Dato pendiente de completar">
-      {children}
-    </mark>
-  );
-}
-
-const contact = CONTACT_EMAIL ? (
-  <a href={`mailto:${CONTACT_EMAIL}`} className="text-primary hover:underline">
-    {CONTACT_EMAIL}
-  </a>
-) : (
-  <Pending>[correo de contacto]</Pending>
-);
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="mt-8">
-      <h2 className="text-lg font-semibold">{title}</h2>
-      <div className="mt-2 space-y-3 text-sm leading-relaxed text-muted-foreground">{children}</div>
-    </section>
-  );
-}
 
 function PrivacyPage() {
   return (
@@ -59,7 +34,7 @@ function PrivacyPage() {
           <b className="text-foreground">WeWolf</b>, organizador de Run It, con domicilio en{" "}
           {ADDRESS ?? <Pending>[domicilio]</Pending>}, es responsable del tratamiento de tus datos
           personales conforme a la Ley Federal de Protección de Datos Personales en Posesión de los
-          Particulares. Para cualquier asunto sobre tus datos puedes escribir a {contact}.
+          Particulares. Para cualquier asunto sobre tus datos puedes escribir a <Contact />.
         </p>
       </Section>
 
@@ -152,7 +127,7 @@ function PrivacyPage() {
           <b className="text-foreground">rectificarlos</b>,{" "}
           <b className="text-foreground">cancelarlos</b> u{" "}
           <b className="text-foreground">oponerte</b> a su tratamiento, y revocar tu consentimiento,
-          escribiendo a {contact}. Indica tu nombre de usuario, el torneo y lo que solicitas.
+          escribiendo a <Contact />. Indica tu nombre de usuario, el torneo y lo que solicitas.
           Responderemos en un plazo máximo de 20 días hábiles.
         </p>
         <p>
