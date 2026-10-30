@@ -4,6 +4,8 @@ import { PixelIcon } from "@/components/PixelIcon";
 import type { Account } from "@/components/solo/account/useAccount";
 import { supabase } from "@/lib/solo-supabase";
 
+import { tierOf } from "./rank";
+
 // Ranking global: apodos y puntos de quienes lo activaron (perfiles.en_ranking).
 // Lo calcula Supabase con los puntos del catálogo (ranking_global, mi_ranking):
 // el navegador no los puede inflar. Como el juez corre en el navegador, sigue
@@ -94,7 +96,17 @@ export function Ranking({ account }: { account: Account }) {
                     <td className="py-2 pr-3 font-mono tabular-nums text-muted-foreground">
                       {row.posicion <= 3 ? ["🥇", "🥈", "🥉"][row.posicion - 1] : row.posicion}
                     </td>
-                    <td className="py-2 pr-3 font-mono text-foreground">{row.apodo}</td>
+                    <td className="py-2 pr-3">
+                      <span
+                        className="font-mono font-semibold"
+                        style={{ color: tierOf(row.puntos).color }}
+                      >
+                        {row.apodo}
+                      </span>
+                      <span className="ml-2 text-[11px] text-muted-foreground">
+                        {tierOf(row.puntos).name}
+                      </span>
+                    </td>
                     <td className="py-2 pr-3 text-right font-mono tabular-nums text-silk-2">
                       {row.puntos}
                     </td>
